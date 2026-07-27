@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# SDLC on Fire machine-only state: local database, caches, locks, logs.
+# Never committed — the database is a rebuildable mirror of what's in git.
+.sdlcof/
+
+# Secrets — never commit (test-only credentials live under .sdlcof/, gitignored above)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
