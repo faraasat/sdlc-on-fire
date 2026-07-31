@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+
+# Install scripts are denied by default (.npmrc). Anything listed here is an
+# explicit, reviewed exception — ADR-0033 (supply-chain integrity).
+allowBuilds:
+  # esbuild's postinstall resolves the platform-native binary that tsup and
+  # Vitest both execute. Without it neither build nor test can run.
+  esbuild: true

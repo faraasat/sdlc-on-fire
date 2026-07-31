@@ -1,0 +1,40 @@
+{
+  "name": "@sdlc-on-fire/evidence",
+  "version": "0.0.0",
+  "description": "Test-output parsers, coverage-delta, Playwright driver, and the pure evaluateGate function.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/faraasat/sdlc-on-fire.git",
+    "directory": "packages/evidence"
+  },
+  "homepage": "https://github.com/faraasat/sdlc-on-fire#readme",
+  "bugs": "https://github.com/faraasat/sdlc-on-fire/issues",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc --build && tsup",
+    "typecheck": "tsc --build",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@sdlc-on-fire/core": "workspace:*"
+  }
+}

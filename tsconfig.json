@@ -1,0 +1,29 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/storage"
+    },
+    {
+      "path": "./packages/db"
+    },
+    {
+      "path": "./packages/agent-manager"
+    },
+    {
+      "path": "./packages/context"
+    },
+    {
+      "path": "./packages/evidence"
+    },
+    {
+      "path": "./packages/daemon"
+    },
+    {
+      "path": "./packages/cli"
+    }
+  ]
+}

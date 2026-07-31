@@ -20,6 +20,30 @@ The first release (`0.1.0`) targets a solo, CLI-only workflow: initialise a proj
 
 TypeScript / Node, pnpm workspaces. Local Postgres with pgvector (zero-config on first run). Claude Code support first, with additional agent surfaces compiled from one canonical source.
 
+## Development
+
+Requires Node ≥ 20 and pnpm ≥ 9 (the repo pins pnpm via `packageManager`; `corepack enable` is enough).
+
+```bash
+pnpm install
+pnpm check     # format:check → lint → typecheck → test → build
+```
+
+| Script                      | What it does                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------ |
+| `pnpm build`                | `tsc --build` emits `.d.ts`, `tsup` emits the JS bundle — per package, in dependency order |
+| `pnpm typecheck`            | `tsc --build` across the project-reference graph                                           |
+| `pnpm test`                 | Vitest over every package (cross-package imports alias to source, so no build needed)      |
+| `pnpm lint` / `pnpm format` | ESLint (type-checked rules) / Prettier                                                     |
+| `pnpm clean`                | Drops `dist/` and the TypeScript build cache                                               |
+| `pnpm changeset`            | Records a release note; every package versions in lockstep                                 |
+
+### Packages
+
+`core` (object model, schemas, `StoragePort`) · `storage` (Markdown reader/writer, watcher) · `db` (Postgres adapter, migrations, pgvector) · `agent-manager` (canonical skills, agent compilers) · `context` (context packs, retrieval) · `evidence` (output parsers, gate evaluation) · `daemon` (the long-running local process) · `cli` (the published `sdlc` binary).
+
+Only `cli` publishes as `sdlc-on-fire`; the rest publish under `@sdlc-on-fire/*` at the same version.
+
 ## License
 
 [MIT](LICENSE) © 2026 Farasat Ali
