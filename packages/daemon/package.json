@@ -35,10 +35,11 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@sdlc-on-fire/context": "workspace:*",
     "@sdlc-on-fire/core": "workspace:*",
     "@sdlc-on-fire/db": "workspace:*",
+    "@sdlc-on-fire/evidence": "workspace:*",
     "@sdlc-on-fire/storage": "workspace:*",
-    "@sdlc-on-fire/context": "workspace:*",
-    "@sdlc-on-fire/evidence": "workspace:*"
+    "simple-git": "3.36.0"
   }
 }

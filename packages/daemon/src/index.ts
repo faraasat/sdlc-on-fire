@@ -5,9 +5,12 @@ import { storagePackage } from '@sdlc-on-fire/storage';
 import { contextPackage } from '@sdlc-on-fire/context';
 import { evidencePackage } from '@sdlc-on-fire/evidence';
 
+export * from './git/naming.js';
+export * from './git/git-manager.js';
+
 /**
- * Identity of the `@sdlc-on-fire/daemon` package. Real daemon behaviour lands in later
- * Phase 0 tasks — this scaffold exists to prove the workspace wiring.
+ * Identity of the `@sdlc-on-fire/daemon` package. The daemon owns the Git Manager
+ * (architecture.md §3) — branches and worktrees are created here, never by hand.
  */
 export const daemonPackage: PackageInfo = {
   name: '@sdlc-on-fire/daemon',
