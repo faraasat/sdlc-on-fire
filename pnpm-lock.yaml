@@ -50,6 +50,9 @@ importers:
       '@sdlc-on-fire/core':
         specifier: workspace:*
         version: link:../core
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
   packages/cli:
     dependencies:
@@ -65,6 +68,15 @@ importers:
       '@sdlc-on-fire/db':
         specifier: workspace:*
         version: link:../db
+      '@sdlc-on-fire/storage':
+        specifier: workspace:*
+        version: link:../storage
+      commander:
+        specifier: 15.0.0
+        version: 15.0.0
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
 
   packages/context:
     dependencies:
@@ -1422,6 +1434,10 @@ packages:
   chokidar@5.0.0:
     resolution: {integrity: sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw==}
     engines: {node: '>= 20.19.0'}
+
+  commander@15.0.0:
+    resolution: {integrity: sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==}
+    engines: {node: '>=22.12.0'}
 
   commander@4.1.1:
     resolution: {integrity: sha512-NOKm8xhkzAjzFx8B2v5OAHT+u5pRQc2UCa2Vq9jYL/31o2wi9mxBA7LIFs3sV5VSC49z6pEhfbMULvShKj26WA==}
@@ -3428,6 +3444,8 @@ snapshots:
   chokidar@5.0.0:
     dependencies:
       readdirp: 5.1.1
+
+  commander@15.0.0: {}
 
   commander@4.1.1: {}
 
