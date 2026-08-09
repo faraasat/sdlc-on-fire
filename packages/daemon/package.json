@@ -40,6 +40,7 @@
     "@sdlc-on-fire/db": "workspace:*",
     "@sdlc-on-fire/evidence": "workspace:*",
     "@sdlc-on-fire/storage": "workspace:*",
+    "chokidar": "5.0.0",
     "simple-git": "3.36.0"
   }
 }
