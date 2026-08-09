@@ -18,6 +18,7 @@ export * from './memory.js';
 export * from './workspace.js';
 export * from './skill.js';
 export * from './hash.js';
+export * from './task-spec.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report
