@@ -1,3 +1,6 @@
+export * from './frontmatter.js';
+export * from './typed-file.js';
+
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
 
