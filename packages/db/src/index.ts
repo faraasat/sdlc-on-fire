@@ -12,6 +12,8 @@ import { corePackage } from '@sdlc-on-fire/core';
 
 export * from './paths.js';
 export * from './pglite.js';
+export * from './schema.js';
+export * from './migrate.js';
 
 /** Identity of the `@sdlc-on-fire/db` package. */
 export const dbPackage: PackageInfo = {
