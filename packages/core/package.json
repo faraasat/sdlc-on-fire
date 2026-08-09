@@ -33,5 +33,8 @@
     "build": "tsc --build && tsup",
     "typecheck": "tsc --build",
     "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
   }
 }
