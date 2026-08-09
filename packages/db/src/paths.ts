@@ -1,48 +1,21 @@
-import path from 'node:path';
+import { resolveWorkspaceLayout, type WorkspaceLayout } from '@sdlc-on-fire/core';
 
 /**
- * Machine-state paths inside a managed workspace, per
- * contracts/06-workspace-layout.md §2.
+ * Machine-state paths for the DB adapter.
  *
- * `.sdlcof/` is hidden and gitignored in full — nothing under it is content, and
- * everything under it is reconstructible. `db/` in particular is destroyed and
- * rebuilt by `db:rebuild` (ADR-0006), which is only safe because git holds the
- * content and the DB holds a mirror.
+ * The layout itself is owned by `@sdlc-on-fire/core` (contracts/06) — this is a
+ * re-export so the adapter has one obvious import, not a second definition.
+ * Duplicating the path constants here is exactly how `.sdlcof/db` and
+ * `.sdlcof/database` end up both existing.
  */
 
-/** The hidden machine-state directory name. Overridable per workspace in config. */
-export const DEFAULT_STATE_DIR = '.sdlcof';
+export { DEFAULT_STATE_DIR } from '@sdlc-on-fire/core';
+export type { WorkspaceLayout } from '@sdlc-on-fire/core';
 
-export interface WorkspacePaths {
-  /** Workspace root — the directory holding `.sdlcof/`. */
-  readonly root: string;
-  /** `.sdlcof/` itself. */
-  readonly stateDir: string;
-  /** `.sdlcof/db/` — the PGlite data directory. Empty in connected mode (ADR-0068). */
-  readonly dataDir: string;
-  /** `.sdlcof/locks/` — local single-instance daemon lock, never the authoritative claim record. */
-  readonly lockDir: string;
-  /** `.sdlcof/logs/`. */
-  readonly logDir: string;
-}
-
-/**
- * Resolves the machine-state paths for a workspace. Pure — creates nothing.
- * Provisioning is what creates directories, so path resolution stays safe to call
- * from anywhere, including a `--json` status read on a workspace that has never
- * been initialised.
- */
-export function resolveWorkspacePaths(
-  root: string,
-  stateDirName = DEFAULT_STATE_DIR,
-): WorkspacePaths {
-  const absoluteRoot = path.resolve(root);
-  const stateDir = path.join(absoluteRoot, stateDirName);
-  return {
-    root: absoluteRoot,
-    stateDir,
-    dataDir: path.join(stateDir, 'db'),
-    lockDir: path.join(stateDir, 'locks'),
-    logDir: path.join(stateDir, 'logs'),
-  };
+/** @deprecated Prefer {@link resolveWorkspaceLayout} from `@sdlc-on-fire/core` directly. */
+export function resolveWorkspacePaths(root: string, stateDirName?: string): WorkspaceLayout {
+  return resolveWorkspaceLayout(
+    root,
+    stateDirName === undefined ? undefined : { state_dir: stateDirName },
+  );
 }

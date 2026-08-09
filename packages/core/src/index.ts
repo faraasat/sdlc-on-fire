@@ -15,6 +15,7 @@ export * from './evidence.js';
 export * from './run.js';
 export * from './context.js';
 export * from './memory.js';
+export * from './workspace.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report

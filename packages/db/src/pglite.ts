@@ -3,7 +3,7 @@ import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite-pgvector';
 import lockfile from 'proper-lockfile';
-import { resolveWorkspacePaths, type WorkspacePaths } from './paths.js';
+import { resolveWorkspaceLayout, type WorkspaceLayout } from '@sdlc-on-fire/core';
 
 /**
  * The PGlite fast path (ADR-0003, amended by ADR-0068).
@@ -84,8 +84,8 @@ export interface ProvisionPgliteOptions {
 
 function resolvePaths(
   options: ProvisionPgliteOptions,
-): Pick<WorkspacePaths, 'dataDir' | 'lockDir'> {
-  const workspace = resolveWorkspacePaths(options.workspaceRoot);
+): Pick<WorkspaceLayout, 'dataDir' | 'lockDir'> {
+  const workspace = resolveWorkspaceLayout(options.workspaceRoot);
   return {
     dataDir: options.dataDir ?? workspace.dataDir,
     lockDir: options.lockDir ?? workspace.lockDir,
