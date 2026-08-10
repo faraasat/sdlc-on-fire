@@ -167,5 +167,9 @@ describe('how the hook finds the CLI', () => {
     expect(script).toContain('command -v sdlc');
     expect(script).toContain('./node_modules/.bin/');
     expect(script).toContain('npx --no-install');
+    // And the fallback is quiet: before the package is installed anywhere, npx
+    // prints a registry error, and nobody should see npm output on every commit
+    // for a sync they never asked for.
+    expect(script).toMatch(/npx --no-install .*>\/dev\/null 2>&1/);
   });
 });
