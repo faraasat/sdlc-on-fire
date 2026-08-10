@@ -30,6 +30,34 @@ export function isPinnedModelId(model: string): boolean {
   return /\d/.test(trimmed) && /(?:-\d{6,8}|[-.@]v?\d+(?:[-.]\d+)+|-\d+-\d+)$/.test(trimmed);
 }
 
+/**
+ * Where prompts go. The most consequential answer on the checklist, because it
+ * decides whether the rest of it is about your disk or somebody else's.
+ */
+export const EGRESS_KINDS = ['none', 'provider', 'third-party'] as const;
+export const EgressSchema = z.enum(EGRESS_KINDS);
+
+/**
+ * One model's declared terms (P1-SEC-01, `model-posture-checklist.md`).
+ *
+ * `unknown` is a first-class answer for `trains_on_inputs`. Guessing `false`
+ * because it seems likely would turn an open question into a recorded fact, and
+ * the record is the only thing anyone will read later.
+ */
+export const ModelPostureSchema = z
+  .object({
+    /** Weight licence for a local model, or the service's commercial terms. */
+    license: z.string().min(1),
+    egress: EgressSchema,
+    /** Where inference happens, when known. */
+    region: z.string().optional(),
+    /** Days prompts are retained, or `zero` where that mode is contracted *and* enabled. */
+    retention: z.string().optional(),
+    trains_on_inputs: z.union([z.boolean(), z.literal('unknown')]).default('unknown'),
+    notes: z.string().optional(),
+  })
+  .strict();
+
 const PinnedModelSchema = z
   .string()
   .min(1)
@@ -84,6 +112,23 @@ export const TierPolicyConfigSchema = z
      * cap would be its own surprise.
      */
     max_tier: SkillTierSchema.default('high'),
+    /**
+     * What the operator has established about each model's terms
+     * (P1-SEC-01, `model-posture-checklist.md`).
+     *
+     * A **declaration**, never a verification — nobody can inspect a provider's
+     * data handling from the outside. What this makes possible is that the
+     * question gets asked where the routing decision is made, and that an
+     * unanswered one is *visible* rather than absent. A model id appears in one
+     * config file; the terms under which it may see your source code appear
+     * nowhere at all unless something asks.
+     *
+     * Undeclared models still route. Blocking would be the wrong lever: a solo
+     * developer running weights on their own machine owes nobody a
+     * data-processing statement, and a tool that demanded one before it would
+     * run would simply be lied to.
+     */
+    posture: z.record(z.string(), ModelPostureSchema).prefault({}),
   })
   .strict()
   // An unconfigured workspace still routes: the defaults live on the fields, so
@@ -92,6 +137,22 @@ export const TierPolicyConfigSchema = z
   .prefault({});
 
 export type TierPolicyConfig = z.infer<typeof TierPolicyConfigSchema>;
+export type ModelPosture = z.infer<typeof ModelPostureSchema>;
+
+/**
+ * Models that are routed to but have no declared posture.
+ *
+ * Reported rather than refused. The failure mode here is not "we answered
+ * wrongly", it is "nobody ever asked" — so the remedy is to keep asking, at the
+ * place the decision is visible.
+ */
+export function undeclaredModels(config: TierPolicyConfig): readonly string[] {
+  const routed = new Set<string>([
+    ...Object.values(config.models),
+    ...Object.values(config.fallbacks).flat(),
+  ]);
+  return [...routed].filter((model) => config.posture[model] === undefined).sort();
+}
 
 const TIER_RANK: Readonly<Record<SkillTier, number>> = { low: 0, medium: 1, high: 2 };
 

@@ -531,6 +531,14 @@ export function buildProgram(): Command {
               `  ${route.skill.padEnd(14)} ${route.tier.padEnd(7)} ${route.model}  (${route.source})`,
           ),
           ...r.unroutable.map((entry) => `  ✗ ${entry.skill}: ${entry.reason}`),
+          ...(r.undeclared.length === 0
+            ? []
+            : [
+                '',
+                `⚠ ${String(r.undeclared.length)} routed model(s) have no declared licensing/privacy/retention posture:`,
+                ...r.undeclared.map((model) => `    ${model}`),
+                '  See docs/.plan/model-posture-checklist.md, then set `agents.posture.<model-id>`.',
+              ]),
         ].join('\n'),
       );
       if (result.unroutable.length > 0) process.exitCode = 1;

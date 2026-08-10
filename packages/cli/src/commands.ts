@@ -17,6 +17,7 @@ import {
   nextStage,
   resolveRequiredStages,
   loadTierPolicy,
+  undeclaredModels,
   resolveWorkspaceLayout,
   type CapabilityDiscoveryRow,
   type Preset,
@@ -909,6 +910,15 @@ export interface AgentsResult {
   }[];
   /** Skills that cannot route under this policy, with the reason. */
   readonly unroutable: readonly { readonly skill: string; readonly reason: string }[];
+  /**
+   * Routed models with no declared licensing/privacy/retention posture
+   * (P1-SEC-01).
+   *
+   * Reported, never refused. The question belongs where the routing decision is
+   * visible; a tool that refused to run without an answer would just be given a
+   * fabricated one.
+   */
+  readonly undeclared: readonly string[];
 }
 
 export async function describeAgents(root: string): Promise<AgentsResult> {
@@ -941,7 +951,13 @@ export async function describeAgents(root: string): Promise<AgentsResult> {
     }
   }
 
-  return { maxTier: policyConfig.max_tier, models: policyConfig.models, routes, unroutable };
+  return {
+    maxTier: policyConfig.max_tier,
+    models: policyConfig.models,
+    routes,
+    unroutable,
+    undeclared: undeclaredModels(policyConfig),
+  };
 }
 
 export async function showConfig(root: string): Promise<ConfigResult> {
