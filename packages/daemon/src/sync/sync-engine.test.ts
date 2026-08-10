@@ -202,6 +202,10 @@ describe('watching', () => {
     const watched = new SyncEngine({
       workspaceRoot: root,
       store: db,
+      // Deterministic event source: the assertion is about the engine, not about
+      // how promptly macOS feels like delivering an FSEvent under load.
+      usePolling: true,
+      awaitWriteFinishMs: 50,
       onSynced: (outcome) => {
         outcomes.push(outcome);
         if (outcome.relativePath.endsWith('TASK-200.md')) resolveSynced?.();
@@ -229,6 +233,8 @@ describe('watching', () => {
     const watched = new SyncEngine({
       workspaceRoot: root,
       store: db,
+      usePolling: true,
+      awaitWriteFinishMs: 50,
       onSynced: (outcome) => {
         if (outcome.action === 'failed') {
           failures.push(outcome);

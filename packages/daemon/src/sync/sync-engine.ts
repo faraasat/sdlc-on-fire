@@ -56,6 +56,17 @@ export interface SyncEngineOptions {
   readonly onSynced?: SyncObserver | undefined;
   /** Stability window for editor atomic-saves and agent write bursts. */
   readonly awaitWriteFinishMs?: number | undefined;
+  /**
+   * Force chokidar's polling backend instead of native OS events.
+   *
+   * Native backends (FSEvents on macOS, inotify on Linux) deliver on their own
+   * schedule, which under heavy parallel load is neither prompt nor bounded.
+   * That is fine in production — a sync arriving a second late is invisible —
+   * but it makes a test assert on the operating system's mood. Polling trades
+   * CPU for determinism, which is the right trade for a test and the wrong one
+   * for a daemon, hence opt-in.
+   */
+  readonly usePolling?: boolean | undefined;
 }
 
 /** Work-item ID → the `work_items` row; anything else lands in `docs`. */
@@ -78,6 +89,7 @@ export class SyncEngine {
   readonly #onReEmbed: ReEmbedHook | undefined;
   readonly #onSynced: SyncObserver | undefined;
   readonly #awaitWriteFinishMs: number;
+  readonly #usePolling: boolean;
   #watcher: FSWatcher | undefined;
 
   constructor(options: SyncEngineOptions) {
@@ -87,6 +99,7 @@ export class SyncEngine {
     this.#onReEmbed = options.onReEmbed;
     this.#onSynced = options.onSynced;
     this.#awaitWriteFinishMs = options.awaitWriteFinishMs ?? 300;
+    this.#usePolling = options.usePolling ?? false;
   }
 
   /** The registry the daemon's own writer must record into before writing. */
@@ -263,6 +276,8 @@ export class SyncEngine {
       [path.join(this.#root, 'kanban'), path.join(this.#root, 'docs')],
       {
         ignoreInitial: true,
+        usePolling: this.#usePolling,
+        ...(this.#usePolling ? { interval: 50 } : {}),
         // Absorbs editor atomic-saves (write-temp-then-rename) and agent write
         // bursts, which otherwise fire on a partially-written file.
         awaitWriteFinish: {

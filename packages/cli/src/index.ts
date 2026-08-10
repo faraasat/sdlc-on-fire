@@ -117,7 +117,9 @@ export function buildProgram(): Command {
         }
         const typedKind = kind as keyof typeof WORK_ITEM_ID_PREFIX;
         const preset = (options.preset ?? 'standard') as Preset;
-        const workType = typedKind === 'bug' ? 'bug' : 'feature';
+        // An atomic task gets the task effort profile (ADR-0070); everything
+        // else keeps the profile matching its kind.
+        const workType = typedKind === 'bug' ? 'bug' : typedKind === 'task' ? 'task' : 'feature';
 
         const stages = resolveRequiredStages(preset, workType);
         const firstStage = stages?.[0];

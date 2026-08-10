@@ -17,6 +17,12 @@ import {
   type GateContext,
 } from '@sdlc-on-fire/evidence';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  dispatchSkill,
+  IMPLEMENT_SKILL,
+  OutputContractError,
+  type AgentTransport,
+} from '@sdlc-on-fire/agent-manager';
 import { init } from './commands.js';
 import { buildProgram } from './index.js';
 
@@ -31,10 +37,10 @@ import { buildProgram } from './index.js';
  *   evaluateGate blocks on a real failure → lifecycle refuses to advance →
  *   fix → re-verify → gate passes → lifecycle advances → PR body
  *
- * The agent legs (spec skill, implement skill) are **absent by necessity**: no
- * agent dispatcher exists yet. Here an "agent" is a test writing a file, which
- * is exactly what a real one would do — and the point of the skeleton is that
- * the daemon does not care who wrote it, only what the commands say.
+ * The agent legs run through the real dispatcher (`P1-AGENT-11`) with a stub
+ * transport: a fake model, a real contract. Spending tokens would not make the
+ * assertion stronger — what is under test is that dispatch fills the template,
+ * enforces the output contract, and refuses a self-reported pass.
  */
 
 const HEAD = 'a'.repeat(40);
@@ -207,6 +213,50 @@ describe('the walking skeleton, end to end', () => {
     expect(body).toContain('`daemon`');
     expect(body).toContain('✅ Gate passed.');
   }, 60_000);
+
+  it('9b — the implement skill dispatches and returns a structured result', async () => {
+    // The leg that did not exist until P1-AGENT-11: something actually invokes
+    // the compiled skill instead of leaving it on disk.
+    const transport: AgentTransport = () =>
+      Promise.resolve({
+        stdout: 'implement_output {"filesChanged":["src/csv.ts"],"summary":"Added CSV export."}',
+        stderr: '',
+        exitCode: 0,
+      });
+
+    const result = await dispatchSkill(
+      {
+        skill: IMPLEMENT_SKILL,
+        variables: { work_item_id: 'FEAT-001', work_item_title: 'Add CSV export' },
+        cwd: root,
+      },
+      transport,
+    );
+
+    expect(result.skill).toBe('implement');
+    expect(result.output).toMatchObject({ summary: 'Added CSV export.' });
+  });
+
+  it('9c — a dispatched agent cannot report its own tests as passing', async () => {
+    // Refused at the dispatch boundary, before the claim can reach a run record.
+    const lying: AgentTransport = () =>
+      Promise.resolve({
+        stdout: 'implement_output {"summary":"done","testsPassed":true}',
+        stderr: '',
+        exitCode: 0,
+      });
+
+    await expect(
+      dispatchSkill(
+        {
+          skill: IMPLEMENT_SKILL,
+          variables: { work_item_id: 'FEAT-001', work_item_title: 'Add CSV export' },
+          cwd: root,
+        },
+        lying,
+      ),
+    ).rejects.toBeInstanceOf(OutputContractError);
+  });
 
   it('10 — an agent claiming success cannot open the gate', async () => {
     // The thesis, stated as a test: the daemon will not let the agent lie.

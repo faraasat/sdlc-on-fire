@@ -128,3 +128,30 @@ describe('work_type validation', () => {
     expect(WorkTypeSchema.safeParse('invented-on-the-spot').success).toBe(false);
   });
 });
+
+describe('the task work type (ADR-0070)', () => {
+  it('exists under every preset', () => {
+    for (const preset of PRESETS) {
+      expect(resolveRequiredStages(preset, 'task'), preset).not.toBeNull();
+    }
+  });
+
+  it('is markedly shorter than a feature ladder', () => {
+    // The defect ADR-0070 fixes: an atomic task was walking eight stages.
+    const task = resolveRequiredStages('standard', 'task')?.length ?? 0;
+    const feature = resolveRequiredStages('standard', 'feature')?.length ?? 0;
+    expect(task).toBeLessThan(feature);
+    expect(task).toBe(4);
+  });
+
+  it('goes straight to implement under lite', () => {
+    expect(resolveRequiredStages('lite', 'task')).toEqual(['implement', 'done']);
+  });
+
+  it('still reaches review and test under standard', () => {
+    // Shorter, not unguarded.
+    const stages = resolveRequiredStages('standard', 'task') ?? [];
+    expect(stages).toContain('test');
+    expect(stages).toContain('review');
+  });
+});

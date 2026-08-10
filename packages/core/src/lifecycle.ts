@@ -102,27 +102,29 @@ export function kanbanColumnForStage(stage: LifecycleStage): KanbanColumn {
  * item: "not every story needs every stage" is row-subset absence, never an
  * always-present-but-skippable state.
  *
- * KNOWN OPEN QUESTION (contract §8 #3): the contract's open-questions list asks
- * for `epic`/`story`/`task` rows here, but those are *kinds*, not work types —
- * the two axes the contract itself separates. The rows below cover the four
- * documented work types. Whether atomic tasks need a distinct work type (so an
- * atomic task does not inherit a feature's full discovery→spec→decompose path)
- * is unresolved and deliberately not decided here.
+ * RESOLVED (ADR-0070, closing contract §8 #3): the table stays keyed on
+ * `work_type`, and `task` is a work type — not a second axis. Epics take
+ * `new-project`/`existing-codebase` and stories take `feature`/`bug`; only an
+ * atomic task lacked a profile, which is why it was the one kind inheriting a
+ * feature's full discovery→spec→decompose ladder.
  */
 export const REQUIRED_STAGES: Record<Preset, Record<string, readonly LifecycleStage[]>> = {
   lite: {
+    task: ['implement', 'done'],
     bug: ['triage', 'implement', 'done'],
     feature: ['spec', 'implement', 'review', 'done'],
     'new-project': ['discovery', 'spec', 'decompose', 'done'],
     'existing-codebase': ['intake', 'discovery', 'decompose', 'done'],
   },
   standard: {
+    task: ['implement', 'test', 'review', 'done'],
     bug: ['triage', 'plan', 'implement', 'test', 'review', 'done'],
     feature: ['discovery', 'spec', 'decompose', 'plan', 'implement', 'test', 'review', 'done'],
     'new-project': ['intake', 'discovery', 'spec', 'decompose', 'plan', 'review', 'done'],
     'existing-codebase': ['intake', 'discovery', 'spec', 'decompose', 'plan', 'review', 'done'],
   },
   strict: {
+    task: ['plan', 'implement', 'test', 'security_review', 'review', 'approval', 'done'],
     bug: ['triage', 'plan', 'implement', 'test', 'security_review', 'review', 'approval', 'done'],
     feature: [
       'discovery',
