@@ -31,36 +31,44 @@ const base = {
 
 describe('layer ordering', () => {
   it('emits stable-prefix-first', async () => {
-    const pack = await assembleContextPack({ spec: spec(), ...base, rollingState: 'prior state' });
+    const { pack: pack } = await assembleContextPack({
+      spec: spec(),
+      ...base,
+      rollingState: 'prior state',
+    });
     expect(pack.layers.map((l) => l.kind)).toEqual(['skill-stable', 'rolling-state', 'card-core']);
   });
 
   it('omits absent layers rather than emitting empty ones', async () => {
-    const pack = await assembleContextPack({ spec: spec(), ...base });
+    const { pack: pack } = await assembleContextPack({ spec: spec(), ...base });
     expect(pack.layers.map((l) => l.kind)).toEqual(['skill-stable', 'card-core']);
   });
 
   it('renders layers in array order', async () => {
-    const pack = await assembleContextPack({ spec: spec(), ...base });
+    const { pack: pack } = await assembleContextPack({ spec: spec(), ...base });
     expect(renderPack(pack).indexOf('Implementer')).toBeLessThan(renderPack(pack).indexOf('CSV'));
   });
 });
 
 describe('cache boundary', () => {
   it('marks the stable prefix', async () => {
-    const pack = await assembleContextPack({ spec: spec(), ...base });
+    const { pack: pack } = await assembleContextPack({ spec: spec(), ...base });
     expect(pack.stableUpToIndex).toBe(0);
     expect(stablePrefix(pack)).toBe('You are the Implementer.');
   });
 
   it('never extends past a volatile layer', async () => {
-    const pack = await assembleContextPack({ spec: spec(), ...base, rollingState: 'volatile' });
+    const { pack: pack } = await assembleContextPack({
+      spec: spec(),
+      ...base,
+      rollingState: 'volatile',
+    });
     expect(pack.layers[pack.stableUpToIndex]?.kind).toBe('skill-stable');
   });
 
   it('is byte-identical across invocations with different cards', async () => {
-    const a = await assembleContextPack({ spec: spec(), ...base });
-    const b = await assembleContextPack({
+    const { pack: a } = await assembleContextPack({ spec: spec(), ...base });
+    const { pack: b } = await assembleContextPack({
       ...base,
       spec: spec(),
       cardId: 'TASK-999',
@@ -72,7 +80,7 @@ describe('cache boundary', () => {
 
 describe('budget enforcement', () => {
   it('keeps totalTokens within budget', async () => {
-    const pack = await assembleContextPack({
+    const { pack: pack } = await assembleContextPack({
       spec: spec(60),
       ...base,
       rollingState: 'x'.repeat(400),
@@ -81,7 +89,7 @@ describe('budget enforcement', () => {
   });
 
   it('drops retrieval before optional layers', async () => {
-    const pack = await assembleContextPack({
+    const { pack: pack } = await assembleContextPack({
       spec: spec(40),
       ...base,
       rollingState: 'y'.repeat(200),
@@ -92,7 +100,7 @@ describe('budget enforcement', () => {
 
   it('never truncates card-core', async () => {
     // An agent given a partial task will confidently do the wrong thing.
-    const pack = await assembleContextPack({
+    const { pack: pack } = await assembleContextPack({
       spec: spec(40),
       ...base,
       rollingState: 'y'.repeat(800),
@@ -109,7 +117,7 @@ describe('budget enforcement', () => {
 
   it('honours the low tier when set', async () => {
     const lowSpec = ContextPackSpecSchema.parse({ ...spec(1000), budget: { max: 1000, low: 30 } });
-    const pack = await assembleContextPack({
+    const { pack: pack } = await assembleContextPack({
       spec: lowSpec,
       ...base,
       effortTier: 'low',
@@ -121,7 +129,7 @@ describe('budget enforcement', () => {
 
 describe('retrieval', () => {
   it('includes chunks that fit, highest score first', async () => {
-    const pack = await assembleContextPack({
+    const { pack: pack } = await assembleContextPack({
       spec: spec(1000),
       ...base,
       retrieve: () =>
@@ -135,7 +143,7 @@ describe('retrieval', () => {
   });
 
   it('works with no retriever at all', async () => {
-    const pack = await assembleContextPack({ spec: spec(), ...base });
+    const { pack: pack } = await assembleContextPack({ spec: spec(), ...base });
     expect(pack.layers.some((l) => l.kind === 'retrieval')).toBe(false);
   });
 });

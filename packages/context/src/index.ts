@@ -1,4 +1,5 @@
 export * from './assemble.js';
+export * from './metrics.js';
 export * from './retrieval.js';
 export * from './chunking.js';
 

@@ -319,6 +319,17 @@ export interface InstructionsResult {
     readonly cardCore: string;
     readonly skillStable: string;
     readonly estimatedTokens: number;
+    /**
+     * How much of the prompt a provider can cache, and what the assembler had
+     * to leave out (P1-CTX-06).
+     *
+     * Surfaced here because a token count alone reads as healthy right up until
+     * you learn retrieval was cut to reach it. The cache figure is the number
+     * that decides whether prompt caching is worth enabling at all — a boundary
+     * at token 40 of a 6,000-token pack saves nothing.
+     */
+    readonly cacheablePrefixTokens: number;
+    readonly cacheableFraction: number;
   } | null;
 }
 
@@ -507,6 +518,15 @@ export async function instructions(root: string, id: string): Promise<Instructio
       cardCore,
       skillStable,
       estimatedTokens: estimateTokens(`${skillStable}\n\n${cardCore}`),
+      // The stable prefix is the skill text: identical on every invocation of
+      // this skill, and therefore the part worth a cache breakpoint.
+      cacheablePrefixTokens: estimateTokens(skillStable),
+      cacheableFraction:
+        Math.round(
+          (estimateTokens(skillStable) /
+            Math.max(1, estimateTokens(`${skillStable}\n\n${cardCore}`))) *
+            1000,
+        ) / 1000,
     },
   };
 }

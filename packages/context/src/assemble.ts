@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { DroppedLayer } from './metrics.js';
 import {
   ContextPackSchema,
   type ContextLayer,
@@ -88,7 +89,15 @@ export class BudgetTooSmallError extends Error {
  * description will confidently do the wrong thing, which is worse than failing
  * loudly.
  */
-export async function assembleContextPack(input: AssembleInput): Promise<ContextPack> {
+export interface AssembledPack {
+  readonly pack: ContextPack;
+  /** The budget it was assembled against — the pack itself does not carry one. */
+  readonly budget: number;
+  /** Every layer not in the pack, and whether the budget or its absence is why. */
+  readonly dropped: readonly DroppedLayer[];
+}
+
+export async function assembleContextPack(input: AssembleInput): Promise<AssembledPack> {
   const effortTier: EffortTier = input.effortTier ?? 'max';
   const budget =
     effortTier === 'low' ? (input.spec.budget.low ?? input.spec.budget.max) : input.spec.budget.max;
@@ -125,7 +134,13 @@ export async function assembleContextPack(input: AssembleInput): Promise<Context
   }
 
   // Drop optional layers, cheapest-value-first, until the budget is met.
+  //
+  // What was dropped is *recorded*, not just removed. A pack assembled without
+  // retrieval because there was none and one assembled without retrieval because
+  // it did not fit used to render identically — and when an agent then answers
+  // badly, that is exactly the difference you need and could not get.
   const layers: ContextLayer[] = [];
+  const dropped: DroppedLayer[] = [];
   const dropOrder: ContextLayerKind[] = ['retrieval', 'comment-directives', 'rolling-state'];
   let total = LAYER_ORDER.reduce(
     (sum, kind) => sum + estimateTokens(candidates.get(kind) ?? ''),
@@ -135,8 +150,18 @@ export async function assembleContextPack(input: AssembleInput): Promise<Context
     if (total <= budget) break;
     const content = candidates.get(kind);
     if (content === undefined) continue;
-    total -= estimateTokens(content);
+    const tokens = estimateTokens(content);
+    total -= tokens;
     candidates.delete(kind);
+    dropped.push({ kind, reason: 'budget', tokens });
+  }
+
+  // Layers that were never offered are reported too, so a reader does not have
+  // to infer absence from a gap in a list.
+  for (const kind of LAYER_ORDER) {
+    if (!candidates.has(kind) && !dropped.some((entry) => entry.kind === kind)) {
+      dropped.push({ kind, reason: 'absent', tokens: 0 });
+    }
   }
 
   for (const kind of LAYER_ORDER) {
@@ -168,7 +193,7 @@ export async function assembleContextPack(input: AssembleInput): Promise<Context
 
   // Validated on the way out: the pack's own invariants (token sum, cache
   // boundary in range) are asserted rather than assumed.
-  return ContextPackSchema.parse(pack);
+  return { pack: ContextPackSchema.parse(pack), budget, dropped };
 }
 
 /** Concatenates layers in order — the array *is* the prompt content (contracts/05 §3.2). */

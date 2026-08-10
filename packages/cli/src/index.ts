@@ -282,7 +282,11 @@ export function buildProgram(): Command {
         } else {
           lines.push(
             `  skill:  ${r.skill.name} → ${r.skill.outputContract.toolName}`,
-            `  tokens: ~${String(r.context?.estimatedTokens ?? 0)}`,
+            `  tokens: ~${String(r.context?.estimatedTokens ?? 0)}` +
+              (r.context === null
+                ? ''
+                : ` (${String(r.context.cacheablePrefixTokens)} cacheable, ` +
+                  `${String(Math.round(r.context.cacheableFraction * 100))}%)`),
             '',
             r.skill.task,
           );
