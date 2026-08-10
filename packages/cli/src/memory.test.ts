@@ -23,7 +23,7 @@ let root: string;
 beforeEach(async () => {
   root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'memory-')));
   await run('git', ['init', '-q'], { cwd: root });
-  await init(root);
+  await init(root, { database: 'skip' });
 }, 180_000);
 
 afterEach(async () => {

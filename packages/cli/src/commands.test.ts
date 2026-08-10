@@ -31,9 +31,22 @@ afterEach(async () => {
 });
 
 describe('init', () => {
-  it('scaffolds the root whitelist and docs set', async () => {
+  it('brings the database up rather than reporting success and deferring it', async () => {
     const root = await workspace();
     const result = await init(root);
+
+    // `init` used to create an empty `.sdlcof/db/` and print "Workspace
+    // initialised."; PGlite only materialised when something later touched it.
+    // On a machine where the runtime cannot start, that reported success and
+    // surfaced the failure several commands later, away from the setup step.
+    expect(result.database.ready).toBe(true);
+    const entries = await fs.readdir(path.join(root, '.sdlcof', 'db'));
+    expect(entries).toContain('PG_VERSION');
+  }, 120_000);
+
+  it('scaffolds the root whitelist and docs set', async () => {
+    const root = await workspace();
+    const result = await init(root, { database: 'skip' });
 
     for (const file of ROOT_FILES) expect(result.created).toContain(file);
     for (const file of DOCS_ROOT_FILES) {
@@ -48,15 +61,15 @@ describe('init', () => {
     const root = await workspace();
     await fs.writeFile(path.join(root, 'README.md'), 'MINE\n');
 
-    const result = await init(root);
+    const result = await init(root, { database: 'skip' });
     expect(result.skipped).toContain('README.md');
     expect(await fs.readFile(path.join(root, 'README.md'), 'utf8')).toBe('MINE\n');
   });
 
   it('is safe to run twice', async () => {
     const root = await workspace();
-    await init(root);
-    const second = await init(root);
+    await init(root, { database: 'skip' });
+    const second = await init(root, { database: 'skip' });
 
     expect(second.alreadyInitialised).toBe(true);
     expect(second.created).toEqual([]);
@@ -64,14 +77,14 @@ describe('init', () => {
 
   it('gitignores the whole state directory', async () => {
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
     expect(await fs.readFile(path.join(root, '.gitignore'), 'utf8')).toContain('/.sdlcof/');
   });
 
   it('appends to an existing gitignore rather than replacing it', async () => {
     const root = await workspace();
     await fs.writeFile(path.join(root, '.gitignore'), 'node_modules\n');
-    await init(root);
+    await init(root, { database: 'skip' });
 
     const contents = await fs.readFile(path.join(root, '.gitignore'), 'utf8');
     expect(contents).toContain('node_modules');
@@ -80,7 +93,7 @@ describe('init', () => {
 
   it('writes a config that parses', async () => {
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
     const config = await readConfig(root);
     expect(config?.database.mode).toBe('pglite');
   });
@@ -95,7 +108,7 @@ describe('status', () => {
 
   it('reports an initialised one', async () => {
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
 
     const result = await status(root);
     expect(result.initialised).toBe(true);
@@ -148,7 +161,7 @@ describe('new', () => {
 
   it('creates a valid task', async () => {
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
     await run(root, ['new', 'task', 'Add CSV export']);
 
     const file = path.join(root, 'kanban', '_inbox', 'TASK-001.md');
@@ -159,7 +172,7 @@ describe('new', () => {
 
   it('places a bug on the bug ladder, not the feature one', async () => {
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
     await run(root, ['new', 'bug', 'Header row dropped']);
 
     const file = path.join(root, 'kanban', '_inbox', 'BUG-001.md');
@@ -169,7 +182,7 @@ describe('new', () => {
 
   it('honours the preset', async () => {
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
     await run(root, ['new', 'feature', 'Thing', '--preset', 'lite']);
 
     const file = path.join(root, 'kanban', '_inbox', 'FEAT-001.md');
@@ -180,7 +193,7 @@ describe('new', () => {
 
   it('increments the sequence', async () => {
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
     await run(root, ['new', 'task', 'One']);
     await run(root, ['new', 'task', 'Two']);
 
@@ -191,7 +204,7 @@ describe('new', () => {
 
   it('rejects an unknown kind', async () => {
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
     await expect(run(root, ['new', 'card', 'Nope'])).rejects.toThrow(/unknown kind/);
   });
 });
@@ -210,7 +223,7 @@ describe('init sets up what the rest of the tool needs (v006)', () => {
     // `verify` or `advance` — and saying nothing — left a first-time user to
     // find out from a refusal several commands later.
     const root = await workspace();
-    const result = await init(root);
+    const result = await init(root, { database: 'skip' });
     expect(result.initialisedGit).toBe(true);
     expect(existsSync(path.join(root, '.git'))).toBe(true);
   }, 60_000);
@@ -218,7 +231,7 @@ describe('init sets up what the rest of the tool needs (v006)', () => {
   it('leaves an existing repository entirely alone', async () => {
     const root = await workspace();
     await promisify(execFile)('git', ['init', '-q'], { cwd: root });
-    const result = await init(root);
+    const result = await init(root, { database: 'skip' });
     expect(result.initialisedGit).toBe(false);
   }, 60_000);
 });
@@ -229,7 +242,7 @@ describe('triage retires the capture (v006)', () => {
     // validator rejects — so every later `db:rebuild` reported `failed: 1` on a
     // file the tool itself created and then abandoned.
     const root = await workspace();
-    await init(root);
+    await init(root, { database: 'skip' });
     const captured = await captureItem(root, 'Commas break the CSV export');
     const triaged = await triageItem(root, captured.id, 'task');
 

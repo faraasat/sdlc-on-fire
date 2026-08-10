@@ -32,7 +32,7 @@ async function writeCard(id: string, frontmatter: Record<string, string>): Promi
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'instructions-'));
-  await init(root);
+  await init(root, { database: 'skip' });
 });
 
 afterEach(async () => {

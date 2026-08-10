@@ -190,6 +190,7 @@ export function buildProgram(): Command {
           r.initialisedGit
             ? '  git:     initialised a repository (content in git is how this tool stores work)'
             : '',
+          r.database.ready ? '  db:      PGlite ready' : `  db:      ⚠ ${r.database.detail}`,
         ]
           .filter((line) => line !== '')
           .join('\n'),

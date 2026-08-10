@@ -64,7 +64,7 @@ beforeEach(async () => {
   await run('git', ['init', '-q'], { cwd: root });
   await run('git', ['config', 'user.email', 't@e.com'], { cwd: root });
   await run('git', ['config', 'user.name', 'T'], { cwd: root });
-  await init(root);
+  await init(root, { database: 'skip' });
 }, 180_000);
 
 afterEach(async () => {

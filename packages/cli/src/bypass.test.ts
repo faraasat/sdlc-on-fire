@@ -86,7 +86,7 @@ beforeEach(async () => {
   await run('git', ['init', '-q'], { cwd: root });
   await run('git', ['config', 'user.email', 't@e.com'], { cwd: root });
   await run('git', ['config', 'user.name', 'T'], { cwd: root });
-  await init(root);
+  await init(root, { database: 'skip' });
   await fs.writeFile(path.join(root, 'package.json'), '{"name":"d","type":"module"}', 'utf8');
 }, 180_000);
 

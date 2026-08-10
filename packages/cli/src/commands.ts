@@ -71,6 +71,17 @@ export interface InitResult {
   readonly alreadyInitialised: boolean;
   /** Whether this call created the git repository. False when one already existed. */
   readonly initialisedGit: boolean;
+  /**
+   * Whether the database was actually brought up, and what happened if not.
+   *
+   * `init` used to create an empty `.sdlcof/db/` and report success; PGlite
+   * only materialised when something later touched it. So on a machine where
+   * the WASM runtime cannot start, `init` said "Workspace initialised." and the
+   * failure surfaced several commands later, far from the setup step the user
+   * was actually performing. The v0.1 DoD says `init` brings PGlite up — so it
+   * does, and proves it.
+   */
+  readonly database: { readonly ready: boolean; readonly detail: string };
 }
 
 export interface StatusResult {
@@ -110,7 +121,21 @@ export async function readConfig(root: string): Promise<WorkspaceConfig | null> 
  * `init` running over a real project must be safe to run twice, and clobbering
  * a user's `README.md` would be unforgivable for a one-character typo.
  */
-export async function init(root: string): Promise<InitResult> {
+export interface InitOptions {
+  /**
+   * Whether to start the database as part of the scaffold.
+   *
+   * Defaults to provisioning, which is what a user gets: `init` proves the
+   * database can come up instead of reporting success and letting the failure
+   * surface later. It costs about a second and 40 MB, so scaffolding tests that
+   * never touch the mirror pass `'skip'` — the provisioning path stays covered
+   * by its own test and by the DoD walk, rather than by every test paying for
+   * a Postgres it does not use.
+   */
+  readonly database?: 'provision' | 'skip' | undefined;
+}
+
+export async function init(root: string, options: InitOptions = {}): Promise<InitResult> {
   const layout = resolveWorkspaceLayout(root);
   const created: string[] = [];
   const skipped: string[] = [];
@@ -198,7 +223,36 @@ export async function init(root: string): Promise<InitResult> {
     }
   }
 
-  return { root: layout.root, created, skipped, alreadyInitialised, initialisedGit };
+  // Bring the database up here rather than lazily. An `init` that reports
+  // success without ever starting the thing it claims to have set up is the
+  // same self-report this product exists to refuse.
+  let database: InitResult['database'];
+  if (options.database === 'skip') {
+    return {
+      root: layout.root,
+      created,
+      skipped,
+      alreadyInitialised,
+      initialisedGit,
+      database: { ready: false, detail: 'database provisioning skipped by the caller' },
+    };
+  }
+  try {
+    const handle = await provisionPglite({ workspaceRoot: layout.root });
+    try {
+      await applySchema(handle);
+      database = { ready: true, detail: 'PGlite provisioned and schema applied' };
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+  } catch (cause) {
+    // Not fatal: every file-based command still works, and the scaffold on disk
+    // is valid. But it is said out loud, at the step where a user looks for
+    // setup problems, instead of surfacing as a puzzling refusal later.
+    database = { ready: false, detail: `database did not start: ${String(cause)}` };
+  }
+
+  return { root: layout.root, created, skipped, alreadyInitialised, initialisedGit, database };
 }
 
 export interface StatusStore {

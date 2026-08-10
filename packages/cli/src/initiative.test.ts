@@ -11,7 +11,7 @@ let root: string;
 
 beforeEach(async () => {
   root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'sdlcof-init-')));
-  await init(root);
+  await init(root, { database: 'skip' });
 }, 60_000);
 
 afterEach(async () => {
