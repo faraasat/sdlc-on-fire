@@ -12,6 +12,7 @@ export * from './sync/sync-engine.js';
 export * from './sync/rebuild.js';
 export * from './sync/git-hooks.js';
 export * from './metrics/otel.js';
+export * from './scheduler/admission.js';
 export * from './lifecycle/engine.js';
 export * from './lifecycle/invariants.js';
 export * from './pr/generate.js';
