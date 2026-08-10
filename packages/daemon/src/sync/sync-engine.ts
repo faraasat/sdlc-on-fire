@@ -96,6 +96,9 @@ export class SyncEngine {
   readonly #onReEmbed: ReEmbedHook | undefined;
   readonly #onSynced: SyncObserver | undefined;
   readonly #awaitWriteFinishMs: number;
+  /** Paths seen while suspended, deduped — a checkout touching one file twice is one sync. */
+  readonly #deferred = new Set<string>();
+  #suspended = false;
   readonly #usePolling: boolean;
   #watcher: FSWatcher | undefined;
 
@@ -330,6 +333,75 @@ export class SyncEngine {
   }
 
   /**
+   * Stops processing watcher events, collecting the paths instead (P0-SYNC-03).
+   *
+   * Meant to bracket a git operation the daemon itself triggers. Events that
+   * arrive while suspended are deduplicated and replayed by {@link resume}.
+   */
+  suspend(): void {
+    this.#suspended = true;
+  }
+
+  /**
+   * Resumes watching and syncs everything that changed while suspended.
+   *
+   * `reconcile` matters more than it looks. Replaying the deferred set alone
+   * trusts the watcher to have *noticed* every change before resume was called —
+   * and the premise of this whole feature (P0-SYNC-02) is that the watcher
+   * cannot be trusted during a git operation. Anything it delivers late is
+   * handled live afterwards, so nothing is lost, but "eventually, if the OS
+   * feels like it" is not a guarantee to end a branch switch on. Passing
+   * `reconcile` walks the tree and makes the answer authoritative instead.
+   *
+   * Returns the outcomes so a caller can see what a branch switch actually did,
+   * rather than discovering it later from the mirror.
+   */
+  async resume(options?: { readonly reconcile?: boolean }): Promise<SyncOutcome[]> {
+    this.#suspended = false;
+    const pending = [...this.#deferred];
+    this.#deferred.clear();
+
+    if (options?.reconcile === true) {
+      const outcomes = await this.reconcile();
+      for (const outcome of outcomes) this.#onSynced?.(outcome);
+      return outcomes;
+    }
+
+    const outcomes: SyncOutcome[] = [];
+    for (const absolutePath of pending) {
+      try {
+        outcomes.push(await this.syncFile(absolutePath));
+      } catch (cause) {
+        outcomes.push({
+          relativePath: path.relative(this.#root, absolutePath).replace(/\\/g, '/'),
+          action: 'failed',
+          error: cause instanceof Error ? cause.message : String(cause),
+        });
+      }
+    }
+    for (const outcome of outcomes) this.#onSynced?.(outcome);
+    return outcomes;
+  }
+
+  /**
+   * Runs a git operation with the watcher suspended, then replays what changed.
+   *
+   * The suspension is released even if the operation throws — a failed rebase
+   * that left the watcher deaf would be a far worse outcome than the failed
+   * rebase itself.
+   */
+  async duringGitOperation<T>(operation: () => Promise<T>): Promise<T> {
+    this.suspend();
+    try {
+      return await operation();
+    } finally {
+      // Reconcile, not replay: a git operation is exactly the case where the
+      // watcher's account of what changed is incomplete.
+      await this.resume({ reconcile: true });
+    }
+  }
+
+  /**
    * Starts watching. `ignoreInitial` is deliberate — {@link reconcile} already
    * walked the tree, and re-processing it here would double every startup.
    */
@@ -355,6 +427,16 @@ export class SyncEngine {
       if (!absolutePath.endsWith('.md')) return;
       const relative = path.relative(this.#root, absolutePath).replace(/\\/g, '/');
       if (!isManagedContentPath(relative)) return;
+
+      // While a git operation is in flight, collect instead of syncing. A
+      // `checkout` rewrites hundreds of files and would otherwise fire hundreds
+      // of independent syncs, each a DB round-trip, against a tree that is still
+      // moving underneath them — and the post-checkout hook is about to sync the
+      // same paths anyway. Deferring is both cheaper and more correct.
+      if (this.#suspended) {
+        this.#deferred.add(absolutePath);
+        return;
+      }
 
       // Never swallowed: a failure becomes a `failed` outcome the observer sees.
       // Silently dropping it would leave the mirror wrong with nothing to show
