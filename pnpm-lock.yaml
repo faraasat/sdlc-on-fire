@@ -92,6 +92,10 @@ importers:
       '@sdlc-on-fire/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@sdlc-on-fire/db':
+        specifier: workspace:*
+        version: link:../db
 
   packages/core:
     dependencies:

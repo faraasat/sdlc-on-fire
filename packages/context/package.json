@@ -36,5 +36,8 @@
   },
   "dependencies": {
     "@sdlc-on-fire/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@sdlc-on-fire/db": "workspace:*"
   }
 }

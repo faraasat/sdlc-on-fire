@@ -4,6 +4,7 @@ export * from './retrieval.js';
 export * from './chunking.js';
 export * from './rehydrate.js';
 export * from './comment-directives.js';
+export * from './hybrid.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
