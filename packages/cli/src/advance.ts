@@ -9,7 +9,7 @@ import {
 } from '@sdlc-on-fire/core';
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import { defaultV01Policy, evaluateGate, persistEvidence } from '@sdlc-on-fire/evidence';
-import { findWorkItem, openWorkspaceDatabase, treeContext } from './commands.js';
+import { findWorkItem, openWorkspaceDatabase, readConfig, treeContext } from './commands.js';
 import { attestItem } from './attest.js';
 import { versionOf, writeCardIfUnchanged } from './lifecycle-write.js';
 import { currentDirtyTreeHash, runVerify } from './verify.js';
@@ -52,6 +52,9 @@ export interface VerifyCommandResult {
   readonly report: 'parsed' | 'exit-code-only';
   readonly testsRun: number;
   readonly confidence: number;
+  /** Confinement actually applied — reported so it cannot be assumed. */
+  readonly sandbox: string;
+  readonly sandboxReason: string;
 }
 
 /** Reads a card's `verify:` command, or explains why there isn't one. */
@@ -117,7 +120,16 @@ export async function verifyWorkItem(
   const git = createGitManager({ repoRoot: root });
   const gitSha = (await git.isRepo()) ? await git.headSha() : '0'.repeat(40);
 
-  const outcome = await runVerify({ command, cwd: root, gitSha });
+  // The workspace's own sandbox setting, read here rather than defaulted at the
+  // call site — a security control that only applies when a caller remembers to
+  // pass it is one that will eventually not apply.
+  const config = await readConfig(root);
+  const outcome = await runVerify({
+    command,
+    cwd: root,
+    gitSha,
+    ...(config?.sandbox === undefined ? {} : { sandbox: config.sandbox }),
+  });
 
   const { db } = await openWorkspaceDatabase(root);
   try {
@@ -182,6 +194,8 @@ export async function verifyWorkItem(
       report,
       testsRun: total,
       confidence: outcome.envelope.confidence,
+      sandbox: outcome.sandbox.tier,
+      sandboxReason: outcome.sandbox.reason,
       summary: outcome.ok
         ? report === 'parsed'
           ? `passed (${String(payload.passed ?? total)}/${String(total)} tests)`

@@ -21,6 +21,7 @@ export * from './workspace.js';
 export * from './storage-port.js';
 export * from './capabilities.js';
 export * from './idempotency.js';
+export * from './sandbox.js';
 export * from './skill.js';
 export * from './subagent-caps.js';
 export * from './tier-policy.js';

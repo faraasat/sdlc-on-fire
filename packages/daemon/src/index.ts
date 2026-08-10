@@ -5,6 +5,8 @@ import { storagePackage } from '@sdlc-on-fire/storage';
 import { contextPackage } from '@sdlc-on-fire/context';
 import { evidencePackage } from '@sdlc-on-fire/evidence';
 
+export * from './sandbox/tiers.js';
+export * from './sandbox/exec.js';
 export * from './git/naming.js';
 export * from './git/git-manager.js';
 export * from './sync/self-write-registry.js';

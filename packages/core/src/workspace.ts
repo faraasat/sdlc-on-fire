@@ -2,6 +2,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { AdvancedConfigSchema } from './capabilities.js';
 import { FocusProfileSchema } from './focus.js';
+import { SandboxConfigSchema } from './sandbox.js';
 import { TierPolicyConfigSchema, tierPolicyViolations } from './tier-policy.js';
 
 /**
@@ -111,6 +112,14 @@ export const WorkspaceConfigSchema = z
       .prefault({}),
     /** Advanced capabilities, every one default-off (ADR-0067, P0-OBJ-04). */
     advanced: AdvancedConfigSchema,
+    /**
+     * OS-level confinement of the shell-exec path (ADR-0036, P1-SEC-02).
+     *
+     * Off by default. A sandbox is a real change to how commands run, and
+     * enabling one silently would break toolchains in ways that look like the
+     * code is broken rather than the sandbox.
+     */
+    sandbox: SandboxConfigSchema,
     /**
      * Tier → model routing (ADR-0028, P1-AGENT-08).
      *

@@ -6,6 +6,12 @@ import os from 'node:os';
 import { promisify } from 'node:util';
 import { EvidenceEnvelopeSchema, type EvidenceEnvelope } from '@sdlc-on-fire/core';
 import { parseVitestJson, payloadHash } from '@sdlc-on-fire/evidence';
+import {
+  SandboxConfigSchema,
+  type SandboxConfig,
+  type SandboxResolution,
+} from '@sdlc-on-fire/core';
+import { sandboxCommand } from '@sdlc-on-fire/daemon';
 
 /**
  * Running the work item's own `verify:` command (P1-GATE-01 wiring).
@@ -32,6 +38,8 @@ export interface VerifyOutcome {
   readonly stderr: string;
   readonly durationMs: number;
   readonly envelope: EvidenceEnvelope;
+  /** What confinement was actually applied, and why. Never inferred by a caller. */
+  readonly sandbox: SandboxResolution;
 }
 
 /**
@@ -117,14 +125,27 @@ export async function runVerify(input: {
   readonly gitSha: string;
   readonly dirtyTreeHash?: string | undefined;
   readonly timeoutMs?: number | undefined;
+  /** Off unless the workspace configured it (ADR-0036, P1-SEC-02). */
+  readonly sandbox?: SandboxConfig | undefined;
 }): Promise<VerifyOutcome> {
   const startedAt = Date.now();
   let stdout: string;
   let stderr: string;
   let exitCode = 0;
 
+  // The sandbox is a backstop, not a replacement for judgement about what to
+  // run: the boundary holds regardless of what command the card declared. It
+  // never degrades silently — `resolution` records what was actually applied,
+  // and the envelope carries it, so evidence cannot imply a confinement that
+  // was not in force.
+  const sandboxed = await sandboxCommand({
+    command: input.command,
+    workspaceRoot: input.cwd,
+    config: input.sandbox ?? SandboxConfigSchema.parse({}),
+  });
+
   try {
-    const result = await run('/bin/sh', ['-c', input.command], {
+    const result = await run(sandboxed.cmd, [...sandboxed.args], {
       cwd: input.cwd,
       timeout: input.timeoutMs ?? 600_000,
       maxBuffer: 32 * 1024 * 1024,
@@ -136,6 +157,8 @@ export async function runVerify(input: {
     stdout = error.stdout ?? '';
     stderr = error.stderr ?? String(cause);
     exitCode = typeof error.code === 'number' ? error.code : 1;
+  } finally {
+    await sandboxed.cleanup?.();
   }
 
   const durationMs = Date.now() - startedAt;
@@ -178,6 +201,9 @@ export async function runVerify(input: {
     git_sha: input.gitSha,
     ...(dirty === undefined ? {} : { dirty_tree_hash: dirty }),
     env: { tool_versions: { node: process.version }, os: `${os.platform()}-${os.arch()}` },
+    // The *declared* command, not the sandbox wrapper. Evidence is bound to
+    // this string (v006), and recording `sandbox-exec -f /tmp/…` would make the
+    // binding compare a wrapper path that changes on every run.
     command: { cmd: '/bin/sh', args: ['-c', input.command], cwd: input.cwd, exit_code: exitCode },
     content_hash: payloadHash(payload),
     // An unparsed report is a weaker observation, and the number says so rather
@@ -187,5 +213,14 @@ export async function runVerify(input: {
     payload,
   });
 
-  return { command: input.command, exitCode, ok, stdout, stderr, durationMs, envelope };
+  return {
+    command: input.command,
+    exitCode,
+    ok,
+    stdout,
+    stderr,
+    durationMs,
+    envelope,
+    sandbox: sandboxed.resolution,
+  };
 }
