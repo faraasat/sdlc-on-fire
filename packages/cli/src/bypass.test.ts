@@ -211,7 +211,7 @@ describe('the gate must not refuse work that is genuinely done', () => {
     // someone who had just run it.
     const bare = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'nogit-')));
     try {
-      await init(bare);
+      await init(bare, { database: 'skip' });
       await fs.writeFile(path.join(bare, 'package.json'), '{"name":"d","type":"module"}', 'utf8');
       await fs.writeFile(
         path.join(bare, 'test.js'),

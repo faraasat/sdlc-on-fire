@@ -33,7 +33,7 @@ export const RETROSPECTIVE_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
   ].join(' '),
   constitution_excerpt_ref: 'constitution#memory',
   task: [
-    'Write at most one memory entry for {{work_item_id}}: {{work_item_title}}.',
+    'Write at most one memory entry for {{work_item_id}}.',
     'It must be a durable fact about this codebase or its constraints — something that will still be',
     'true and still be useful in six months. Anything a reader could get from the diff, the spec,',
     'or general engineering advice is NOT a memory entry.',

@@ -34,7 +34,7 @@ export const SPEC_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
   ].join(' '),
   constitution_excerpt_ref: 'constitution#specification',
   task: [
-    'Write the spec for {{work_item_id}}: {{work_item_title}}.',
+    'Write the spec for {{work_item_id}}.',
     'Every acceptance criterion MUST be in GIVEN/WHEN/THEN form and MUST be checkable by a command,',
     'not by reading. State non-goals explicitly.',
   ].join(' '),
@@ -72,7 +72,7 @@ export const IMPLEMENT_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
   ].join(' '),
   constitution_excerpt_ref: 'constitution#engineering-principles',
   task: [
-    'Implement {{work_item_id}}: {{work_item_title}}.',
+    'Implement {{work_item_id}}.',
     'Read the linked spec and any referenced decisions before writing code.',
     'Modify only files matching this task’s declared file ownership.',
   ].join(' '),

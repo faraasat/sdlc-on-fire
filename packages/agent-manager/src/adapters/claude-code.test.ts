@@ -18,6 +18,7 @@ function skill(overrides: Record<string, unknown> = {}): CanonicalSkill {
     role: 'You are the Implementer agent.',
     constitution_excerpt_ref: 'constitution#engineering',
     task: 'Implement {{task_id}}.',
+    arguments: [{ name: 'task-id', required: true }],
     output_contract: { tool_name: 'implement_output', json_schema_ref: 'schemas/impl.json' },
     stop_condition: 'Stop after one report.',
     verify: { command_template: 'pnpm test', done_criteria_ref: 'task#done' },
@@ -84,15 +85,48 @@ describe('compilation', () => {
     // arguments silently did nothing. Verified against the published
     // frontmatter reference, not from memory (assumption A-05).
     const content =
-      adapter.compileSkill(skill({ arguments: [{ name: 'work-item-id', required: true }] }))
-        .files[0]?.content ?? '';
+      adapter.compileSkill(
+        skill({
+          task: 'Implement {{work_item_id}}.',
+          arguments: [{ name: 'work-item-id', required: true }],
+        }),
+      ).files[0]?.content ?? '';
     expect(content).toContain('arguments:\n  - work-item-id');
     expect(content).not.toContain('required: true');
   });
 
-  it('keeps slots unresolved in the compiled template', () => {
-    // The compiled file is a template the surface fills at invocation.
-    expect(adapter.compileSkill(skill()).files[0]?.content).toContain('{{task_id}}');
+  it('rewrites slots into the substitution the target actually performs', () => {
+    // The compiled file used to keep `{{slot}}`s verbatim, reasoning that "the
+    // surface fills them at invocation". It does not: Claude Code substitutes
+    // `$ARGUMENTS[N]` and has never heard of `{{…}}`, so a human running
+    // `/implement FEAT-001` reached the model with a literal `{{task_id}}` in
+    // its instructions — which reads as "invent one".
+    const content = adapter.compileSkill(skill()).files[0]?.content ?? '';
+    expect(content).toContain('Implement $ARGUMENTS[0].');
+    expect(content).not.toContain('{{');
+  });
+
+  it('binds slots by argument position, not by name order in the text', () => {
+    const content =
+      adapter.compileSkill(
+        skill({
+          task: 'Do {{second}} then {{first}}.',
+          arguments: [
+            { name: 'first', required: true },
+            { name: 'second', required: true },
+          ],
+        }),
+      ).files[0]?.content ?? '';
+    // Position is the only mapping Claude Code defines; reading order is not it.
+    expect(content).toContain('Do $ARGUMENTS[1] then $ARGUMENTS[0].');
+  });
+
+  it('refuses to compile a slot with no argument to bind to', () => {
+    // An unfillable blank in an agent's instructions is worse than a missing
+    // file: the model answers it anyway.
+    expect(() => adapter.compileSkill(skill({ task: 'Implement {{ghost}}.' }))).toThrow(
+      /no declared argument to bind to/,
+    );
   });
 
   it('renders the output contract into the body', () => {

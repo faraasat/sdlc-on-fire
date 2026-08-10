@@ -101,6 +101,57 @@ function skillFrontmatter(skill: CanonicalSkill): Record<string, unknown> {
   return frontmatter;
 }
 
+/** Our slot syntax, `{{like_this}}`. */
+const SLOT = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+
+/** `work-item-id` → `work_item_id`, so a declared argument matches its slot. */
+const slotNameFor = (argumentName: string): string => argumentName.replace(/-/g, '_');
+
+/**
+ * Rewrites our `{{slot}}`s into the substitutions Claude Code performs.
+ *
+ * The compiled file used to keep `{{slot}}`s verbatim, on the reasoning that "the
+ * surface fills them at invocation". The surface does no such thing: it
+ * substitutes `$ARGUMENTS[N]` and `$name`, and has never heard of `{{…}}`. So a
+ * human typing `/implement FEAT-001` reached the model with a literal
+ * `{{work_item_title}}` in its instructions — which, as this codebase's own note
+ * on the failure puts it, reads as *invent one*.
+ *
+ * Slots are bound **by position**, matching the declared `arguments` order,
+ * which is the only mapping Claude Code defines. `$ARGUMENTS[N]` is used rather
+ * than `$name` because our argument names are hyphenated (`work-item-id`) and
+ * `$work-item-id` has no unambiguous reading.
+ *
+ * A slot with no declared argument is a compile error, not a silent passthrough:
+ * an unfillable blank in an agent's instructions is worse than a missing file,
+ * because the model answers it anyway.
+ */
+function toNativeSubstitutions(body: string, skill: CanonicalSkill): string {
+  const positions = new Map(
+    (skill.arguments ?? []).map((argument, index) => [slotNameFor(argument.name), index]),
+  );
+
+  const unbound = new Set<string>();
+  const rewritten = body.replace(SLOT, (whole, name: string) => {
+    const index = positions.get(name);
+    if (index === undefined) {
+      unbound.add(name);
+      return whole;
+    }
+    return `$ARGUMENTS[${String(index)}]`;
+  });
+
+  if (unbound.size > 0) {
+    throw new Error(
+      `${skill.name}: cannot compile for claude-code — ` +
+        `${[...unbound].map((name) => `{{${name}}}`).join(', ')} has no declared argument to bind to. ` +
+        'The compiled file would hand the agent a blank it cannot fill, and the agent would fill it anyway. ' +
+        'Either declare the argument or take the slot out of the skill text.',
+    );
+  }
+  return rewritten;
+}
+
 export class ClaudeCodeAdapter implements AgentAdapter {
   readonly id = CLAUDE_CODE_ID;
   readonly capabilityTable = CLAUDE_CAPABILITY_TABLE;
@@ -114,7 +165,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     // adapter's: deprecation is a property of the skill, so emitting it here
     // repeated the same retirement once per configured target (P0-AGENT-05).
 
-    const body = renderPromptTemplate(skill).text;
+    const body = toNativeSubstitutions(renderPromptTemplate(skill).text, skill);
     const yaml = stringifyYaml(skillFrontmatter(skill), { lineWidth: 0 });
 
     const file: CompiledFile = {

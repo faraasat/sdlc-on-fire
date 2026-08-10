@@ -172,8 +172,15 @@ describe('the returned template and context', () => {
 
     const result = await instructions(root, 'FEAT-004');
     expect(result.skill?.task).toContain('FEAT-004');
-    expect(result.skill?.task).toContain('CSV export');
     expect(result.skill?.task).not.toContain('{{');
+
+    // The title used to be interpolated into the task line too. It was dropped
+    // from the skill text because the compiled Claude Code surface has no
+    // argument to bind that slot to (Q-12) — and it was redundant here anyway:
+    // the pack carries the card, so the title reaches the agent regardless.
+    // Asserted rather than assumed, since dropping it from both places would
+    // have been a real loss.
+    expect(JSON.stringify(result.context)).toContain('CSV export');
   });
 
   it('carries the card body, not just its title', async () => {
@@ -207,7 +214,7 @@ describe('the returned template and context', () => {
 describe('init honours the config doc toggles (P0-CLI-03)', () => {
   it('emits the full doc set when nothing is configured', async () => {
     const fresh = await fs.mkdtemp(path.join(os.tmpdir(), 'init-default-'));
-    await init(fresh);
+    await init(fresh, { database: 'skip' });
     const docs = await fs.readdir(path.join(fresh, 'docs'));
     expect(docs).toContain('TESTING.md');
     expect(docs).toContain('SCALING.md');
@@ -228,7 +235,7 @@ describe('init honours the config doc toggles (P0-CLI-03)', () => {
     await fs.mkdir(path.join(scaled, '.sdlcof'), { recursive: true });
     await fs.copyFile(layout.configPath, path.join(scaled, '.sdlcof', 'config.yaml'));
 
-    await init(scaled);
+    await init(scaled, { database: 'skip' });
     // Directories (architectural-design-decisions/, assets/) are structural and
     // unaffected by the toggle; only generated topic files should narrow.
     const docs = (await fs.readdir(path.join(scaled, 'docs')))

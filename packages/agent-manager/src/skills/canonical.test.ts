@@ -89,9 +89,13 @@ describe('compilation', () => {
     expect(report.ok).toBe(true);
   });
 
-  it('compiled output keeps slots for invocation-time filling', () => {
+  it('compiles slots into the substitution the target performs', () => {
     const content = adapter.compileSkill(SPEC_SKILL).files[0]?.content ?? '';
-    expect(content).toContain('{{work_item_id}}');
+    // Was `toContain('{{work_item_id}}')`, on the belief that the surface fills
+    // our slot syntax at invocation. It does not — Claude Code substitutes
+    // `$ARGUMENTS[N]`, so the verbatim slot reached the model as literal text.
+    expect(content).toContain('$ARGUMENTS[0]');
+    expect(content).not.toContain('{{');
   });
 
   it('renders a template with the sections in canonical order', () => {

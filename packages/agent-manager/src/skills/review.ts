@@ -23,7 +23,7 @@ export const REVIEW_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
   ].join(' '),
   constitution_excerpt_ref: 'constitution#review',
   task: [
-    'Review the change for {{work_item_id}}: {{work_item_title}}.',
+    'Review the change for {{work_item_id}}.',
     'Check it against every acceptance criterion, then look for what the criteria do not cover:',
     'unhandled failure paths, silent error swallowing, and claims in comments the code does not keep.',
   ].join(' '),
