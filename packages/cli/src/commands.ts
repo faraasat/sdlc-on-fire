@@ -20,7 +20,13 @@ import {
 import { fillSlots, skillForStage } from '@sdlc-on-fire/agent-manager';
 import { estimateTokens } from '@sdlc-on-fire/context';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
-import { applySchema, provisionPglite, PostgresStorageAdapter } from '@sdlc-on-fire/db';
+import {
+  applySchema,
+  connectToPostgres,
+  provisionPglite,
+  PostgresStorageAdapter,
+  type SqlExecutor,
+} from '@sdlc-on-fire/db';
 import {
   createGitManager,
   installGitHooks,
@@ -62,7 +68,16 @@ export async function readConfig(root: string): Promise<WorkspaceConfig | null> 
     if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw cause;
   }
-  return WorkspaceConfigSchema.parse(parseYaml(raw) ?? {});
+  const parsed = WorkspaceConfigSchema.safeParse(parseYaml(raw) ?? {});
+  if (parsed.success) return parsed.data;
+
+  // Zod's default rendering is a JSON dump of issue objects. Someone who
+  // mistyped their config deserves the sentence, not the data structure — and
+  // the path, so they know which key to go and fix.
+  const issues = parsed.error.issues
+    .map((issue) => `  ${issue.path.join('.') || '(root)'}: ${issue.message}`)
+    .join('\n');
+  throw new Error(`${layout.configPath} is not valid:\n${issues}`);
 }
 
 /**
@@ -368,6 +383,44 @@ export async function instructions(root: string, id: string): Promise<Instructio
   };
 }
 
+/**
+ * Opens the workspace's database in whichever mode the config names.
+ *
+ * One place decides this, so `db:rebuild` and `sync:batch` cannot disagree about
+ * where the mirror lives — a rebuild that silently targeted PGlite while the
+ * daemon wrote to Postgres would produce two mirrors and no error.
+ */
+export async function openWorkspaceDatabase(root: string): Promise<{
+  db: SqlExecutor & { close(): Promise<void>; exec(sql: string): Promise<void> };
+  mode: string;
+  describe: string;
+}> {
+  const layout = resolveWorkspaceLayout(root);
+  const config = await readConfig(root);
+  if (config === null) {
+    throw new Error(`${layout.configPath} not found — run \`sdlc init\` first`);
+  }
+
+  if (config.database.mode === 'connected') {
+    // `WorkspaceConfigSchema` already rejects a connected config with no url, so
+    // this is defence in depth for a config built in code rather than read from
+    // disk. Falling back to PGlite here would be the dangerous alternative: the
+    // command would succeed against a different mirror than the daemon reads.
+    const url = config.database.url;
+    if (url === undefined || url.length === 0) {
+      throw new Error(
+        'database.mode is "connected" but database.url is not set — connected mode needs a ' +
+          'postgres:// connection string (ADR-0068: we do not provision the server, you do)',
+      );
+    }
+    const db = await connectToPostgres({ url });
+    return { db, mode: 'connected', describe: db.safeUrl };
+  }
+
+  const db = await provisionPglite({ workspaceRoot: layout.root });
+  return { db, mode: 'pglite', describe: db.dataDir };
+}
+
 export interface RebuildCommandResult {
   readonly root: string;
   readonly workItems: number;
@@ -386,12 +439,7 @@ export interface RebuildCommandResult {
  */
 export async function rebuild(root: string): Promise<RebuildCommandResult> {
   const layout = resolveWorkspaceLayout(root);
-  const config = await readConfig(root);
-  if (config === null) {
-    throw new Error(`${layout.configPath} not found — run \`sdlc init\` first`);
-  }
-
-  const db = await provisionPglite({ workspaceRoot: layout.root });
+  const { db } = await openWorkspaceDatabase(root);
   try {
     await applySchema(db);
     const port = await PostgresStorageAdapter.create(db);
@@ -426,7 +474,7 @@ export async function syncBatch(root: string, since = 'HEAD'): Promise<SyncBatch
   }
 
   const changed = await git.changedInCommit(since);
-  const db = await provisionPglite({ workspaceRoot: layout.root });
+  const { db } = await openWorkspaceDatabase(root);
   try {
     await applySchema(db);
     const port = await PostgresStorageAdapter.create(db);

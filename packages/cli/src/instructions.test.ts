@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { init, instructions, findWorkItem } from './commands.js';
+import { init, instructions, findWorkItem, openWorkspaceDatabase } from './commands.js';
 import { resolveWorkspaceLayout } from '@sdlc-on-fire/core';
 
 /**
@@ -228,5 +228,28 @@ describe('init honours the config doc toggles (P0-CLI-03)', () => {
       .sort();
     expect(docs).toEqual(['README.md', 'TESTING.md']);
     await fs.rm(scaled, { recursive: true, force: true });
+  });
+});
+
+describe('choosing a database mode (P0-DB-02)', () => {
+  it('refuses connected mode with no connection string, naming what is missing', async () => {
+    // ADR-0068: we do not provision the server. Falling back to PGlite here
+    // would silently write to a different mirror than the daemon reads.
+    const layout = resolveWorkspaceLayout(root);
+    await fs.writeFile(
+      layout.configPath,
+      'database:\n  mode: connected\npreset: standard\n',
+      'utf8',
+    );
+    // The schema catches it first — what matters is that the message is a
+    // sentence naming the key, not a JSON dump of Zod issue objects.
+    await expect(openWorkspaceDatabase(root)).rejects.toThrow(/database\.url: .*required/);
+    await expect(openWorkspaceDatabase(root)).rejects.toThrow(/is not valid/);
+  });
+
+  it('refuses to run before init rather than scaffolding silently', async () => {
+    const empty = await fs.mkdtemp(path.join(os.tmpdir(), 'no-init-'));
+    await expect(openWorkspaceDatabase(empty)).rejects.toThrow(/run `sdlc init` first/);
+    await fs.rm(empty, { recursive: true, force: true });
   });
 });
