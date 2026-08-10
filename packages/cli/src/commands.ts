@@ -22,7 +22,7 @@ import {
 } from '@sdlc-on-fire/core';
 import { fillSlots, skillForStage } from '@sdlc-on-fire/agent-manager';
 import { estimateTokens } from '@sdlc-on-fire/context';
-import { parseFrontmatter } from '@sdlc-on-fire/storage';
+import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import { attestAll, type Attestation } from './attest.js';
 import {
   applySchema,
@@ -588,6 +588,153 @@ export async function listWorkItems(root: string): Promise<{ items: readonly Wor
   } finally {
     await db.close();
   }
+}
+
+export interface CaptureResult {
+  readonly id: string;
+  readonly filePath: string;
+  readonly title: string;
+}
+
+/**
+ * `sdlc capture` — soft insertion (P1-INS-01, architecture §4d).
+ *
+ * The whole point is that it costs nothing to use. An idea arrives mid-task;
+ * if capturing it requires choosing a kind, a parent, a preset and a lifecycle
+ * stage, nobody captures anything and it goes in a text file instead — or is
+ * lost. So this takes a sentence and nothing else, and lands in `_inbox` at
+ * `capture`, deliberately outside any ladder.
+ *
+ * It must **not** disrupt work in flight: no claim is touched, no stage moves,
+ * no gate is consulted. Triage is a separate, later, deliberate act.
+ */
+export async function captureItem(root: string, note: string): Promise<CaptureResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const inbox = path.join(layout.kanbanDir, '_inbox');
+  await fs.mkdir(inbox, { recursive: true });
+
+  const sequence = await nextSequence(layout.kanbanDir, 'CAP');
+  const id = `CAP-${String(sequence).padStart(3, '0')}`;
+  const filePath = path.join(inbox, `${id}.md`);
+  const now = new Date().toISOString();
+
+  // Written as plain frontmatter rather than through the typed writer: a
+  // capture is explicitly *not* a work item yet. Forcing it to satisfy the
+  // work-item schema would reintroduce the ceremony this command exists to
+  // avoid, and would make an unusable capture into a failed one.
+  const card = [
+    '---',
+    `id: ${id}`,
+    'kind: capture',
+    `title: ${JSON.stringify(note)}`,
+    'status: Inbox',
+    'lifecycle_state: capture',
+    `created_at: ${now}`,
+    '---',
+    '',
+    '## Note',
+    '',
+    note,
+    '',
+    '## Triage',
+    '',
+    'Not yet triaged. `sdlc triage ' + id + ' --as <kind>` turns this into a work item.',
+    '',
+  ].join('\n');
+
+  await fs.writeFile(filePath, card, 'utf8');
+  return { id, filePath: path.relative(layout.root, filePath), title: note };
+}
+
+export interface TriageResult {
+  readonly capturedId: string;
+  readonly workItemId: string;
+  readonly filePath: string;
+  readonly kind: string;
+}
+
+/**
+ * `sdlc triage` — promote a capture into a real work item.
+ *
+ * Deliberately a separate command from `capture`. Capturing is cheap and
+ * frequent; deciding what something *is* costs thought and happens later, often
+ * by someone else. Collapsing them would push that decision into the moment of
+ * interruption, which is exactly when it is made worst.
+ *
+ * The capture file is left in place, superseded rather than deleted (ADR-0013):
+ * the original wording is often the only record of what was actually meant.
+ */
+export async function triageItem(
+  root: string,
+  capturedId: string,
+  kind: string,
+  preset = 'standard',
+): Promise<TriageResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const found = await findWorkItem(layout.kanbanDir, capturedId);
+  if (found === null)
+    throw new Error(`no capture with id "${capturedId}" under ${layout.kanbanDir}`);
+
+  const parsed = parseFrontmatter(found.raw);
+  const title = typeof parsed.data['title'] === 'string' ? parsed.data['title'] : capturedId;
+
+  const { WORK_ITEM_ID_PREFIX, formatWorkItemId, kanbanColumnForStage, resolveRequiredStages } =
+    await import('@sdlc-on-fire/core');
+
+  if (!(kind in WORK_ITEM_ID_PREFIX)) {
+    throw new Error(
+      `unknown kind "${kind}" — expected one of ${Object.keys(WORK_ITEM_ID_PREFIX).join(', ')}`,
+    );
+  }
+  const typedKind = kind as keyof typeof WORK_ITEM_ID_PREFIX;
+  const workType = typedKind === 'bug' ? 'bug' : typedKind === 'task' ? 'task' : 'feature';
+  const firstStage = resolveRequiredStages(preset as never, workType)?.[0];
+  if (firstStage === undefined) {
+    throw new Error(`no stage ladder for preset "${preset}" + work_type "${workType}"`);
+  }
+
+  const sequence = await nextSequence(layout.kanbanDir, WORK_ITEM_ID_PREFIX[typedKind]);
+  const id = formatWorkItemId(typedKind, sequence);
+  const now = new Date().toISOString();
+
+  const item = {
+    $schema: 'https://sdlc-on-fire.dev/schema/work-item.json',
+    id,
+    kind: typedKind,
+    title,
+    status: kanbanColumnForStage(firstStage),
+    lifecycle_state: firstStage,
+    work_type: workType,
+    preset,
+    risk_level: 'low' as const,
+    created_at: now,
+    updated_at: now,
+    ...(typedKind === 'task' ? { verify: 'pnpm test', done: ['tests pass'] } : {}),
+    ...(typedKind === 'bug' ? { repro_steps: ['TODO'], severity: 'medium' as const } : {}),
+    ...(typedKind === 'story' ? { acceptance_criteria: ['GIVEN … WHEN … THEN …'] } : {}),
+    ...(typedKind === 'feature'
+      ? { acceptance_criteria: ['GIVEN … WHEN … THEN …'], spec_ref: 'TODO' }
+      : {}),
+    ...(typedKind === 'epic' ? { goal: 'TODO' } : {}),
+  };
+
+  const filePath = path.join(layout.kanbanDir, '_inbox', `${id}.md`);
+  // Provenance goes in the body, not in `supersedes`: that field is defined for
+  // work-item-to-work-item supersession (ADR-0013), and a capture is
+  // deliberately not a work item. Recording it anyway would either fail
+  // validation or quietly redefine what the field means.
+  const body = [
+    '## Description',
+    '',
+    parsed.body.trim(),
+    '',
+    `_Triaged from ${capturedId} — the original wording is often the only record of what was meant._`,
+    '',
+  ].join('\n');
+
+  await fs.writeFile(filePath, renderWorkItem(item as never, body), 'utf8');
+
+  return { capturedId, workItemId: id, filePath: path.relative(layout.root, filePath), kind };
 }
 
 export interface ClaimResult {

@@ -18,6 +18,7 @@ export * from './memory.js';
 export * from './workspace.js';
 export * from './storage-port.js';
 export * from './capabilities.js';
+export * from './idempotency.js';
 export * from './skill.js';
 export * from './hash.js';
 export * from './task-spec.js';

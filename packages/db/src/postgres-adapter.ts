@@ -429,6 +429,38 @@ export class PostgresStorageAdapter implements StoragePort {
     return row === undefined ? null : toBudgetState(row);
   }
 
+  async claimAction(input: {
+    key: string;
+    workItemId: string;
+    stage: string;
+    action: string;
+  }): Promise<{ first: boolean; result: unknown }> {
+    // ON CONFLICT DO NOTHING makes the primary key the arbiter. A row comes
+    // back only for the caller that actually inserted it; everyone else gets
+    // nothing and must read the existing result. No read-then-write window.
+    const inserted = await this.#executor.query<{ idempotency_key: string }>(
+      `INSERT INTO already_happened_ledger (idempotency_key, work_item_id, stage, action_type)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (idempotency_key) DO NOTHING
+       RETURNING idempotency_key;`,
+      [input.key, input.workItemId, input.stage, input.action],
+    );
+    if (inserted.length > 0) return { first: true, result: null };
+
+    const existing = await this.#executor.query<{ result: unknown }>(
+      'SELECT result FROM already_happened_ledger WHERE idempotency_key = $1;',
+      [input.key],
+    );
+    return { first: false, result: existing[0]?.result ?? null };
+  }
+
+  async recordActionResult(key: string, result: unknown): Promise<void> {
+    await this.#executor.query(
+      'UPDATE already_happened_ledger SET result = $2::jsonb WHERE idempotency_key = $1;',
+      [key, JSON.stringify(result)],
+    );
+  }
+
   async resetMirror(): Promise<void> {
     // Order matters only for readability — `embeddings` has no FK to the mirror
     // tables (contract 01 §2 keeps `source_id` polymorphic and unconstrained),

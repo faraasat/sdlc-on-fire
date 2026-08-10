@@ -475,3 +475,35 @@ describe('token budgets (P0-DB-05, ADR-0020)', () => {
     ).toBeNull();
   });
 });
+
+describe('already-happened ledger (P1-AGENT-04, ADR-0039)', () => {
+  const action = { key: 'k-pr-1', workItemId: 'FEAT-1', stage: 'review', action: 'pr_create' };
+
+  it('grants the first caller the right to act', async () => {
+    const claim = await port.claimAction(action);
+    expect(claim.first).toBe(true);
+  });
+
+  it('refuses a second attempt and replays the original outcome', async () => {
+    // A resumed run must get the PR url it opened last time, not an error
+    // about a duplicate — and certainly not a second PR.
+    await port.recordActionResult(action.key, { url: 'https://example.com/pr/7' });
+
+    const again = await port.claimAction(action);
+    expect(again.first).toBe(false);
+    expect(again.result).toEqual({ url: 'https://example.com/pr/7' });
+  });
+
+  it('lets exactly one of many concurrent resumes act', async () => {
+    // Two runs resuming after the same crash both read "not yet done" before
+    // either writes. That is the race this table exists to lose.
+    const key = { ...action, key: 'k-race' };
+    const attempts = await Promise.all(Array.from({ length: 12 }, () => port.claimAction(key)));
+    expect(attempts.filter((a) => a.first)).toHaveLength(1);
+  });
+
+  it('treats a different action on the same item as unclaimed', async () => {
+    const comment = { ...action, key: 'k-comment', action: 'pr_comment' };
+    expect((await port.claimAction(comment)).first).toBe(true);
+  });
+});

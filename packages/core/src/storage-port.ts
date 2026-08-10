@@ -271,6 +271,30 @@ export interface StoragePort {
   /** Declares (or replaces) a budget window. */
   setBudget(budget: BudgetWindow): Promise<void>;
 
+  /* ---- already-happened ledger (P1-AGENT-04, ADR-0039) ---- */
+
+  /**
+   * Claims the right to perform a side-effecting action exactly once.
+   *
+   * Returns `{ first: true }` when this caller may proceed, or
+   * `{ first: false, result }` when the action already happened — carrying the
+   * original outcome so a resumed run gets the PR url it opened last time
+   * rather than an error about a duplicate.
+   *
+   * The uniqueness must be enforced by the store, not by a prior read. Two runs
+   * resuming after the same crash both read "not yet done" before either
+   * writes, which is precisely the race that opens two pull requests.
+   */
+  claimAction(input: {
+    readonly key: string;
+    readonly workItemId: string;
+    readonly stage: string;
+    readonly action: string;
+  }): Promise<{ first: boolean; result: unknown }>;
+
+  /** Records what the action produced, once it has actually happened. */
+  recordActionResult(key: string, result: unknown): Promise<void>;
+
   /* ---- rebuild ---- */
 
   /**

@@ -113,6 +113,25 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      observed_at       TIMESTAMPTZ NOT NULL DEFAULT now()
    );`,
 
+  // ── Already-happened ledger (P1-AGENT-04, ADR-0039) ───────────────────────
+  //
+  // Contract §6 deferred this to v0.2 behind a `runs.pr_url` stopgap; this is
+  // v0.2. The primary key IS the idempotency key, so a duplicate attempt fails
+  // to insert rather than being caught by a prior read — the read-then-write
+  // version of this check loses exactly the race it exists to prevent, since
+  // two resumed runs both read "not yet done" before either writes.
+  `CREATE TABLE IF NOT EXISTS already_happened_ledger (
+     idempotency_key TEXT PRIMARY KEY,
+     work_item_id    TEXT NOT NULL,
+     stage           TEXT NOT NULL,
+     action_type     TEXT NOT NULL,
+     -- What the world saw: a PR url, a release tag. Replayed on a retry so a
+     -- caller gets the original outcome rather than an error.
+     result          JSONB,
+     happened_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+   );`,
+  'CREATE INDEX IF NOT EXISTS already_happened_work_item_idx ON already_happened_ledger (work_item_id);',
+
   // Append-only audit log (ADR-0030). Never relaxed, not even for MVP —
   // architecture §5 lists it among the never-relaxed invariants.
   'REVOKE UPDATE, DELETE ON audit_log FROM PUBLIC;',

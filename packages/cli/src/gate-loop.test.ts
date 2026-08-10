@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { init, claimWorkItem, listWorkItems } from './commands.js';
+import { init, claimWorkItem, listWorkItems, captureItem, triageItem } from './commands.js';
 import { advanceWorkItem, verifyWorkItem } from './advance.js';
 
 /**
@@ -159,5 +159,49 @@ describe('list', () => {
     // The first thing a user does after creating a work item is look for it.
     const result = await listWorkItems(root);
     expect(result.items.map((item) => item.id)).toContain('TASK-001');
+  }, 120_000);
+});
+
+describe('soft insertion: capture and triage (P1-INS-01)', () => {
+  it('captures with nothing but a sentence', async () => {
+    // If capturing requires choosing a kind, a parent, a preset and a stage,
+    // nobody captures anything — it goes in a text file instead, or is lost.
+    const result = await captureItem(root, 'CSV parser chokes on quoted commas');
+    expect(result.id).toMatch(/^CAP-\d+$/);
+    const raw = await fs.readFile(path.join(root, result.filePath), 'utf8');
+    expect(raw).toContain('lifecycle_state: capture');
+  }, 120_000);
+
+  it('does not disturb work in flight', async () => {
+    // The whole promise of soft insertion: no claim touched, no stage moved.
+    await claimWorkItem(root, 'TASK-001', 'alice');
+    const before = await fs.readFile(path.join(root, 'kanban', '_inbox', 'TASK-001.md'), 'utf8');
+
+    await captureItem(root, 'an unrelated idea');
+
+    const after = await fs.readFile(path.join(root, 'kanban', '_inbox', 'TASK-001.md'), 'utf8');
+    expect(after).toBe(before);
+  }, 120_000);
+
+  it('promotes a capture into a real work item, carrying the wording over', async () => {
+    const captured = await captureItem(root, 'quoted commas break the parser');
+    const triaged = await triageItem(root, captured.id, 'bug');
+
+    expect(triaged.workItemId).toMatch(/^BUG-\d+$/);
+    const raw = await fs.readFile(path.join(root, triaged.filePath), 'utf8');
+    expect(raw).toContain('quoted commas break the parser');
+    expect(raw).toContain(captured.id);
+  }, 120_000);
+
+  it('leaves the capture in place rather than deleting it', async () => {
+    // The original wording is often the only record of what was actually meant.
+    const captured = await captureItem(root, 'something subtle about encodings');
+    await triageItem(root, captured.id, 'task');
+    await expect(fs.stat(path.join(root, captured.filePath))).resolves.toBeDefined();
+  }, 120_000);
+
+  it('rejects an unknown kind at triage, naming the valid ones', async () => {
+    const captured = await captureItem(root, 'x');
+    await expect(triageItem(root, captured.id, 'widget')).rejects.toThrow(/expected one of/);
   }, 120_000);
 });

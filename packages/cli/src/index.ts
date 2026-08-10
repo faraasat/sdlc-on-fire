@@ -32,6 +32,8 @@ import {
   hooksInstall,
   listWorkItems,
   claimWorkItem,
+  captureItem,
+  triageItem,
   showConfig,
   status,
   type InstructionsResult,
@@ -301,6 +303,48 @@ export function buildProgram(): Command {
         ].join('\n'),
       );
     });
+
+  program
+    .command('capture')
+    .argument('<note...>', 'what you noticed, in a sentence')
+    .description('capture an idea into the inbox without interrupting what you are doing')
+    .option('--json', 'emit JSON')
+    .action(async (note: string[], options: { json?: boolean }): Promise<void> => {
+      const result = await captureItem(root(), note.join(' '));
+      emit(
+        result,
+        options.json === true,
+        (r: Awaited<ReturnType<typeof captureItem>>) =>
+          `${r.id} captured → ${r.filePath}\n  Triage it later with \`sdlc triage ${r.id} --as <kind>\`.`,
+      );
+    });
+
+  program
+    .command('triage')
+    .argument('<capture-id>', 'the capture to promote, e.g. CAP-001')
+    .requiredOption('--as <kind>', 'epic | story | feature | bug | task')
+    .option('--preset <preset>', 'lite | standard | strict', 'standard')
+    .description('turn a capture into a real work item')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        capturedId: string,
+        options: { as: string; preset?: string; json?: boolean },
+      ): Promise<void> => {
+        const result = await triageItem(
+          root(),
+          capturedId,
+          options.as,
+          options.preset ?? 'standard',
+        );
+        emit(
+          result,
+          options.json === true,
+          (r: Awaited<ReturnType<typeof triageItem>>) =>
+            `${r.capturedId} → ${r.workItemId} (${r.kind}) at ${r.filePath}`,
+        );
+      },
+    );
 
   program
     .command('claim')
