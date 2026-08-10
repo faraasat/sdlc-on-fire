@@ -68,16 +68,17 @@ describe('generated migration', () => {
   it('does not create tables deferred past v0.1', async () => {
     // Building ahead of the slice is as much a defect as building short of it.
     //
-    // Two tables have left this list, both by the same explicit founder scope
+    // Three tables have left this list, all by the same explicit founder scope
     // decision on 2026-08-10: the standing instruction is to complete Phase 1 in
-    // full, and both `memory_entries` (P1-OBJ-04) and `traceability_edges`
-    // (P1-GATE-08) are Phase-1 tasks. The guard is loosened deliberately and the
-    // reason is recorded here rather than in a commit message nobody re-reads —
-    // a guard quietly edited to make new code pass is worse than no guard.
+    // full, and `memory_entries` (P1-OBJ-04), `traceability_edges` (P1-GATE-08)
+    // and `checkpoints` (P1-AGENT-05) are all Phase-1 tasks. The guard is
+    // loosened deliberately and the reason is recorded here rather than in a
+    // commit message nobody re-reads — a guard quietly edited to make new code
+    // pass is worse than no guard.
     //
-    // The remaining two are still genuinely unbuilt.
+    // `external_ref` is still genuinely unbuilt.
     const tables = await tableNames(db);
-    for (const table of ['checkpoints', 'external_ref']) {
+    for (const table of ['external_ref']) {
       expect(tables, table).not.toContain(table);
     }
   });
@@ -288,5 +289,52 @@ describe('invariant triggers', () => {
         ev?.id,
       ]),
     ).rejects.toThrow(/agent-claim/);
+  });
+});
+
+describe('checkpoints (P1-AGENT-05, ADR-0022/0039)', () => {
+  it('creates the table with the columns recovery selects on', async () => {
+    const columns = await db.query<{ column_name: string }>(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'checkpoints';",
+    );
+    const names = columns.map((row) => row.column_name);
+    // `mutates_state` is the one that has to be a column rather than an
+    // assumption: only state-changing steps are valid recovery points, and
+    // recovery selects on it (ADR-0039).
+    for (const column of ['run_id', 'step_identity', 'step_seq', 'mutates_state', 'git_sha']) {
+      expect(names, column).toContain(column);
+    }
+  });
+
+  it('keeps one row per step so a retry does not duplicate the sequence', async () => {
+    await db.query(
+      `INSERT INTO work_items (id, type, title, status, lifecycle_state, file_path, content_hash)
+       VALUES ('TASK-CP','task','cp','In Progress','implement','a.md','h')
+       ON CONFLICT (id) DO NOTHING;`,
+    );
+    await db.query(
+      "INSERT INTO runs (id, work_item_id) VALUES ('run-cp','TASK-CP') ON CONFLICT (id) DO NOTHING;",
+    );
+    const insert = `INSERT INTO checkpoints (run_id, step_identity, step_seq, step_type, mutates_state, content_hash)
+                    VALUES ('run-cp','ident-1',1,'implement',true,'h')
+                    ON CONFLICT (run_id, step_identity) DO NOTHING;`;
+    await db.query(insert);
+    await db.query(insert);
+
+    const rows = await db.query<{ n: string }>(
+      "SELECT count(*)::text AS n FROM checkpoints WHERE run_id = 'run-cp';",
+    );
+    // Exactly one, not "at most two": a retry lands on its own row, and the
+    // sequence a resume walks must not contain the same step twice.
+    expect(Number(rows[0]?.n)).toBe(1);
+  });
+
+  it('refuses a status outside the three a resume knows how to read', async () => {
+    await expect(
+      db.query(
+        `INSERT INTO checkpoints (run_id, step_identity, step_seq, step_type, mutates_state, content_hash, status)
+         VALUES ('run-cp','ident-2',2,'implement',true,'h','probably-fine');`,
+      ),
+    ).rejects.toThrow();
   });
 });

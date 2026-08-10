@@ -132,6 +132,42 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
    );`,
   'CREATE INDEX IF NOT EXISTS already_happened_work_item_idx ON already_happened_ledger (work_item_id);',
 
+  // ── Checkpoints (P1-AGENT-05, ADR-0022/0039) ──────────────────────────────
+  //
+  // **Semantic, not per-turn.** ADR-0039 records the finding that blanket
+  // per-turn checkpointing spends most of its I/O on rows nothing ever resumes
+  // from. Only a step that actually mutated state is a valid recovery point, so
+  // `mutates_state` is a column rather than an assumption, and recovery selects
+  // on it.
+  //
+  // Append-only in spirit (ADR-0013): a checkpoint is a record of what happened,
+  // and overwriting one would make the log agree with the present instead of
+  // with the past.
+  `CREATE TABLE IF NOT EXISTS checkpoints (
+     id              BIGSERIAL PRIMARY KEY,
+     run_id          TEXT NOT NULL REFERENCES runs(id),
+     -- Assigned *before* the call it describes, so a step that died still has an
+     -- identity. A name minted afterwards names only the steps that finished.
+     step_identity   TEXT NOT NULL,
+     step_seq        INT NOT NULL,
+     step_type       TEXT NOT NULL,
+     mutates_state   BOOLEAN NOT NULL,
+     -- What the worktree looked like when this was taken. Resume compares it
+     -- against reality rather than trusting the row: a checkpoint claiming a
+     -- commit landed is a claim, and this product does not resume on claims.
+     content_hash    TEXT NOT NULL,
+     git_sha         TEXT,
+     status          TEXT NOT NULL DEFAULT 'complete'
+                     CHECK (status IN ('in_progress','complete','failed')),
+     state_snapshot  JSONB,
+     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+   );`,
+  'CREATE INDEX IF NOT EXISTS checkpoints_run_idx ON checkpoints (run_id, created_at);',
+  // One row per (run, step). A retried step updates its own row rather than
+  // minting a second, or the sequence a resume walks has duplicates in it.
+  `CREATE UNIQUE INDEX IF NOT EXISTS checkpoints_step_uniq
+     ON checkpoints (run_id, step_identity);`,
+
   // ── Typed comments (P1-CMT-02, ADR-0012/0016) ─────────────────────────────
   //
   // Admitted into v0.1 with the contract note recorded in contracts/01: the
