@@ -11,7 +11,7 @@ import {
   tierForPlatform,
   type SandboxConfig,
 } from '@sdlc-on-fire/core';
-import { probeSandbox, sandboxCommand } from './exec.js';
+import { probeSandbox, sandboxCommand, unsandboxedShell } from './exec.js';
 import { bubblewrapArgs, seatbeltProfile } from './tiers.js';
 
 /**
@@ -177,4 +177,30 @@ describe('real enforcement', () => {
     },
     120_000,
   );
+});
+
+describe('the unsandboxed shell (Q-02 — native Windows)', () => {
+  it('uses /bin/sh on posix', () => {
+    expect(unsandboxedShell('pnpm test', 'darwin')).toEqual({
+      cmd: '/bin/sh',
+      args: ['-c', 'pnpm test'],
+    });
+    expect(unsandboxedShell('pnpm test', 'linux').cmd).toBe('/bin/sh');
+  });
+
+  it('uses the Windows command processor on win32', () => {
+    // `/bin/sh` does not exist on native Windows, and the untiered path is every
+    // Windows host — seatbelt is macOS, bubblewrap is Linux. So `sdlc verify`
+    // could not execute a command at all there: the gate, which is the product's
+    // whole point, was inoperable while Linux CI stayed green.
+    const shell = unsandboxedShell('pnpm test', 'win32');
+    expect(shell.cmd.toLowerCase()).toContain('cmd');
+    expect(shell.args).toEqual(['/d', '/s', '/c', 'pnpm test']);
+  });
+
+  it('skips AutoRun, so no machine-local script joins the command', () => {
+    // A registry AutoRun entry prepends itself to every cmd.exe invocation.
+    // Without /d, the evidence would describe a command nobody declared.
+    expect(unsandboxedShell('x', 'win32').args).toContain('/d');
+  });
 });

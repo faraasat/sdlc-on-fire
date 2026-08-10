@@ -15,7 +15,16 @@ permissions:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Windows is a first-class target (Q-02, ADR-0072), and a support tier that
+    # is never exercised is a claim rather than a commitment. `/bin/sh` was
+    # hardcoded in the verify path for exactly as long as CI was Linux-only:
+    # `sdlc verify` — the gate, which is the product's whole point — could not
+    # run at all on a native Windows host while every check here stayed green.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 

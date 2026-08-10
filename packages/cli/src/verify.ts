@@ -12,7 +12,12 @@ import {
   type SandboxConfig,
   type SandboxResolution,
 } from '@sdlc-on-fire/core';
-import { runGuarded, sandboxCommand, type GuardedRun } from '@sdlc-on-fire/daemon';
+import {
+  runGuarded,
+  sandboxCommand,
+  unsandboxedShell,
+  type GuardedRun,
+} from '@sdlc-on-fire/daemon';
 
 /**
  * Running the work item's own `verify:` command (P1-GATE-01 wiring).
@@ -235,7 +240,14 @@ export async function runVerify(input: {
     // The *declared* command, not the sandbox wrapper. Evidence is bound to
     // this string (v006), and recording `sandbox-exec -f /tmp/…` would make the
     // binding compare a wrapper path that changes on every run.
-    command: { cmd: '/bin/sh', args: ['-c', input.command], cwd: input.cwd, exit_code: exitCode },
+    command: {
+      // The platform's real shell, not a hardcoded `/bin/sh` — that recorded a
+      // binary which does not exist on Windows, describing a run that could not
+      // have happened the way the evidence claimed.
+      ...unsandboxedShell(input.command),
+      cwd: input.cwd,
+      exit_code: exitCode,
+    },
     content_hash: payloadHash(payload),
     // An unparsed report is a weaker observation, and the number says so rather
     // than flattering it.

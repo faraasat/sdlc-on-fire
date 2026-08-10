@@ -105,5 +105,29 @@ export async function sandboxCommand(input: {
     };
   }
 
-  return { cmd: '/bin/sh', args: ['-c', input.command], resolution };
+  return { ...unsandboxedShell(input.command, platform), resolution };
+}
+
+/**
+ * The unsandboxed shell for a platform.
+ *
+ * `/bin/sh` does not exist on native Windows, so the untiered path — which is
+ * every Windows host, since seatbelt is macOS and bubblewrap is Linux — could
+ * not execute a verify command at all. `sdlc verify` is the gate, so the
+ * product's entire point was inoperable there while every test passed on
+ * Linux CI (Q-02, [ADR-0072](docs/.plan/decisions/ADR-0072-windows-native-support-tier.md)).
+ *
+ * `cmd.exe /d /s /c` rather than PowerShell: it is the shell Node's own
+ * `child_process` uses for `shell: true` on Windows, so a `verify:` command
+ * that works when a user pastes it into their terminal behaves the same here.
+ * `/d` skips AutoRun registry commands — a machine-local script silently
+ * prepended to every verify would be evidence about a command nobody declared.
+ */
+export function unsandboxedShell(
+  command: string,
+  platform: string = os.platform(),
+): { readonly cmd: string; readonly args: readonly string[] } {
+  return platform === 'win32'
+    ? { cmd: process.env['ComSpec'] ?? 'cmd.exe', args: ['/d', '/s', '/c', command] }
+    : { cmd: '/bin/sh', args: ['-c', command] };
 }
