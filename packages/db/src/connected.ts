@@ -28,6 +28,20 @@ export interface ConnectedDatabase {
   readonly capabilities: DatabaseCapabilities;
   exec(sql: string): Promise<void>;
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /**
+   * Runs `fn` on a single checked-out connection.
+   *
+   * `pool.query()` hands each statement to whichever client is free, so issuing
+   * `BEGIN` and `INSERT` as separate pool queries can put them on *different*
+   * connections: the transaction never exists, and the stray `BEGIN` leaves an
+   * idle-in-transaction connection behind. Checking a client out is the only way
+   * a pooled transaction means anything.
+   */
+  transaction<T>(
+    fn: (tx: {
+      query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+    }) => Promise<T>,
+  ): Promise<T>;
   close(): Promise<void>;
 }
 
@@ -192,6 +206,31 @@ export async function connectToPostgres(options: ConnectOptions): Promise<Connec
     async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
       const result = await pool.query(sql, params as unknown[]);
       return result.rows as T[];
+    },
+
+    async transaction<T>(
+      fn: (tx: {
+        query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+      }) => Promise<T>,
+    ): Promise<T> {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const value = await fn({
+          async query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]> {
+            return (await client.query(sql, params as unknown[])).rows as R[];
+          },
+        });
+        await client.query('COMMIT');
+        return value;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        // Always return the client, or the pool bleeds connections until it
+        // deadlocks on `max` — a failure that only appears under load.
+        client.release();
+      }
     },
 
     async close(): Promise<void> {

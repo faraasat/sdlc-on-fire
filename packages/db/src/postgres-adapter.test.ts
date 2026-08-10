@@ -303,3 +303,89 @@ describe('claim / lease (P0-DB-08, ADR-0048)', () => {
     ).toBeNull();
   });
 });
+
+describe('hash-chained audit log (P0-DB-06, ADR-0030)', () => {
+  it('chains each entry to the one before it', async () => {
+    const first = await port.appendAudit({ action: 'gate.opened', targetId: 'TASK-1' });
+    const second = await port.appendAudit({ action: 'gate.closed', targetId: 'TASK-1' });
+
+    expect(first.prevHash).toBeNull(); // genesis
+    expect(second.prevHash).toBe(first.recordHash);
+    expect(second.recordHash).not.toBe(first.recordHash);
+  });
+
+  it('verifies a chain it built itself', async () => {
+    const result = await port.verifyAuditChain();
+    expect(result.ok).toBe(true);
+    expect(result.checked).toBeGreaterThanOrEqual(2);
+    expect(result.brokenAt).toEqual([]);
+  });
+
+  it('gives identical entries different hashes, because the link differs', async () => {
+    // Otherwise two identical actions would be interchangeable in the chain,
+    // and reordering them would go undetected.
+    const a = await port.appendAudit({ action: 'noop' });
+    const b = await port.appendAudit({ action: 'noop' });
+    expect(a.recordHash).not.toBe(b.recordHash);
+  });
+
+  it('serialises concurrent appends into one unforked chain', async () => {
+    // Two writers reading the same prev_hash fork the chain permanently — the
+    // log is append-only, so a fork can never be repaired.
+    await Promise.all(
+      Array.from({ length: 12 }, (_, i) => port.appendAudit({ action: `concurrent-${String(i)}` })),
+    );
+    expect((await port.verifyAuditChain()).ok).toBe(true);
+  });
+
+  it('detects an edited row', async () => {
+    await port.appendAudit({ action: 'will-be-tampered', targetId: 'T' });
+    const target = await db.query<{ id: number }>(
+      "SELECT id FROM audit_log WHERE action = 'will-be-tampered';",
+    );
+    const id = target[0]?.id;
+    expect(id).toBeDefined();
+
+    // Rewrite history without touching the hashes — the classic tamper.
+    await db.query("UPDATE audit_log SET action = 'innocent' WHERE id = $1;", [id]);
+
+    const result = await port.verifyAuditChain();
+    expect(result.ok).toBe(false);
+    expect(result.brokenAt).toContain(id);
+    expect(result.reason).toMatch(/audit chain broken/);
+  });
+
+  it('detects a row deleted from the middle of the chain', async () => {
+    // Removing a link leaves its successor pointing at a hash no row carries.
+    // Start from a clean chain so this tests deletion, not the earlier tamper.
+    await db.query('DELETE FROM audit_log;');
+    for (const action of ['one', 'two', 'three']) {
+      await port.appendAudit({ action });
+    }
+    expect((await port.verifyAuditChain()).ok).toBe(true);
+
+    await db.query("DELETE FROM audit_log WHERE action = 'two';");
+    const after = await port.verifyAuditChain();
+    expect(after.ok).toBe(false);
+    expect(after.brokenAt.length).toBeGreaterThan(0);
+  });
+
+  it('cannot detect truncation of the tail — stated, not pretended', async () => {
+    // A known and unavoidable property of a bare hash chain: lopping off the
+    // last rows leaves a shorter but internally consistent chain. Detecting it
+    // needs an anchor kept outside the log (an expected tip or length), which
+    // this table does not yet have. Asserting the real behaviour here so nobody
+    // reads "hash-chained" as "tamper-proof against deletion".
+    await db.query('DELETE FROM audit_log;');
+    for (const action of ['a', 'b', 'c']) await port.appendAudit({ action });
+
+    const tip = await db.query<{ id: number }>(
+      'SELECT id FROM audit_log ORDER BY id DESC LIMIT 1;',
+    );
+    await db.query('DELETE FROM audit_log WHERE id = $1;', [tip[0]?.id]);
+
+    const after = await port.verifyAuditChain();
+    expect(after.ok).toBe(true);
+    expect(after.checked).toBe(2);
+  });
+});

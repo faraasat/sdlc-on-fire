@@ -1,4 +1,8 @@
+import { canonicalJsonHash } from '@sdlc-on-fire/core';
 import type {
+  AuditChainVerification,
+  AuditEntry,
+  AuditRecord,
   ChunkHit,
   ClaimKind,
   ClaimRequest,
@@ -27,6 +31,21 @@ import type {
 /** The minimal driver surface an adapter needs. Satisfied by PGlite and node-postgres alike. */
 export interface SqlExecutor {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /**
+   * Runs `fn` with exclusive, single-connection use of the database.
+   *
+   * Not optional in practice, and the reason is worth stating: issuing `BEGIN`
+   * and `COMMIT` as ordinary queries does not produce a transaction on either
+   * driver we support. A connection *pool* hands each statement to whichever
+   * client is free, so `BEGIN` and the `INSERT` after it can land on different
+   * connections — the transaction never exists and the `BEGIN` leaks. A
+   * single-connection driver has the mirror-image problem: concurrent callers
+   * interleave their statements in one session, so every `BEGIN` after the first
+   * is a warning and the first `COMMIT` ends everyone's work.
+   *
+   * Both failures are silent. Neither is visible until data is already wrong.
+   */
+  transaction?<T>(fn: (tx: SqlExecutor) => Promise<T>): Promise<T>;
 }
 
 /** `embeddings.model` for a chunk indexed but not embedded (v0.1 is tsvector-only). */
@@ -60,6 +79,8 @@ export async function probeStorageCapabilities(
 export class PostgresStorageAdapter implements StoragePort {
   readonly #executor: SqlExecutor;
   readonly capabilities: StorageCapabilities;
+  /** Tail of the serialisation chain used when the driver offers no transaction. */
+  #queue: Promise<unknown> = Promise.resolve();
 
   constructor(executor: SqlExecutor, capabilities: StorageCapabilities) {
     this.#executor = executor;
@@ -69,6 +90,29 @@ export class PostgresStorageAdapter implements StoragePort {
   /** Probes capabilities, then binds them — so `capabilities` is never a guess. */
   static async create(executor: SqlExecutor): Promise<PostgresStorageAdapter> {
     return new PostgresStorageAdapter(executor, await probeStorageCapabilities(executor));
+  }
+
+  /**
+   * Runs `fn` atomically, however this driver can manage it.
+   *
+   * Prefers the driver's own transaction. Failing that, serialises against every
+   * other call on this adapter so at least the statements do not interleave —
+   * weaker than a transaction, but it turns a silently corrupt result into a
+   * correct-but-slower one.
+   */
+  async #atomic<T>(fn: (tx: SqlExecutor) => Promise<T>): Promise<T> {
+    if (this.#executor.transaction !== undefined) {
+      return this.#executor.transaction(fn);
+    }
+    const run = this.#queue.then(
+      () => fn(this.#executor),
+      () => fn(this.#executor),
+    );
+    this.#queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   async upsertWorkItem(row: WorkItemMirror): Promise<void> {
@@ -155,14 +199,13 @@ export class PostgresStorageAdapter implements StoragePort {
     chunks: readonly ChunkRecord[],
   ): Promise<void> {
     const name = assertTable(table);
-    await this.#executor.query('BEGIN;');
-    try {
-      await this.#executor.query(
-        'DELETE FROM embeddings WHERE source_table = $1 AND source_id = $2;',
-        [name, sourceId],
-      );
+    await this.#atomic(async (tx) => {
+      await tx.query('DELETE FROM embeddings WHERE source_table = $1 AND source_id = $2;', [
+        name,
+        sourceId,
+      ]);
       for (const chunk of chunks) {
-        await this.#executor.query(
+        await tx.query(
           `INSERT INTO embeddings
              (source_table, source_id, chunk_index, chunk_text, content_hash, model, heading_breadcrumb)
            VALUES ($1,$2,$3,$4,$5,$6,$7);`,
@@ -177,11 +220,7 @@ export class PostgresStorageAdapter implements StoragePort {
           ],
         );
       }
-      await this.#executor.query('COMMIT;');
-    } catch (error) {
-      await this.#executor.query('ROLLBACK;');
-      throw error;
-    }
+    });
   }
 
   async searchChunks(query: string, limit: number): Promise<readonly ChunkHit[]> {
@@ -266,6 +305,82 @@ export class PostgresStorageAdapter implements StoragePort {
     return row === undefined ? null : toClaimState(row);
   }
 
+  async appendAudit(entry: AuditEntry): Promise<AuditRecord> {
+    return this.#atomic(async (tx) => {
+      const tip = await tx.query<{ record_hash: string }>(
+        'SELECT record_hash FROM audit_log ORDER BY id DESC LIMIT 1;',
+      );
+      const prevHash = tip[0]?.record_hash ?? null;
+
+      // The hash covers the link *and* the payload, so neither editing a row
+      // nor reordering rows survives verification.
+      const recordHash = canonicalJsonHash({
+        prev: prevHash,
+        action: entry.action,
+        actorId: entry.actorId ?? null,
+        targetType: entry.targetType ?? null,
+        targetId: entry.targetId ?? null,
+        detail: entry.detail ?? null,
+      });
+
+      const rows = await tx.query<{ id: number }>(
+        `INSERT INTO audit_log (actor_id, action, target_type, target_id, detail, prev_hash, record_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id;`,
+        [
+          entry.actorId ?? null,
+          entry.action,
+          entry.targetType ?? null,
+          entry.targetId ?? null,
+          entry.detail === undefined ? null : JSON.stringify(entry.detail),
+          prevHash,
+          recordHash,
+        ],
+      );
+
+      return { ...entry, id: rows[0]?.id ?? 0, prevHash, recordHash };
+    });
+  }
+
+  async verifyAuditChain(): Promise<AuditChainVerification> {
+    const rows = await this.#executor.query<AuditRow>(
+      `SELECT id, actor_id, action, target_type, target_id, detail, prev_hash, record_hash
+         FROM audit_log ORDER BY id ASC;`,
+    );
+
+    const brokenAt: number[] = [];
+    let expectedPrev: string | null = null;
+
+    for (const row of rows) {
+      // Two independent checks: the link points where it should, and the stored
+      // hash still matches the row's own content. A tamperer who fixes only one
+      // of those is caught by the other.
+      const linkOk = (row.prev_hash ?? null) === expectedPrev;
+      const recomputed = canonicalJsonHash({
+        prev: row.prev_hash ?? null,
+        action: row.action,
+        actorId: row.actor_id ?? null,
+        targetType: row.target_type ?? null,
+        targetId: row.target_id ?? null,
+        detail: row.detail ?? null,
+      });
+      if (!linkOk || recomputed !== row.record_hash) brokenAt.push(row.id);
+      expectedPrev = row.record_hash;
+    }
+
+    return {
+      ok: brokenAt.length === 0,
+      checked: rows.length,
+      brokenAt,
+      ...(brokenAt.length === 0
+        ? {}
+        : {
+            reason:
+              `audit chain broken at ${brokenAt.length} row(s), first at id ${String(brokenAt[0])} — ` +
+              'a row was edited, deleted, or inserted out of order.',
+          }),
+    };
+  }
+
   async resetMirror(): Promise<void> {
     // Order matters only for readability — `embeddings` has no FK to the mirror
     // tables (contract 01 §2 keeps `source_id` polymorphic and unconstrained),
@@ -319,4 +434,15 @@ function toClaimState(row: ClaimRow): ClaimState {
     claimedAt: iso(row.claimed_at),
     leaseExpiresAt: iso(row.lease_expires_at),
   };
+}
+
+interface AuditRow {
+  id: number;
+  actor_id: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  detail: Record<string, unknown> | null;
+  prev_hash: string | null;
+  record_hash: string;
 }

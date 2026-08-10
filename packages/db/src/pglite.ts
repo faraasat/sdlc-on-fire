@@ -69,6 +69,19 @@ export interface ProvisionedDatabase {
   exec(sql: string): Promise<void>;
   /** Execute a single parameterised statement and return its rows. */
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  /**
+   * Runs `fn` inside a real transaction, serialised against other callers.
+   *
+   * PGlite is one connection, so concurrent callers issuing `BEGIN` as an
+   * ordinary query interleave in a single session: every `BEGIN` after the first
+   * is a warning, and the first `COMMIT` ends everybody's work. Queuing is what
+   * makes the transaction mean anything here.
+   */
+  transaction<T>(
+    fn: (tx: {
+      query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+    }) => Promise<T>,
+  ): Promise<T>;
   /** Releases the lock and shuts the database down. Idempotent. */
   close(): Promise<void>;
 }
@@ -184,6 +197,9 @@ export async function provisionPglite(
 
     const db = pg;
     let closed = false;
+    // Serialisation tail: transactions queue rather than interleave in the one
+    // session PGlite gives us.
+    let queue: Promise<unknown> = Promise.resolve();
 
     return {
       mode: 'pglite',
@@ -195,6 +211,36 @@ export async function provisionPglite(
       async query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
         const result = await db.query<T>(sql, params);
         return result.rows;
+      },
+      transaction<T>(
+        fn: (tx: {
+          query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+        }) => Promise<T>,
+      ): Promise<T> {
+        const run = async (): Promise<T> => {
+          await db.exec('BEGIN;');
+          try {
+            const value = await fn({
+              async query<R = Record<string, unknown>>(
+                sql: string,
+                params?: unknown[],
+              ): Promise<R[]> {
+                return (await db.query<R>(sql, params)).rows;
+              },
+            });
+            await db.exec('COMMIT;');
+            return value;
+          } catch (error) {
+            await db.exec('ROLLBACK;');
+            throw error;
+          }
+        };
+        const result = queue.then(run, run);
+        queue = result.then(
+          () => undefined,
+          () => undefined,
+        );
+        return result;
       },
       async close(): Promise<void> {
         if (closed) return;

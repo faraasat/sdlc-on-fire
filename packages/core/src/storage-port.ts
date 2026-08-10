@@ -103,6 +103,31 @@ export interface ClaimRequest {
   readonly leaseMs: number;
 }
 
+/** One entry in the hash-chained audit log (ADR-0030). */
+export interface AuditEntry {
+  readonly action: string;
+  readonly actorId?: string | undefined;
+  readonly targetType?: string | undefined;
+  readonly targetId?: string | undefined;
+  readonly detail?: Record<string, unknown> | undefined;
+}
+
+/** An appended entry, with the chain links the store assigned it. */
+export interface AuditRecord extends AuditEntry {
+  readonly id: number;
+  readonly prevHash: string | null;
+  readonly recordHash: string;
+}
+
+/** What a chain verification found. */
+export interface AuditChainVerification {
+  readonly ok: boolean;
+  readonly checked: number;
+  /** Ids where the chain broke, in order. Empty when `ok`. */
+  readonly brokenAt: readonly number[];
+  readonly reason?: string | undefined;
+}
+
 /** The stage a work item is recorded at. */
 export interface MirrorStage {
   readonly lifecycleState: string;
@@ -174,6 +199,33 @@ export interface StoragePort {
 
   /** The live claim, or `null` when unclaimed **or** the lease has expired. */
   claimOf(workItemId: string): Promise<ClaimState | null>;
+
+  /* ---- audit log (ADR-0030) ---- */
+
+  /**
+   * Appends one entry, computing its chain link.
+   *
+   * Append must be **serialised**: two concurrent appends that both read the
+   * same `prev_hash` produce a fork, and a forked chain verifies as broken
+   * forever after. The adapter is responsible for making that impossible, not
+   * for hoping it does not happen.
+   */
+  appendAudit(entry: AuditEntry): Promise<AuditRecord>;
+
+  /**
+   * Walks the chain and reports the first place it breaks.
+   *
+   * Architecture §5 lists this invariant as never-relaxed, which only means
+   * anything if something actually checks it — a hash column nobody verifies is
+   * decoration.
+   *
+   * **Known limit:** a bare hash chain cannot detect *truncation*. Deleting rows
+   * from the tail leaves a shorter but internally consistent chain, and this
+   * returns `ok`. Catching that needs an anchor held outside the log — an
+   * expected tip hash or row count — which this table does not yet carry. Stated
+   * here so "hash-chained" is not read as "tamper-proof against deletion".
+   */
+  verifyAuditChain(): Promise<AuditChainVerification>;
 
   /* ---- rebuild ---- */
 
