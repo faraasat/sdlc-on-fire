@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/importers",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "description": "Importer framework: tool parser port, tool-independent IR, and the transactional dependency-ordered writer with external_ref idempotency.",
   "license": "MIT",
   "type": "module",

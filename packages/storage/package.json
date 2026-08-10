@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/storage",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "description": "Markdown typed reader/writer, chokidar watcher, sha256 hash-guard sync pipeline, AST chunker.",
   "license": "MIT",
   "type": "module",

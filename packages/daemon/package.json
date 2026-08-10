@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/daemon",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0",
   "description": "Long-running local process: watcher wiring, git integration, gates, WebSocket fan-out, single-instance lock.",
   "license": "MIT",
   "type": "module",
