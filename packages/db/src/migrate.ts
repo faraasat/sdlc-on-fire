@@ -50,11 +50,31 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 96);`,
   'CREATE INDEX IF NOT EXISTS embeddings_source_idx ON embeddings (source_table, source_id);',
 
-  // Full-text indexes for the v0.1 tsvector-only retrieval path (mvp-slice).
-  `CREATE INDEX IF NOT EXISTS work_items_title_tsv_idx ON work_items
-     USING GIN (to_tsvector('english', title));`,
-  `CREATE INDEX IF NOT EXISTS docs_title_tsv_idx ON docs
-     USING GIN (to_tsvector('english', coalesce(title, '')));`,
+  // ── Full-text search for the v0.1 tsvector-only retrieval path (mvp-slice) ──
+  //
+  // The searchable vector is a STORED generated column, not an expression index.
+  // P0-SPIKE-02 measured the difference on 50k rows: ranking with `ts_rank_cd`
+  // over an expression index re-derives the tsvector for every candidate row and
+  // costs 1,566ms; ranking on the stored column costs 68ms for the identical
+  // result set. The column is materialised once per write instead of once per
+  // read, which is the right trade for a corpus read far more than written.
+  // Contract 01 §3.2/§3.3/§3.6 were amended to this shape first.
+  //
+  // Drizzle does not model generated columns, so both the column and its index
+  // live here rather than in schema.ts.
+  `ALTER TABLE work_items ADD COLUMN IF NOT EXISTS title_tsv tsvector
+     GENERATED ALWAYS AS (to_tsvector('english', title)) STORED;`,
+  'CREATE INDEX IF NOT EXISTS work_items_title_tsv_idx ON work_items USING GIN (title_tsv);',
+  `ALTER TABLE docs ADD COLUMN IF NOT EXISTS title_tsv tsvector
+     GENERATED ALWAYS AS (to_tsvector('english', coalesce(title, ''))) STORED;`,
+  'CREATE INDEX IF NOT EXISTS docs_title_tsv_idx ON docs USING GIN (title_tsv);',
+
+  // The chunk index contract §3.6 has always named, and which nothing created
+  // until P0-SPIKE-02 went looking. `embeddings.chunk_text` is *the* searchable
+  // body text (§4) — without this, content retrieval is a sequential scan.
+  `ALTER TABLE embeddings ADD COLUMN IF NOT EXISTS chunk_tsv tsvector
+     GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED;`,
+  'CREATE INDEX IF NOT EXISTS embeddings_chunk_tsv_idx ON embeddings USING GIN (chunk_tsv);',
 
   // Append-only audit log (ADR-0030). Never relaxed, not even for MVP —
   // architecture §5 lists it among the never-relaxed invariants.

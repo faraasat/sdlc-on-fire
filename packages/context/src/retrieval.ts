@@ -33,32 +33,47 @@ export function toSearchQuery(text: string): string {
 const CHUNK_CHARS = 1_200;
 
 /**
- * Full-text retriever over the doc mirror.
+ * Full-text retriever over chunked document **content**.
  *
- * Ranks with `ts_rank_cd`, which accounts for term proximity — a doc mentioning
- * both query terms in one paragraph outranks one mentioning them chapters apart.
+ * Searches `embeddings.chunk_text` — the body text the sync pipeline chunks on
+ * write — rather than titles. Retrieving titles would make a pack technically
+ * "narrower than a full-file dump" while carrying no content at all, which is
+ * the letter of the mvp-slice DoD and not its point (P0-SPIKE-02, D3).
+ *
+ * Ranks on the stored `chunk_tsv` column, never on `to_tsvector(chunk_text)`:
+ * re-deriving the vector per candidate row is a measured 23x slower at 50k rows
+ * (P0-SPIKE-02) and the planner cannot use the GIN index for the ORDER BY.
+ *
+ * `ts_rank_cd` accounts for term proximity — a chunk mentioning both query terms
+ * in one paragraph outranks one mentioning them at opposite ends.
  */
 export function createTsvectorRetriever(store: RetrievalStore): Retriever {
   return async (query: string, limit: number): Promise<RetrievedChunk[]> => {
     const search = toSearchQuery(query);
     if (search.length === 0) return [];
 
-    const rows = await store.query<{ id: string; title: string | null; rank: number }>(
-      `SELECT id, title,
-              ts_rank_cd(to_tsvector('english', coalesce(title, '')),
-                         websearch_to_tsquery('english', $1)) AS rank
-         FROM docs
-        WHERE to_tsvector('english', coalesce(title, '')) @@ websearch_to_tsquery('english', $1)
+    const rows = await store.query<{
+      source_id: string;
+      chunk_index: number;
+      chunk_text: string;
+      heading_breadcrumb: string | null;
+      rank: number;
+    }>(
+      `SELECT source_id, chunk_index, chunk_text, heading_breadcrumb,
+              ts_rank_cd(chunk_tsv, websearch_to_tsquery('english', $1)) AS rank
+         FROM embeddings
+        WHERE chunk_tsv @@ websearch_to_tsquery('english', $1)
+          AND tombstoned_at IS NULL
         ORDER BY rank DESC
         LIMIT $2;`,
       [search, limit],
     );
 
     return rows.map((row) => ({
-      id: row.id,
-      text: row.title ?? row.id,
+      id: `${row.source_id}#${String(row.chunk_index)}`,
+      text: row.chunk_text,
       score: Number(row.rank),
-      tokens: Math.ceil((row.title ?? row.id).length / 4),
+      tokens: Math.ceil(row.chunk_text.length / 4),
     }));
   };
 }

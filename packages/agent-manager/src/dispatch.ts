@@ -160,10 +160,65 @@ export async function dispatchSkill(
 }
 
 /**
+ * The result envelope `claude -p --output-format json` prints.
+ *
+ * Only the fields we depend on; the CLI sends more (`session_id`,
+ * `total_cost_usd`, `duration_ms`) that we deliberately do not couple to.
+ * Field names per the CLI reference at code.claude.com/docs/en/cli-reference.
+ */
+interface ClaudeCliEnvelope {
+  readonly result?: unknown;
+  readonly is_error?: unknown;
+  readonly subtype?: unknown;
+}
+
+/**
+ * Unwraps the CLI's JSON envelope down to the agent's own text.
+ *
+ * This is not cosmetic. `--output-format json` prints a wrapper object, so
+ * handing raw stdout to `extractToolOutput` makes it parse the *wrapper* — and
+ * because the wrapper is a valid JSON object, that path does not fail, it
+ * silently returns `{result, is_error, session_id, …}` as though the skill had
+ * produced it. A dispatch that fabricates a plausible result is the precise
+ * failure this system exists to prevent, so the unwrap lives here, in the one
+ * place that knows which flags were passed.
+ *
+ * Anything that is not the expected envelope is passed through untouched: a CLI
+ * that crashed before emitting JSON should surface its actual stderr, not a
+ * parse error about it.
+ */
+function unwrapCliEnvelope(stdout: string): { text: string; failed: boolean; reason?: string } {
+  const trimmed = stdout.trim();
+  if (!trimmed.startsWith('{')) return { text: stdout, failed: false };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return { text: stdout, failed: false };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { text: stdout, failed: false };
+  }
+
+  const envelope = parsed as ClaudeCliEnvelope;
+  if (typeof envelope.result !== 'string') return { text: stdout, failed: false };
+
+  if (envelope.is_error === true) {
+    const subtype = typeof envelope.subtype === 'string' ? envelope.subtype : 'unknown';
+    return { text: envelope.result, failed: true, reason: `target reported is_error (${subtype})` };
+  }
+  return { text: envelope.result, failed: false };
+}
+
+/**
  * Transport that shells out to the Claude Code CLI.
  *
  * Kept behind the `AgentTransport` seam so nothing else in the system knows a
  * CLI is involved — and so tests never need a model.
+ *
+ * Invocation is `-p <prompt> --output-format json`, verified against the CLI
+ * reference (code.claude.com/docs/en/cli-reference, checked 2026-08-10).
  */
 export function claudeCodeTransport(binary = 'claude'): AgentTransport {
   return ({ prompt, cwd, timeoutMs }) =>
@@ -173,10 +228,14 @@ export function claudeCodeTransport(binary = 'claude'): AgentTransport {
         ['-p', prompt, '--output-format', 'json'],
         { cwd, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
         (error, stdout, stderr) => {
+          const unwrapped = unwrapCliEnvelope(stdout);
+          const exitCode = error === null ? 0 : typeof error.code === 'number' ? error.code : 1;
           resolve({
-            stdout,
-            stderr,
-            exitCode: error === null ? 0 : typeof error.code === 'number' ? error.code : 1,
+            stdout: unwrapped.text,
+            // A CLI-reported error exits 0 but sets `is_error`; surface it as a
+            // failure so `dispatchSkill` raises instead of parsing an apology.
+            stderr: unwrapped.failed ? `${stderr}\n${unwrapped.reason ?? ''}`.trim() : stderr,
+            exitCode: unwrapped.failed && exitCode === 0 ? 1 : exitCode,
           });
         },
       );

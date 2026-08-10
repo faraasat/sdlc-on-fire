@@ -3,6 +3,7 @@ import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { contentHash, isManagedContentPath } from '@sdlc-on-fire/core';
+import { chunkFile, indexableText } from '@sdlc-on-fire/context';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import { SelfWriteRegistry } from './self-write-registry.js';
 
@@ -68,6 +69,15 @@ export interface SyncEngineOptions {
    */
   readonly usePolling?: boolean | undefined;
 }
+
+/**
+ * `embeddings.model` for a chunk that is indexed but not embedded.
+ *
+ * The column is NOT NULL (contract §3.6) and v0.1 ships tsvector-only, so the
+ * sentinel says "chunked, deliberately not vectorised" rather than naming a
+ * model that never ran. The v0.2 embedder selects on it to find its backlog.
+ */
+export const UNEMBEDDED_MODEL = 'none';
 
 /** Work-item ID → the `work_items` row; anything else lands in `docs`. */
 function classify(relativePath: string): 'work_item' | 'doc' {
@@ -144,11 +154,20 @@ export class SyncEngine {
     }
 
     const parsed = parseFrontmatter(raw);
+    // Same fallback both tables use for their primary key.
+    const sourceId = typeof parsed.data['id'] === 'string' ? parsed.data['id'] : relativePath;
+
     if (kind === 'work_item') {
       await this.#upsertWorkItem(relativePath, hash, parsed.data);
     } else {
       await this.#upsertDoc(relativePath, hash, parsed.data);
     }
+    await this.#reindexChunks(
+      kind === 'work_item' ? 'work_items' : 'docs',
+      sourceId,
+      relativePath,
+      parsed.body,
+    );
 
     const outcome: SyncOutcome = { relativePath, action: 'upserted', hash, kind };
     await this.#onReEmbed?.(outcome);
@@ -213,9 +232,77 @@ export class SyncEngine {
     );
   }
 
+  /**
+   * Rewrites this source's chunk rows so retrieval can search body text.
+   *
+   * Without this the `embeddings` table stays empty and `createTsvectorRetriever`
+   * has nothing to match — document bodies were parsed and then discarded, so no
+   * content existed in the mirror at all (P0-SPIKE-02, D3).
+   *
+   * Delete-then-insert rather than a diff: chunk boundaries move when a heading
+   * is added, so chunk 4 of the old text and chunk 4 of the new text are not the
+   * same unit and matching them up would be fiction. Both statements run inside
+   * one transaction so a crash cannot leave a doc indexed as zero chunks.
+   *
+   * `embedding` is left NULL — vectors are v0.2 (mvp-slice). The rows are still
+   * useful now because `chunk_tsv` is generated from `chunk_text` on write.
+   */
+  async #reindexChunks(
+    sourceTable: 'work_items' | 'docs',
+    sourceId: string,
+    relativePath: string,
+    body: string,
+  ): Promise<void> {
+    const chunks = chunkFile(body, relativePath);
+
+    await this.#store.query('BEGIN;');
+    try {
+      await this.#store.query(
+        'DELETE FROM embeddings WHERE source_table = $1 AND source_id = $2;',
+        [sourceTable, sourceId],
+      );
+      for (const chunk of chunks) {
+        const text = indexableText(chunk);
+        await this.#store.query(
+          `INSERT INTO embeddings
+             (source_table, source_id, chunk_index, chunk_text, content_hash, model, heading_breadcrumb)
+           VALUES ($1,$2,$3,$4,$5,$6,$7);`,
+          [
+            sourceTable,
+            sourceId,
+            chunk.index,
+            text,
+            contentHash(text),
+            UNEMBEDDED_MODEL,
+            chunk.breadcrumb.length === 0 ? null : chunk.breadcrumb,
+          ],
+        );
+      }
+      await this.#store.query('COMMIT;');
+    } catch (error) {
+      await this.#store.query('ROLLBACK;');
+      throw error;
+    }
+  }
+
   async #delete(relativePath: string): Promise<SyncOutcome> {
-    const table = classify(relativePath) === 'work_item' ? 'work_items' : 'docs';
+    const isWorkItem = classify(relativePath) === 'work_item';
+    const table = isWorkItem ? 'work_items' : 'docs';
+    // Read the id before deleting the row — chunks key on it, not on file_path.
+    const owner = await this.#store.query<{ id: string }>(
+      `SELECT id FROM ${table} WHERE file_path = $1;`,
+      [relativePath],
+    );
     await this.#store.query(`DELETE FROM ${table} WHERE file_path = $1;`, [relativePath]);
+    const id = owner[0]?.id;
+    if (id !== undefined) {
+      // Hard delete, not a tombstone: the file is gone from git, so there is no
+      // source to reconcile against and a stale chunk would retrieve as truth.
+      await this.#store.query(
+        'DELETE FROM embeddings WHERE source_table = $1 AND source_id = $2;',
+        [table, id],
+      );
+    }
     return { relativePath, action: 'deleted' };
   }
 
@@ -229,11 +316,55 @@ export class SyncEngine {
    * thrown: one malformed card must not stop the other nine hundred from
    * reaching the mirror. The caller decides what a partial reconcile means —
    * this method's job is to report accurately, not to give up early.
+   *
+   * Deletions are pruned as well as additions applied. Walking alone converges
+   * the mirror only for files that still exist; a card deleted while the daemon
+   * was stopped would otherwise stay in the mirror forever, and a stale chunk is
+   * retrieved as truth. "Reconcile" has to mean both directions or the mirror is
+   * not rebuildable from the tree (architecture §5, invariant 1).
    */
   async reconcile(): Promise<SyncOutcome[]> {
     const outcomes: SyncOutcome[] = [];
+    const walked: string[] = [];
+
     for (const dir of ['kanban', 'docs']) {
-      outcomes.push(...(await this.#walk(path.join(this.#root, dir))));
+      const absolute = path.join(this.#root, dir);
+      // Only prune under a directory we actually managed to read. A transient
+      // readdir failure must not be mistaken for "the user deleted everything".
+      if (!(await this.#isReadableDir(absolute))) continue;
+      walked.push(dir);
+      outcomes.push(...(await this.#walk(absolute)));
+    }
+
+    outcomes.push(...(await this.#prune(walked, outcomes)));
+    return outcomes;
+  }
+
+  async #isReadableDir(absolute: string): Promise<boolean> {
+    try {
+      await fs.readdir(absolute);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Drops mirror rows (and their chunks) whose source file is gone from disk. */
+  async #prune(walked: readonly string[], seen: readonly SyncOutcome[]): Promise<SyncOutcome[]> {
+    if (walked.length === 0) return [];
+    const present = new Set(seen.map((outcome) => outcome.relativePath));
+    const outcomes: SyncOutcome[] = [];
+
+    for (const table of ['work_items', 'docs'] as const) {
+      const rows = await this.#store.query<{ file_path: string }>(
+        `SELECT file_path FROM ${table};`,
+      );
+      for (const row of rows) {
+        const prefix = row.file_path.split('/')[0] ?? '';
+        if (!walked.includes(prefix)) continue;
+        if (present.has(row.file_path)) continue;
+        outcomes.push(await this.#delete(row.file_path));
+      }
     }
     return outcomes;
   }
