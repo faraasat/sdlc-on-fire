@@ -10,6 +10,7 @@ export * from './git/git-manager.js';
 export * from './sync/self-write-registry.js';
 export * from './sync/sync-engine.js';
 export * from './lifecycle/engine.js';
+export * from './pr/generate.js';
 
 /**
  * Identity of the `@sdlc-on-fire/daemon` package. The daemon owns the Git Manager

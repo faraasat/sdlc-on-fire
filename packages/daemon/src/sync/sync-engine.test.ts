@@ -189,19 +189,59 @@ describe('startup reconciliation', () => {
 });
 
 describe('watching', () => {
-  it('picks up a file created after start', async () => {
-    await engine.start();
+  it('picks up a file created after start and reports the outcome', async () => {
+    // Awaits the engine's own signal rather than polling the database: a poll
+    // deadline turns event-delivery latency into a flaky test, and this suite's
+    // credibility is the product's core claim.
+    const outcomes: SyncOutcome[] = [];
+    let resolveSynced: (() => void) | undefined;
+    const synced = new Promise<void>((resolve) => {
+      resolveSynced = resolve;
+    });
+
+    const watched = new SyncEngine({
+      workspaceRoot: root,
+      store: db,
+      onSynced: (outcome) => {
+        outcomes.push(outcome);
+        if (outcome.relativePath.endsWith('TASK-200.md')) resolveSynced?.();
+      },
+    });
+
+    await watched.start();
     await write('kanban/epics/e/TASK-200.md', taskFile('TASK-200', 'Watched'));
+    await synced;
+    await watched.stop();
 
-    // awaitWriteFinish plus event delivery; poll rather than guess a sleep.
-    const deadline = Date.now() + 15_000;
-    let found: Record<string, unknown>[] = [];
-    while (Date.now() < deadline && found.length === 0) {
-      found = await rows('work_items', 'kanban/epics/e/TASK-200.md');
-      if (found.length === 0) await new Promise((r) => setTimeout(r, 100));
-    }
+    const seen = outcomes.find((o) => o.relativePath.endsWith('TASK-200.md'));
+    expect(seen?.action).toBe('upserted');
+    expect(await rows('work_items', 'kanban/epics/e/TASK-200.md')).toHaveLength(1);
+  }, 60_000);
 
-    expect(found).toHaveLength(1);
-    await engine.stop();
-  }, 30_000);
+  it('reports a watcher-side failure instead of swallowing it', async () => {
+    // A silently dropped sync leaves the mirror wrong with nothing to show.
+    const failures: SyncOutcome[] = [];
+    let resolveFailed: (() => void) | undefined;
+    const failed = new Promise<void>((resolve) => {
+      resolveFailed = resolve;
+    });
+
+    const watched = new SyncEngine({
+      workspaceRoot: root,
+      store: db,
+      onSynced: (outcome) => {
+        if (outcome.action === 'failed') {
+          failures.push(outcome);
+          resolveFailed?.();
+        }
+      },
+    });
+
+    await watched.start();
+    await write('kanban/epics/e/TASK-201.md', '---\ntitle: no id\n---\n\nbody\n');
+    await failed;
+    await watched.stop();
+
+    expect(failures[0]?.error).toMatch(/no id/);
+  }, 60_000);
 });

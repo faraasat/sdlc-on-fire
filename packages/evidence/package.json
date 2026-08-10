@@ -36,6 +36,7 @@
   },
   "dependencies": {
     "@sdlc-on-fire/core": "workspace:*",
+    "@sdlc-on-fire/db": "workspace:*",
     "zod": "4.4.3"
   }
 }

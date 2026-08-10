@@ -38,11 +38,22 @@ export interface SyncOutcome {
  */
 export type ReEmbedHook = (outcome: SyncOutcome) => void | Promise<void>;
 
+/**
+ * Called after every watcher-driven sync, success or failure.
+ *
+ * The watcher runs detached from any caller, so without this the daemon has no
+ * way to report that a file failed to sync — and a silently dropped sync is
+ * precisely the "looks fine, isn't" failure this product exists to prevent.
+ */
+export type SyncObserver = (outcome: SyncOutcome) => void;
+
 export interface SyncEngineOptions {
   readonly workspaceRoot: string;
   readonly store: SyncStore;
   readonly onReEmbed?: ReEmbedHook | undefined;
   readonly registry?: SelfWriteRegistry | undefined;
+  /** Notified after every watcher-driven sync. Errors arrive as `failed` outcomes. */
+  readonly onSynced?: SyncObserver | undefined;
   /** Stability window for editor atomic-saves and agent write bursts. */
   readonly awaitWriteFinishMs?: number | undefined;
 }
@@ -65,6 +76,7 @@ export class SyncEngine {
   readonly #store: SyncStore;
   readonly #registry: SelfWriteRegistry;
   readonly #onReEmbed: ReEmbedHook | undefined;
+  readonly #onSynced: SyncObserver | undefined;
   readonly #awaitWriteFinishMs: number;
   #watcher: FSWatcher | undefined;
 
@@ -73,6 +85,7 @@ export class SyncEngine {
     this.#store = options.store;
     this.#registry = options.registry ?? new SelfWriteRegistry();
     this.#onReEmbed = options.onReEmbed;
+    this.#onSynced = options.onSynced;
     this.#awaitWriteFinishMs = options.awaitWriteFinishMs ?? 300;
   }
 
@@ -263,7 +276,19 @@ export class SyncEngine {
       if (!absolutePath.endsWith('.md')) return;
       const relative = path.relative(this.#root, absolutePath).replace(/\\/g, '/');
       if (!isManagedContentPath(relative)) return;
-      void this.syncFile(absolutePath).catch(() => undefined);
+
+      // Never swallowed: a failure becomes a `failed` outcome the observer sees.
+      // Silently dropping it would leave the mirror wrong with nothing to show
+      // for it, which is the exact failure mode this product exists to prevent.
+      void this.syncFile(absolutePath)
+        .then((outcome) => this.#onSynced?.(outcome))
+        .catch((cause: unknown) => {
+          this.#onSynced?.({
+            relativePath: relative,
+            action: 'failed',
+            error: cause instanceof Error ? cause.message : String(cause),
+          });
+        });
     };
 
     this.#watcher.on('add', handle).on('change', handle).on('unlink', handle);

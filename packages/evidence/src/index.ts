@@ -1,6 +1,8 @@
 export * from './parsers.js';
 export * from './runner.js';
 export * from './evaluate-gate.js';
+export * from './gate-record.js';
+export * from './constitution-compile.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
