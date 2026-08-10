@@ -35,6 +35,7 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@sdlc-on-fire/core": "workspace:*"
+    "@sdlc-on-fire/core": "workspace:*",
+    "zod": "4.4.3"
   }
 }

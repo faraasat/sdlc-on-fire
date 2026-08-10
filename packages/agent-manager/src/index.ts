@@ -2,6 +2,7 @@ export * from './port.js';
 export * from './prompt.js';
 export * from './adapters/claude-code.js';
 export * from './doctor.js';
+export * from './skills/canonical.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
