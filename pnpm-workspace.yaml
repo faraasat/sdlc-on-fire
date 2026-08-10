@@ -7,3 +7,14 @@ allowBuilds:
   # esbuild's postinstall resolves the platform-native binary that tsup and
   # Vitest both execute. Without it neither build nor test can run.
   esbuild: true
+  # The optional local-embedding runtime (P1-CTX-04). `onnxruntime-node`'s script
+  # fetches the platform-native binary; without it there is no local inference at
+  # all, and `protobufjs`/`sharp` arrive with it.
+  #
+  # Granted, and the grant is why `@huggingface/transformers` is an **optional**
+  # dependency: a workspace unwilling to run these installs without it, and the
+  # semantic retrieval leg then fails closed to lexical — which is the behaviour
+  # contracts/05 §5.2 already specifies rather than a degradation invented here.
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true

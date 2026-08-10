@@ -328,23 +328,46 @@ export class PostgresStorageAdapter implements StoragePort {
   ): Promise<void> {
     const name = assertTable(table);
     await this.#atomic(async (tx) => {
+      // Carry vectors across the replace, keyed by content hash (P1-CTX-04).
+      //
+      // The delete-and-reinsert is deliberate — chunk boundaries move when a
+      // heading changes, so chunk 4 before and chunk 4 after are not the same
+      // unit. But dropping the *vectors* with them would make every sync a full
+      // re-embed and leave content-hash freshness doing nothing at all: the
+      // worker would find an empty corpus every time and pay for the whole
+      // thing again.
+      const previous = await tx.query<{
+        content_hash: string;
+        model: string;
+        embedding: string | null;
+      }>(
+        `SELECT content_hash, model, embedding::text AS embedding
+           FROM embeddings
+          WHERE source_table = $1 AND source_id = $2 AND embedding IS NOT NULL;`,
+        [name, sourceId],
+      );
+      const vectorByHash = new Map(previous.map((row) => [row.content_hash, row]));
+
       await tx.query('DELETE FROM embeddings WHERE source_table = $1 AND source_id = $2;', [
         name,
         sourceId,
       ]);
       for (const chunk of chunks) {
+        const kept = vectorByHash.get(chunk.contentHash);
         await tx.query(
           `INSERT INTO embeddings
-             (source_table, source_id, chunk_index, chunk_text, content_hash, model, heading_breadcrumb)
-           VALUES ($1,$2,$3,$4,$5,$6,$7);`,
+             (source_table, source_id, chunk_index, chunk_text, content_hash, model,
+              heading_breadcrumb, embedding)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8::vector);`,
           [
             name,
             sourceId,
             chunk.index,
             chunk.text,
             chunk.contentHash,
-            UNEMBEDDED_MODEL,
+            kept?.model ?? UNEMBEDDED_MODEL,
             chunk.breadcrumb ?? null,
+            kept?.embedding ?? null,
           ],
         );
       }

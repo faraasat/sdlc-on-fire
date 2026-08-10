@@ -49,6 +49,11 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS embeddings_hnsw_idx ON embeddings
      USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 96);`,
   'CREATE INDEX IF NOT EXISTS embeddings_source_idx ON embeddings (source_table, source_id);',
+  // One row per (source, chunk). The embeddings worker upserts on this key, and
+  // without it a re-embed inserts a second vector for the same chunk — both
+  // live, both returned by a search, one of them stale.
+  `CREATE UNIQUE INDEX IF NOT EXISTS embeddings_chunk_uniq
+     ON embeddings (source_table, source_id, chunk_index);`,
 
   // ── Full-text search for the v0.1 tsvector-only retrieval path (mvp-slice) ──
   //

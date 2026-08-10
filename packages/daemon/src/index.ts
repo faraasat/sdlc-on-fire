@@ -6,6 +6,8 @@ import { contextPackage } from '@sdlc-on-fire/context';
 import { evidencePackage } from '@sdlc-on-fire/evidence';
 
 export * from './checkpoint.js';
+export * from './embedder/onnx.js';
+export * from './embedder/worker.js';
 export * from './sandbox/tiers.js';
 export * from './sandbox/exec.js';
 export * from './sandbox/watchdog.js';
