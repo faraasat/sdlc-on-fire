@@ -7,6 +7,7 @@ const execFileAsync = promisify(execFile);
 import { parse as parseYaml } from 'yaml';
 import {
   DOCS_ROOT_FILES,
+  INDEXED_DIRECTORIES,
   EAGER_DIRECTORIES,
   EAGER_STATE_SUBDIRS,
   GITIGNORE_ENTRIES,
@@ -137,6 +138,12 @@ export async function init(root: string): Promise<InitResult> {
 
   for (const file of ROOT_FILES) {
     await ensureFile(path.join(layout.root, file), `# ${file.replace(/\.md$/, '')}\n`);
+  }
+
+  // Index-first (ADR-0053): a folder without a README is a folder an agent has
+  // to scan, and an index nobody created at `init` is one nobody creates later.
+  for (const [dir, contents] of Object.entries(INDEXED_DIRECTORIES)) {
+    await ensureFile(path.join(layout.root, dir, 'README.md'), contents);
   }
 
   // Honour the config's doc-generation toggles rather than always emitting the

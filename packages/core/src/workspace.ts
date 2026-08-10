@@ -65,8 +65,49 @@ export const EAGER_DIRECTORIES = [
   'kanban/_inbox',
   'kanban/epics',
   'docs/architectural-design-decisions',
+  // Where a stage hands off to a human or to the next initiative (ADR-0050,
+  // contracts/06). Created eagerly because a handoff written into a directory
+  // that does not exist yet gets written somewhere else instead.
+  'docs/handoff',
   'docs/assets/screenshots',
 ] as const;
+
+/**
+ * Folders whose README is scaffolded, per ADR-0053's index-first rule.
+ *
+ * A folder without one is a folder an agent has to scan, which is the cost the
+ * rule exists to avoid — and an index nobody created at `init` is one nobody
+ * creates later either.
+ */
+export const INDEXED_DIRECTORIES: Readonly<Record<string, string>> = {
+  'docs/architectural-design-decisions':
+    '# Architectural decisions\n\nGlobal, cross-cutting decisions that shape the whole project.\n' +
+    'One decision per file, `ADR-NNNN-slug.md`, listed here.\n\n' +
+    'A decision that constrains work **outside** its initiative belongs here. One that\n' +
+    "binds a single epic belongs in that initiative's `decisions/`, and is promoted here\n" +
+    'by a superseding global ADR if its scope grows (ADR-0050).\n\n| ADR | Title |\n|---|---|\n',
+  'docs/handoff':
+    '# Handoffs\n\nWhat one stage or initiative handed the next: decisions made, questions\n' +
+    'still open, and what the next stage needs. Structured rather than prose, so\n' +
+    'nothing is silently dropped between stages (ADR-0021).\n',
+};
+
+/** Files a per-initiative plan folder gets (contracts/06, ADR-0049/0050). */
+export const INITIATIVE_FILES: Readonly<Record<string, string>> = {
+  'README.md': '# {title}\n\nOne paragraph on what this initiative is for, and what it is not.\n',
+  'qna.md':
+    '# Q&A\n\nThe requirement echo-back exchange: what the agent understood, what it\n' +
+    'asked, and what the human answered (ADR-0049).\n',
+  'human-loop.md':
+    '# Human loop\n\nEvery decision a human made on this initiative, with who and when.\n',
+  'VERIFICATION.md':
+    '# Verification\n\nHow this initiative was checked, with the commands that were actually\n' +
+    'run and their output. A claim that something passed is not an entry here.\n',
+  'UAT.md':
+    '# UAT\n\nWhat a person tried, in their own words, and what happened. Kept separate\n' +
+    'from VERIFICATION.md because a passing suite and a satisfied user are\n' +
+    'different claims, and one has never implied the other.\n',
+};
 
 /** State-dir subdirectories created at `init`. `cache/` and `locks/` are lazy (contract §7). */
 export const EAGER_STATE_SUBDIRS = ['db', 'logs'] as const;

@@ -53,6 +53,13 @@ import { scoreWorkItem } from './spec-score.js';
 import { approveEchoBack, readEchoBack, recordEchoBack } from './echo.js';
 import { directivesFor, postComment } from './comment.js';
 import { checkDocs, formatDocsCheck } from './docs-check.js';
+import {
+  createInitiative,
+  docHealth,
+  formatDocHealth,
+  INITIATIVE_KINDS,
+  type InitiativeKind,
+} from './initiative.js';
 import { queueFor } from './queue.js';
 import { scanQuality } from './quality.js';
 import {
@@ -92,6 +99,10 @@ export const cliDependencies: readonly PackageInfo[] = [
  */
 
 /** Accumulates a repeatable option into an array. */
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
@@ -867,6 +878,44 @@ export function buildProgram(): Command {
       emit(result, options.json === true, formatDocsCheck);
       // Advisory findings deliberately do not affect the exit code.
       if (!result.report.ok) process.exitCode = 1;
+    });
+
+  program
+    .command('initiative')
+    .argument('<kind>', INITIATIVE_KINDS.join(' | '))
+    .argument('<title>', 'what this initiative is for')
+    .description('scaffold a dated plan folder with its decisions, Q&A, verification and UAT')
+    .option('--date <yyyy-mm-dd>', 'the date this initiative belongs to', todayIso())
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        kind: string,
+        title: string,
+        options: { date?: string; json?: boolean },
+      ): Promise<void> => {
+        if (!(INITIATIVE_KINDS as readonly string[]).includes(kind)) {
+          throw new Error(`unknown kind "${kind}" — expected ${INITIATIVE_KINDS.join(', ')}`);
+        }
+        const result = await createInitiative(root(), {
+          kind: kind as InitiativeKind,
+          title,
+          date: options.date ?? todayIso(),
+        });
+        emit(result, options.json === true, (r: typeof result) =>
+          [`${r.dir}`, ...r.created.map((file) => `  + ${file}`)].join('\n'),
+        );
+      },
+    );
+
+  program
+    .command('doc-health')
+    .description('corpus-level documentation problems: orphans, missing indexes, redundancy')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await docHealth(root());
+      emit(result, options.json === true, formatDocHealth);
+      // No non-zero exit. Every finding is advisory, and an exit code would
+      // make a lexical redundancy guess fail somebody's build.
     });
 
   program
