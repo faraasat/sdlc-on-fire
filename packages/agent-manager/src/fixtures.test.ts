@@ -23,6 +23,7 @@ const fixture = (over: Partial<SkillFixture>): SkillFixture =>
       summary: 'CSV export',
       acceptance_criteria: ['GIVEN a table WHEN export THEN a .csv is written'],
       non_goals: ['multi-currency'],
+      handoff: { openQuestions: [] },
     })}`,
     assertions: [{ path: 'summary', equals: 'CSV export' }],
     ...over,
@@ -51,6 +52,7 @@ describe('replaying a fixture', () => {
       summary: 'x',
       acceptance_criteria: ['GIVEN a WHEN b THEN c'],
       non_goals: ['none'],
+      handoff: { openQuestions: [] },
       // Present and empty. `acceptance_criteria` can no longer be used to make
       // this point — the output contract refuses an empty one outright — so the
       // distinction is drawn on a field the schema does allow to be empty.
@@ -93,6 +95,7 @@ describe('fixtures that pin a rejection', () => {
       summary: 'x',
       acceptance_criteria: ['GIVEN a WHEN b THEN c'],
       non_goals: ['none'],
+      handoff: { openQuestions: [] },
       testsPassed: true,
     })}`;
     const result = runFixtures(SPEC_SKILL, [

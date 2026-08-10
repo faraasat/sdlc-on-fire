@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AuthoredHandoffSchema } from '@sdlc-on-fire/core';
 
 /**
  * What each skill's output contract actually means (P1-SKILL-01..03).
@@ -38,6 +39,14 @@ export const SpecOutputSchema = z
      */
     non_goals: z.array(z.string().min(1)).min(1),
     open_questions: z.array(z.string().min(1)).default([]),
+    /**
+     * Required, not optional (ADR-0021, P1-CTX-07). An optional handoff is a
+     * handoff no stage writes: the free-text summary would keep working, the
+     * typed one would stay empty, and nothing would ever notice. `openQuestions`
+     * still has to be *stated*, so "we resolved everything" and "we forgot to
+     * carry them" remain distinguishable.
+     */
+    handoff: AuthoredHandoffSchema,
   })
   .strict();
 
@@ -50,6 +59,8 @@ export const ImplementOutputSchema = z
     /** Which acceptance criteria this addresses, by index or text. */
     criteria_addressed: z.array(z.string().min(1)).default([]),
     notes: z.string().default(''),
+    /** Required at the boundary — see {@link SpecOutputSchema}. */
+    handoff: AuthoredHandoffSchema,
   })
   .strict();
 
@@ -73,6 +84,8 @@ export const ReviewOutputSchema = z
           .strict(),
       )
       .min(1),
+    /** Required at the boundary — see {@link SpecOutputSchema}. */
+    handoff: AuthoredHandoffSchema,
   })
   .strict();
 

@@ -15,6 +15,7 @@ export * from './evidence.js';
 export * from './focus.js';
 export * from './run.js';
 export * from './context.js';
+export * from './handoff.js';
 export * from './memory.js';
 export * from './memory-entry.js';
 export * from './workspace.js';

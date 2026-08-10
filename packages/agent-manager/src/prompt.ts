@@ -1,4 +1,5 @@
 import { PROMPT_SECTION_ORDER, type CanonicalSkill, type PromptSection } from '@sdlc-on-fire/core';
+import { outputJsonSchema } from './skills/output-schemas.js';
 
 /**
  * Stage-skill prompt assembly, per contracts/04-skill-ir.md §2.3 and ADR-0018.
@@ -94,13 +95,24 @@ function sectionContent(
       return fillSlots(skill.task, slots.variables);
     case 'examples':
       return slots.examples ?? null;
-    case 'output-contract':
-      // Names the tool and points at the schema — never prose describing a shape.
+    case 'output-contract': {
+      // Names the tool and inlines the schema — never prose describing a shape.
+      //
+      // The reference alone used to be the whole section, and it pointed at a
+      // path the workspace scaffolder (P0-CLI-03, deferred) has not written yet.
+      // An agent asked to satisfy a file it cannot open satisfies whatever it
+      // guesses, and every field added to a contract since — `non_goals`, and now
+      // the ADR-0021 `handoff` — would be a field nothing ever told it about.
+      const json = outputJsonSchema(skill.output_contract.json_schema_ref);
       return [
         `Emit your result by calling the \`${skill.output_contract.tool_name}\` tool.`,
-        `Its arguments must validate against \`${skill.output_contract.json_schema_ref}\`.`,
+        `Its arguments must validate against \`${skill.output_contract.json_schema_ref}\`:`,
+        json === undefined
+          ? '(schema unresolved — refuse to emit and report this)'
+          : `\`\`\`json\n${JSON.stringify(json, null, 2)}\n\`\`\``,
         'Do not emit the result as prose.',
       ].join('\n');
+    }
     case 'self-verification':
       return skill.self_verification ?? null;
     case 'stop-condition':

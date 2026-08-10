@@ -228,7 +228,9 @@ describe('the walking skeleton, end to end', () => {
     const transport: AgentTransport = () =>
       Promise.resolve({
         stdout:
-          'implement_output {"work_item_id":"TASK-001","files_changed":["src/csv.ts"],"summary":"Added CSV export."}',
+          'implement_output {"work_item_id":"TASK-001","files_changed":["src/csv.ts"],' +
+          '"summary":"Added CSV export.","handoff":{"openQuestions":[],' +
+          '"requiredInputs":["the failing test"]}}',
         stderr: '',
         exitCode: 0,
       });
@@ -244,6 +246,8 @@ describe('the walking skeleton, end to end', () => {
 
     expect(result.skill).toBe('implement');
     expect(result.output).toMatchObject({ summary: 'Added CSV export.' });
+    // And the boundary carries structure, not prose (P1-CTX-07, ADR-0021).
+    expect(result.output).toMatchObject({ handoff: { requiredInputs: ['the failing test'] } });
   });
 
   it('9c — a dispatched agent cannot report its own tests as passing', async () => {

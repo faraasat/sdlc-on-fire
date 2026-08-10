@@ -2,6 +2,7 @@ export * from './assemble.js';
 export * from './metrics.js';
 export * from './retrieval.js';
 export * from './chunking.js';
+export * from './rehydrate.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';

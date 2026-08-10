@@ -10,6 +10,7 @@ export * from './skills/output-schemas.js';
 export * from './tier-router.js';
 export * from './fixtures.js';
 export * from './isolation.js';
+export * from './handoff.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';

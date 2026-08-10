@@ -33,6 +33,7 @@ const specOutput = (extra: Record<string, unknown>): Record<string, unknown> => 
   summary: 'CSV export',
   acceptance_criteria: ['GIVEN a table WHEN exported THEN a .csv is written'],
   non_goals: ['multi-currency'],
+  handoff: { openQuestions: [] },
   ...extra,
 });
 
@@ -145,5 +146,78 @@ describe('which skills run isolated', () => {
     expect(runsIsolated(REVIEW_SKILL)).toBe(true);
     expect(runsIsolated(SPEC_SKILL)).toBe(false);
     expect(runsIsolated(IMPLEMENT_SKILL)).toBe(false);
+  });
+});
+
+describe('the stage boundary (P1-CTX-07)', () => {
+  const boundary = (extra: Record<string, unknown> = {}) => ({
+    runId: 'run-b',
+    workItemId: 'FEAT-001',
+    from: 'spec' as const,
+    to: 'plan' as const,
+    stateDir: dir,
+    ...extra,
+  });
+
+  it('does not look for a handoff when no boundary was declared', async () => {
+    const result = await dispatchIsolated(request, transportReturning({}), {
+      artifactDir: dir,
+      runId: 'no-boundary',
+    });
+    expect(result.handoff).toBeNull();
+    expect(result.handoffRejection).toBeUndefined();
+  });
+
+  it('validates, stamps and persists the handoff at a boundary', async () => {
+    const result = await dispatchIsolated(
+      request,
+      transportReturning({
+        handoff: {
+          openQuestions: ['does the importer need CSV?'],
+          decisions: [{ statement: 'ship JSON first', because: 'both pilots export JSON' }],
+          requiredInputs: ['the schema file'],
+        },
+      }),
+      { artifactDir: dir, runId: 'boundary', boundary: boundary() },
+    );
+
+    expect(result.handoff?.from).toBe('spec');
+    expect(result.handoff?.to).toBe('plan');
+    // Identity comes from the orchestrator, which knows where it dispatched to.
+    expect(result.handoff?.runId).toBe('run-b');
+    expect(result.handoff?.openQuestions).toEqual(['does the importer need CSV?']);
+
+    const onDisk = JSON.parse(await fs.readFile(result.handoffPath ?? '', 'utf8')) as {
+      requiredInputs: string[];
+    };
+    expect(onDisk.requiredInputs).toEqual(['the schema file']);
+  });
+
+  it('reports a dropped open question instead of accepting the boundary', async () => {
+    const previous = {
+      schema_version: '1' as const,
+      runId: 'run-b',
+      workItemId: 'FEAT-001',
+      from: 'intake' as const,
+      to: 'spec' as const,
+      decisions: [],
+      openQuestions: ['who owns the retry budget?'],
+      artifacts: [],
+      requiredInputs: [],
+      notes: '',
+    };
+
+    const result = await dispatchIsolated(
+      request,
+      transportReturning({ handoff: { openQuestions: [] } }),
+      { artifactDir: dir, runId: 'dropped', boundary: boundary({ previous }) },
+    );
+
+    // The stage ran and produced valid output; what it handed forward is not
+    // consumable, and that has to be visible rather than absorbed.
+    expect(result.handoff).toBeNull();
+    expect(result.handoffRejection?.reason).toBe('structural');
+    expect(result.handoffRejection?.detail).toContain('retry budget');
+    expect(result.summary).toContain('CSV export');
   });
 });

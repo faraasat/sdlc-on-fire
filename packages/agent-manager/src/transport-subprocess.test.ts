@@ -67,7 +67,7 @@ describe('claudeCodeTransport over a real process', () => {
          result: 'emit_spec ' + JSON.stringify({
            work_item_id: 'FEAT-001', summary: 'CSV export',
            acceptance_criteria: ['GIVEN a table WHEN exported THEN a .csv is written'],
-           non_goals: ['multi-currency'], open_questions: argv,
+           non_goals: ['multi-currency'], handoff: { openQuestions: [] }, open_questions: argv,
          }),
          session_id: 'x', total_cost_usd: 0,
        }));`,
@@ -90,7 +90,7 @@ describe('claudeCodeTransport over a real process', () => {
          result: 'emit_spec ' + JSON.stringify({
            work_item_id: 'FEAT-001', summary: 'CSV export',
            acceptance_criteria: ['GIVEN a table WHEN exported THEN a .csv is written'],
-           non_goals: ['multi-currency'],
+           non_goals: ['multi-currency'], handoff: { openQuestions: [] },
          }),
          session_id: 'abc123', total_cost_usd: 0.014,
        }));`,
@@ -138,7 +138,7 @@ describe('claudeCodeTransport over a real process', () => {
          result: 'emit_spec ' + JSON.stringify({
            work_item_id: 'FEAT-001', summary: 'x',
            acceptance_criteria: ['GIVEN a WHEN b THEN c'],
-           non_goals: ['none'], testsPassed: true,
+           non_goals: ['none'], handoff: { openQuestions: [] }, testsPassed: true,
          }),
          session_id: 'x', total_cost_usd: 0,
        }));`,
@@ -164,7 +164,7 @@ describe('claudeCodeTransport over a real process', () => {
            result: 'emit_spec ' + JSON.stringify({
              work_item_id: 'FEAT-001', summary: 'CSV export',
              acceptance_criteria: ['GIVEN a table WHEN exported THEN a .csv is written'],
-             non_goals: ['multi-currency'], open_questions: [String(seen.length)],
+             non_goals: ['multi-currency'], handoff: { openQuestions: [] }, open_questions: [String(seen.length)],
            }),
            session_id: 'x', total_cost_usd: 0,
          }));

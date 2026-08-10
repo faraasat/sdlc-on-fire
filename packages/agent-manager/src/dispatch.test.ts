@@ -15,7 +15,7 @@ function transport(stdout: string, exitCode = 0): AgentTransport {
   return () => Promise.resolve({ stdout, stderr: '', exitCode });
 }
 
-const goodOutput = `implement_output {"work_item_id":"TASK-001","summary":"Added export.","files_changed":["src/csv.ts"]}`;
+const goodOutput = `implement_output {"work_item_id":"TASK-001","summary":"Added export.","files_changed":["src/csv.ts"],"handoff":{"openQuestions":[]}}`;
 
 describe('output extraction', () => {
   it('pulls the payload after the declared tool name', () => {
@@ -23,6 +23,7 @@ describe('output extraction', () => {
       work_item_id: 'TASK-001',
       files_changed: ['src/csv.ts'],
       summary: 'Added export.',
+      handoff: { openQuestions: [] },
     });
   });
 
@@ -46,7 +47,7 @@ describe('output extraction', () => {
   it('refuses a non-object payload', () => {
     expect(() =>
       extractToolOutput(
-        `implement_output {"work_item_id":"TASK-001","summary":"Added export.","files_changed":["src/csv.ts"]}[1,2]`,
+        `implement_output {"work_item_id":"TASK-001","summary":"Added export.","files_changed":["src/csv.ts"],"handoff":{"openQuestions":[]}}[1,2]`,
         IMPLEMENT_SKILL,
       ),
     ).not.toThrow();
@@ -59,14 +60,14 @@ describe('output extraction', () => {
 describe('the agent cannot self-report verification', () => {
   it.each(FORBIDDEN_OUTPUT_FIELDS)('rejects an output claiming %s', (field) => {
     // The whole product in one assertion: the daemon runs verify, not the agent.
-    const payload = `implement_output {"work_item_id":"TASK-001","summary":"done","files_changed":["a.ts"],"${field}":true}`;
+    const payload = `implement_output {"work_item_id":"TASK-001","summary":"done","files_changed":["a.ts"],"handoff":{"openQuestions":[]},"${field}":true}`;
     expect(() => extractToolOutput(payload, IMPLEMENT_SKILL)).toThrow(OutputContractError);
   });
 
   it('names the offending field so the skill author can fix it', () => {
     try {
       extractToolOutput(
-        'implement_output {"work_item_id":"TASK-001","summary":"d","files_changed":["a.ts"],"verified":true}',
+        'implement_output {"work_item_id":"TASK-001","summary":"d","files_changed":["a.ts"],"handoff":{"openQuestions":[]},"verified":true}',
         IMPLEMENT_SKILL,
       );
       expect.unreachable();

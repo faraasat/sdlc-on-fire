@@ -40,6 +40,7 @@ describe('the spec contract enforces what the skill asks for', () => {
     summary: 'Export invoices as CSV.',
     acceptance_criteria: ['GIVEN a ledger WHEN exported THEN each row is one invoice'],
     non_goals: ['multi-currency'],
+    handoff: { openQuestions: [] },
   };
 
   it('accepts a spec that meets its own stated bar', () => {

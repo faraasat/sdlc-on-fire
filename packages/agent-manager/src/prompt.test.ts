@@ -5,6 +5,7 @@ import {
 } from '@sdlc-on-fire/core';
 import { describe, expect, it } from 'vitest';
 import { fillSlots, renderPrompt, UnresolvedSlotError } from './prompt.js';
+import { IMPLEMENT_SKILL } from './skills/canonical.js';
 
 function skill(overrides: Record<string, unknown> = {}): CanonicalSkill {
   return CanonicalSkillSchema.parse({
@@ -123,6 +124,24 @@ describe('output contract', () => {
     expect(rendered.text).toContain('implement_output');
     expect(rendered.text).toContain('schemas/impl.json');
     expect(rendered.text).toContain('Do not emit the result as prose.');
+  });
+
+  it('says the schema is unresolved rather than pointing at a file that is not there', () => {
+    // `schemas/impl.json` is this fixture's invented ref. An agent told to
+    // satisfy a schema it cannot open satisfies whatever it guesses.
+    const rendered = renderPrompt(skill(), { variables });
+    expect(rendered.text).toContain('schema unresolved');
+  });
+
+  it('inlines the real schema, including the fields added since the ref was written', () => {
+    const rendered = renderPrompt(IMPLEMENT_SKILL, {
+      variables: { work_item_id: 'TASK-001', work_item_title: 'Add CSV export' },
+    });
+    // The contract requires a handoff (ADR-0021). If the prompt never says so,
+    // every real dispatch fails the contract it was never shown.
+    expect(rendered.text).toContain('"handoff"');
+    expect(rendered.text).toContain('openQuestions');
+    expect(rendered.text).toContain('files_changed');
   });
 });
 
