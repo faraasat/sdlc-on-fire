@@ -97,13 +97,16 @@ describe('compilation', () => {
     expect(content).not.toContain('deprecated_since');
   });
 
-  it('warns on a deprecated skill without refusing to compile it', () => {
-    // Refusing would break a working workspace on upgrade.
+  it('compiles a deprecated skill rather than refusing', () => {
+    // Refusing would break a working workspace on upgrade. Reporting the
+    // retirement is `runDoctor`'s job, not this adapter's — deprecation is a
+    // property of the skill, so emitting it here repeated the same notice once
+    // per configured target (P0-AGENT-05).
     const result = adapter.compileSkill(
       skill({ deprecation: { deprecated_since: '0.1.0', removal_tier: 'warn' } }),
     );
     expect(result.files).toHaveLength(1);
-    expect(result.warnings.some((w) => w.field === 'deprecation')).toBe(true);
+    expect(result.warnings.some((w) => w.field === 'deprecation')).toBe(false);
   });
 });
 

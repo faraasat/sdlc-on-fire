@@ -15,6 +15,13 @@ import {
  * be a security boundary quietly removed.
  */
 
+/**
+ * Fields the doctor reports directly, so the generic `dropped` notice stays
+ * quiet about them. `deprecation` is doctor-only by design — it never reaches an
+ * agent surface — and saying so twice per adapter buries the retirement notice.
+ */
+const DOCTOR_OWNED_FIELDS = new Set<string>(['deprecation']);
+
 export interface DoctorFinding extends CompileWarning {
   readonly skill?: string | undefined;
 }
@@ -39,6 +46,14 @@ export interface DoctorInput {
  */
 export function runDoctor(input: DoctorInput): DoctorReport {
   const findings: DoctorFinding[] = [];
+
+  // Deprecation is a property of the skill, not of any target, so it is checked
+  // once per skill rather than once per (skill, adapter) pair — otherwise a
+  // three-adapter setup reports the same retirement three times and operators
+  // learn to skim past it.
+  for (const skill of input.skills) {
+    findings.push(...deprecationFindings(skill));
+  }
 
   for (const adapter of input.adapters) {
     // A missing capability row is an adapter defect, not a skill defect, so it
@@ -72,6 +87,9 @@ export function runDoctor(input: DoctorInput): DoctorReport {
       // field nobody uses is noise, but one for a field in use is information.
       for (const row of adapter.capabilityTable) {
         if (row.support !== 'dropped') continue;
+        // Except fields the doctor already reports itself, and better: two
+        // findings about one fact is how a report stops being read.
+        if (DOCTOR_OWNED_FIELDS.has(row.field)) continue;
         const value = (skill as unknown as Record<string, unknown>)[row.field];
         if (value === undefined) continue;
         findings.push({
@@ -90,6 +108,43 @@ export function runDoctor(input: DoctorInput): DoctorReport {
   }
 
   return { findings, ok: !findings.some((finding) => finding.severity === 'error') };
+}
+
+/**
+ * Turns tiered deprecation metadata into findings (P0-AGENT-05, ADR-0034).
+ *
+ * The tiers escalate on purpose: `warn` says a replacement exists, `error`
+ * blocks, and `removed` reports a skill that should no longer be present at all.
+ * Severity is read from the declared tier rather than inferred from dates —
+ * a date-driven rule would change a build's outcome with no commit behind it.
+ */
+function deprecationFindings(skill: CanonicalSkill): DoctorFinding[] {
+  const deprecation = skill.deprecation;
+  if (deprecation === undefined) return [];
+
+  const replacement =
+    deprecation.replacement_ref === undefined
+      ? ' No replacement is declared, so callers have nowhere to go — that is itself a defect.'
+      : ` Use "${deprecation.replacement_ref}" instead.`;
+
+  const severity = deprecation.removal_tier === 'warn' ? ('warning' as const) : ('error' as const);
+
+  const what =
+    deprecation.removal_tier === 'removed'
+      ? 'was removed and must not be compiled or dispatched'
+      : deprecation.removal_tier === 'error'
+        ? 'is deprecated past the point of use'
+        : 'is deprecated';
+
+  return [
+    {
+      skill: skill.name,
+      field: 'deprecation',
+      target: 'canonical',
+      severity,
+      message: `skill "${skill.name}" ${what} (since ${deprecation.deprecated_since}).${replacement}`,
+    },
+  ];
 }
 
 /** Human-readable report. `--json` callers use {@link runDoctor} directly. */

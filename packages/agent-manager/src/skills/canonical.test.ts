@@ -95,3 +95,63 @@ describe('compilation', () => {
     expect(kinds).toContain('stop-condition');
   });
 });
+
+describe('deprecation surfaced by doctor (P0-AGENT-05, ADR-0034)', () => {
+  const deprecate = (removal_tier: 'warn' | 'error' | 'removed', replacement?: string) =>
+    CanonicalSkillSchema.parse({
+      ...SPEC_SKILL,
+      name: 'old-spec',
+      deprecation: {
+        deprecated_since: '0.2.0',
+        removal_tier,
+        ...(replacement === undefined ? {} : { replacement_ref: replacement }),
+      },
+    });
+
+  const adapters = [new ClaudeCodeAdapter()];
+
+  it('says nothing about a skill that is not deprecated', () => {
+    const report = runDoctor({ skills: [SPEC_SKILL], adapters });
+    expect(report.findings.filter((f) => f.field === 'deprecation')).toHaveLength(0);
+  });
+
+  it('warns without blocking at the warn tier', () => {
+    const report = runDoctor({ skills: [deprecate('warn', 'spec')], adapters });
+    const finding = report.findings.find((f) => f.field === 'deprecation');
+    expect(finding?.severity).toBe('warning');
+    expect(finding?.message).toContain('spec');
+    expect(report.ok).toBe(true);
+  });
+
+  it('blocks at the error tier', () => {
+    const report = runDoctor({ skills: [deprecate('error', 'spec')], adapters });
+    expect(report.findings.find((f) => f.field === 'deprecation')?.severity).toBe('error');
+    expect(report.ok).toBe(false);
+  });
+
+  it('blocks a removed skill and says it should not be here at all', () => {
+    const report = runDoctor({ skills: [deprecate('removed')], adapters });
+    const finding = report.findings.find((f) => f.field === 'deprecation');
+    expect(finding?.message).toMatch(/was removed/);
+    expect(report.ok).toBe(false);
+  });
+
+  it('calls out a deprecation with nowhere to go', () => {
+    // Deprecating with no replacement leaves callers stranded; that is itself
+    // a defect worth naming rather than a silent omission.
+    const finding = runDoctor({ skills: [deprecate('warn')], adapters }).findings.find(
+      (f) => f.field === 'deprecation',
+    );
+    expect(finding?.message).toMatch(/No replacement is declared/);
+  });
+
+  it('reports a deprecation once, not once per adapter', () => {
+    // Three adapters reporting the same retirement three times teaches people
+    // to skim past the report.
+    const report = runDoctor({
+      skills: [deprecate('warn', 'spec')],
+      adapters: [new ClaudeCodeAdapter(), new ClaudeCodeAdapter()],
+    });
+    expect(report.findings.filter((f) => f.field === 'deprecation')).toHaveLength(1);
+  });
+});

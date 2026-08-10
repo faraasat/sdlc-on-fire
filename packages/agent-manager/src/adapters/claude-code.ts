@@ -97,19 +97,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     const warnings: CompileWarning[] = [];
 
     // A deprecated skill still compiles — refusing would break a working
-    // workspace on an upgrade — but the warning is how `doctor` surfaces it.
-    if (skill.deprecation !== undefined) {
-      warnings.push({
-        field: 'deprecation',
-        target: this.id,
-        severity: skill.deprecation.removal_tier === 'error' ? 'error' : 'warning',
-        message:
-          `skill "${skill.name}" deprecated since ${skill.deprecation.deprecated_since}` +
-          (skill.deprecation.replacement_ref === undefined
-            ? ''
-            : `; use ${skill.deprecation.replacement_ref}`),
-      });
-    }
+    // workspace on an upgrade. Reporting it is `runDoctor`'s job, not this
+    // adapter's: deprecation is a property of the skill, so emitting it here
+    // repeated the same retirement once per configured target (P0-AGENT-05).
 
     const body = renderPromptTemplate(skill).text;
     const yaml = stringifyYaml(skillFrontmatter(skill), { lineWidth: 0 });
