@@ -91,12 +91,14 @@ function capability(
  * to enable one, so a behaviour that is not listed cannot be switched on.
  */
 export const ADVANCED_CAPABILITIES: readonly CapabilityDefinition[] = [
+  // Wired (P1-AGENT-10): `lensesForReview` reads this. Off means one advisory
+  // lens plus the gating one — fan-out multiplies cost, and ADR-0066's own
+  // argument cuts both ways, since correlated lenses are worse than a single one.
   capability(
     'multi_lens_review',
-    'Adversarial review across more than one lens (fan-out > 1).',
+    'Adversarial review across more than one advisory lens (fan-out > 1).',
     ['a', 'b'],
     'ADR-0066',
-    'P1-AGENT-10',
   ),
   capability(
     'cross_model_review',
