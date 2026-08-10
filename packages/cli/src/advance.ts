@@ -309,8 +309,18 @@ export async function advanceWorkItem(root: string, id: string): Promise<Advance
       });
       if (!verdict.pass) {
         for (const kind of verdict.missing) {
+          // "You never ran it" and "you ran it, then changed the code" need
+          // different remediations, and the message must say which. Reporting
+          // both as "no evidence — run verify" told a blind evaluator to run the
+          // command they had just run; they retried six times and concluded the
+          // gate was broken. It was not — it was inarticulate.
+          const priorRuns = bundle.filter((envelope) => envelope.kind === kind);
           refusals.push(
-            `gate: no current ${kind} evidence — run \`sdlc verify ${id}\` (an agent saying it passed does not count)`,
+            priorRuns.length === 0
+              ? `gate: no ${kind} evidence for ${id} — run \`sdlc verify ${id}\` (an agent saying it passed does not count)`
+              : `gate: ${id} has ${String(priorRuns.length)} recorded ${kind} run(s), but none describes the current tree ` +
+                  `(latest: ${priorRuns[0]?.produced_at ?? 'unknown'}). The code changed after the check — ` +
+                  `re-run \`sdlc verify ${id}\`.`,
           );
         }
         for (const kind of verdict.failures) {

@@ -1,4 +1,5 @@
-import type { CanonicalSkill, SkillTier } from '@sdlc-on-fire/core';
+import { exceedsCeiling, type CanonicalSkill, type SkillTier } from '@sdlc-on-fire/core';
+import type { TierPolicyConfig } from '@sdlc-on-fire/core';
 
 /**
  * Tier → model routing (P0-AGENT-04, ADR-0028).
@@ -43,6 +44,26 @@ export interface TierPolicy {
   readonly skillOverrides?: Readonly<Record<string, SkillTier>> | undefined;
   /** Force a tier for every skill at a stage, e.g. run all reviews high. */
   readonly stageOverrides?: Readonly<Record<string, SkillTier>> | undefined;
+  /**
+   * The highest tier any skill may resolve to (ADR-0029, P1-AGENT-08).
+   *
+   * Absent means no ceiling. Enforced at resolution rather than only at config
+   * load, because a skill's *own* declared tier can exceed the ceiling without
+   * any override being involved — a catalogue edit would otherwise walk straight
+   * past a limit the workspace deliberately set.
+   */
+  readonly maxTier?: SkillTier | undefined;
+}
+
+export class TierCeilingError extends Error {
+  override readonly name = 'TierCeilingError';
+  constructor(skill: string, tier: SkillTier, ceiling: SkillTier, source: TierSource) {
+    super(
+      `skill "${skill}" resolves to tier "${tier}" (${source}) but this workspace caps subagents ` +
+        `at "${ceiling}". Raise \`agents.max_tier\` deliberately, or lower the tier — silently ` +
+        'running below the requested level would produce an answer that looks like the work asked for.',
+    );
+  }
 }
 
 export class UnroutableTierError extends Error {
@@ -74,6 +95,13 @@ export function resolveTier(skill: CanonicalSkill, policy: TierPolicy): TierReso
       : byStage !== undefined
         ? 'stage-override'
         : 'skill-default';
+
+  // The ceiling refuses rather than downgrades. Quietly running a high-tier
+  // review at medium yields something that reads exactly like a high-tier
+  // review, which is the failure this whole tier system exists to prevent.
+  if (policy.maxTier !== undefined && exceedsCeiling(tier, policy.maxTier)) {
+    throw new TierCeilingError(skill.name, tier, policy.maxTier, source);
+  }
 
   const model = policy.models[tier];
   if (model === undefined || model.length === 0) {
@@ -131,4 +159,21 @@ export function explainPolicy(
   policy: TierPolicy,
 ): readonly (TierResolution & { readonly skill: string })[] {
   return skills.map((skill) => ({ skill: skill.name, ...resolveTier(skill, policy) }));
+}
+
+/**
+ * Turns the `agents:` config section into a routing policy.
+ *
+ * The conversion is deliberately dumb — a rename, nothing more. Any judgement
+ * here would be a second place where policy is decided, and the point of
+ * P1-AGENT-08 is that there is exactly one.
+ */
+export function tierPolicyFromConfig(config: TierPolicyConfig): TierPolicy {
+  return {
+    models: config.models,
+    fallbacks: config.fallbacks,
+    skillOverrides: config.skill_overrides,
+    stageOverrides: config.stage_overrides,
+    maxTier: config.max_tier,
+  };
 }

@@ -20,6 +20,7 @@ export * from './storage-port.js';
 export * from './capabilities.js';
 export * from './idempotency.js';
 export * from './skill.js';
+export * from './tier-policy.js';
 export * from './hash.js';
 export * from './task-spec.js';
 export * from './preset.js';

@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { AdvancedConfigSchema } from './capabilities.js';
+import { TierPolicyConfigSchema, tierPolicyViolations } from './tier-policy.js';
 
 /**
  * Canonical workspace layout and config schema, per
@@ -109,6 +110,14 @@ export const WorkspaceConfigSchema = z
       .prefault({}),
     /** Advanced capabilities, every one default-off (ADR-0067, P0-OBJ-04). */
     advanced: AdvancedConfigSchema,
+    /**
+     * Tier → model routing (ADR-0028, P1-AGENT-08).
+     *
+     * The one place a model id appears. That was already the *rule*; until this
+     * section existed it was only true of the type, since every caller passed a
+     * hardcoded literal.
+     */
+    agents: TierPolicyConfigSchema,
     database: z
       .object({
         mode: DatabaseModeSchema.default('pglite'),
@@ -119,6 +128,12 @@ export const WorkspaceConfigSchema = z
     preset: z.enum(['lite', 'standard', 'strict']).default('standard'),
   })
   .superRefine((config, ctx) => {
+    // Reported at config-parse time, not at dispatch: a policy error discovered
+    // mid-run has already spent tokens getting there.
+    for (const problem of tierPolicyViolations(config.agents)) {
+      ctx.addIssue({ code: 'custom', path: ['agents'], message: problem });
+    }
+
     // Connected mode with no endpoint is a workspace that cannot start. Catching
     // it here beats a confusing connection failure at first query.
     if (config.database.mode === 'connected' && config.database.url === undefined) {

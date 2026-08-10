@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { init, instructions, listWorkItems } from './commands.js';
+import { claimWorkItem, init, instructions, listWorkItems } from './commands.js';
 import { advanceWorkItem, verifyWorkItem } from './advance.js';
 
 /**
@@ -181,7 +181,7 @@ describe('bypass 3 — one green run standing in for every item', () => {
 
     const result = await advanceWorkItem(root, 'TASK-008');
     expect(result.moved).toBe(false);
-    expect(result.refusals.join('\n')).toMatch(/no current test evidence/);
+    expect(result.refusals.join('\n')).toMatch(/no test evidence for TASK-008/);
   }, 180_000);
 });
 
@@ -195,5 +195,58 @@ describe('the warning reaches the command an agent actually reads', () => {
     // The terminal answer is still correct — the point is that it no longer
     // arrives alone.
     expect(reported.terminal).toBe(true);
+  }, 180_000);
+});
+
+describe('the gate must not refuse work that is genuinely done', () => {
+  it('advances after a real passing verify in a workspace with no git repository', async () => {
+    // The case a blind evaluation actually hit. `sdlc init` never runs `git
+    // init`, so a first-time user has a workspace and no repository — and the
+    // dirty-tree hash fell into its own error path there, returning a fresh
+    // time-based sentinel each call. Evidence was stale the instant it was
+    // written, `advance` refused forever, and the message said "run verify" to
+    // someone who had just run it.
+    const bare = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'nogit-')));
+    try {
+      await init(bare);
+      await fs.writeFile(path.join(bare, 'package.json'), '{"name":"d","type":"module"}', 'utf8');
+      await fs.writeFile(
+        path.join(bare, 'test.js'),
+        'import assert from "node:assert"; assert.equal(1,1);',
+        'utf8',
+      );
+      const dir = path.join(bare, 'kanban', '_inbox');
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, 'TASK-100.md'), CARD('TASK-100', 'node test.js'), 'utf8');
+
+      const verified = await verifyWorkItem(bare, 'TASK-100');
+      expect(verified.ok).toBe(true);
+
+      await claimWorkItem(bare, 'TASK-100', 'alice');
+      const moved = await advanceWorkItem(bare, 'TASK-100');
+      // Asserting it *moved*, not merely that the wording changed: the previous
+      // version of this test checked the refusal text and passed even with the
+      // bug still in place.
+      expect(moved.refusals).toEqual([]);
+      expect(moved.moved).toBe(true);
+    } finally {
+      await fs.rm(bare, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  it('says the evidence is stale, not absent, when the code changed after the check', async () => {
+    await writeCard('TASK-101', 'node test.js', 'test');
+    await setTest(true);
+    await verifyWorkItem(root, 'TASK-101');
+
+    // Same item, real passing run on record — then the code moves under it.
+    await setTest(false);
+    const result = await advanceWorkItem(root, 'TASK-101');
+    expect(result.moved).toBe(false);
+    const reasons = result.refusals.join('\n');
+    expect(reasons).toMatch(/none describes the current tree/);
+    expect(reasons).toMatch(/re-run/);
+    // "Run verify" would send the user to do what they already did.
+    expect(reasons).not.toMatch(/no test evidence for/);
   }, 180_000);
 });

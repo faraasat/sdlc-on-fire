@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { loadTierPolicy } from '@sdlc-on-fire/core';
 import {
   explainPolicy,
+  tierPolicyFromConfig,
   NoRouteError,
   resolveTier,
   routeForDispatch,
@@ -143,5 +145,59 @@ describe('dispatch-time routing with fallbacks (P1-AGENT-06)', () => {
     );
     expect(route.tier).toBe('high');
     expect(route.model).toBe('model-high');
+  });
+});
+
+describe('the tier ceiling (P1-AGENT-08)', () => {
+  const CAPPED: TierPolicy = {
+    models: { low: 'haiku-2026-01-01', medium: 'sonnet-2026-01-01', high: 'opus-2026-01-01' },
+    maxTier: 'medium',
+  };
+
+  it('refuses a skill whose own declared tier exceeds the ceiling', () => {
+    // Enforced at resolution, not only at config load: no override is involved
+    // here, so a catalogue edit would otherwise walk straight past the limit.
+    const skill = { ...SPEC_SKILL, tier: 'high' as const };
+    expect(() => resolveTier(skill, CAPPED)).toThrow(/caps subagents at "medium"/);
+  });
+
+  it('refuses rather than quietly downgrading', () => {
+    const skill = { ...SPEC_SKILL, tier: 'high' as const };
+    try {
+      resolveTier(skill, CAPPED);
+      expect.unreachable('expected a TierCeilingError');
+    } catch (error) {
+      // A high-tier review silently run at medium reads exactly like a
+      // high-tier review, which is the failure the tier system exists to prevent.
+      expect((error as Error).name).toBe('TierCeilingError');
+      expect((error as Error).message).not.toMatch(/using medium instead/);
+    }
+  });
+
+  it('names the override that caused the breach', () => {
+    const skill = { ...REVIEW_SKILL, tier: 'medium' as const };
+    expect(() => resolveTier(skill, { ...CAPPED, stageOverrides: { review: 'high' } })).toThrow(
+      /stage-override/,
+    );
+  });
+
+  it('allows everything at or below the ceiling', () => {
+    const skill = { ...IMPLEMENT_SKILL, tier: 'medium' as const };
+    expect(resolveTier(skill, CAPPED).model).toBe('sonnet-2026-01-01');
+  });
+
+  it('imposes no ceiling when none is configured', () => {
+    const skill = { ...SPEC_SKILL, tier: 'high' as const };
+    const { maxTier: _omitted, ...uncapped } = CAPPED;
+    expect(resolveTier(skill, uncapped).tier).toBe('high');
+  });
+
+  it('carries the config straight through, adding no second policy decision', () => {
+    const policy = tierPolicyFromConfig(
+      loadTierPolicy({ max_tier: 'medium', stage_overrides: { review: 'medium' } }),
+    );
+    expect(policy.maxTier).toBe('medium');
+    expect(policy.stageOverrides).toEqual({ review: 'medium' });
+    expect(policy.models.low).toBe('claude-haiku-4-5-20251001');
   });
 });

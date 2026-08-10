@@ -63,6 +63,18 @@ export async function currentDirtyTreeHash(cwd: string): Promise<string | undefi
   // lifecycle field is not the code under test.
   const excludes = [':(exclude)kanban', ':(exclude).sdlcof', ':(exclude)docs'];
   try {
+    // Not a repository at all is a different answer from "we could not read the
+    // tree". Collapsing them made every non-git workspace produce a fresh
+    // time-based sentinel on each call, so its evidence went stale the instant
+    // it was written and `advance` refused forever — with a message telling the
+    // user to run the command they had just run. A blind evaluation hit exactly
+    // that and retried six times before giving up.
+    await run('git', ['rev-parse', '--is-inside-work-tree'], { cwd });
+  } catch {
+    return undefined;
+  }
+
+  try {
     // File *contents*, not `git diff`. A diff against HEAD needs a HEAD, and a
     // repository with no commit yet is the normal state for a workspace on its
     // first day — the earlier version fell into its own error path there and

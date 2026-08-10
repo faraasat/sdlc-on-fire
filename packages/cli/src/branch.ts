@@ -125,7 +125,7 @@ export async function branchFor(
         branch,
         hierarchy,
         created: false,
-        refusal: `--actor is required to create a branch: ${id} must be claimed before work starts (ADR-0048)`,
+        refusal: `--as is required to create a branch: ${id} must be claimed before work starts (ADR-0048)`,
       };
     }
     if (held === null || held.claimedBy !== options.actor) {
@@ -136,7 +136,7 @@ export async function branchFor(
         created: false,
         refusal:
           held === null
-            ? `${id} is not claimed — run \`sdlc claim ${id} --actor ${options.actor}\` first`
+            ? `${id} is not claimed — run \`sdlc claim ${id} --as ${options.actor}\` first`
             : `${id} is claimed by "${held.claimedBy}", not by "${options.actor}"`,
       };
     }

@@ -35,6 +35,7 @@ import {
   captureItem,
   triageItem,
   showConfig,
+  describeAgents,
   status,
   type InstructionsResult,
 } from './commands.js';
@@ -420,16 +421,16 @@ export function buildProgram(): Command {
     .command('branch')
     .argument('<work-item-id>', 'the work item to name a branch for, e.g. TASK-001')
     .description("derive a work item's branch name from its hierarchy, and optionally create it")
-    .option('--actor <name>', 'who is claiming the work — required with --create')
+    .option('--as <actor>', 'who is claiming the work — required with --create')
     .option('--create', 'actually create and check out the branch')
     .option('--json', 'emit JSON')
     .action(
       async (
         id: string,
-        options: { actor?: string; create?: boolean; json?: boolean },
+        options: { as?: string; create?: boolean; json?: boolean },
       ): Promise<void> => {
         const result = await branchFor(root(), id, {
-          actor: options.actor,
+          actor: options.as,
           create: options.create,
         });
         emit(result, options.json === true, (r: BranchResult) =>
@@ -467,6 +468,27 @@ export function buildProgram(): Command {
     });
 
   program
+    .command('agents')
+    .description('show which model each skill routes to, and why')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await describeAgents(root());
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof describeAgents>>) =>
+        [
+          `max tier: ${r.maxTier}`,
+          ...Object.entries(r.models).map(([tier, model]) => `  ${tier.padEnd(7)} ${model}`),
+          '',
+          ...r.routes.map(
+            (route) =>
+              `  ${route.skill.padEnd(14)} ${route.tier.padEnd(7)} ${route.model}  (${route.source})`,
+          ),
+          ...r.unroutable.map((entry) => `  ✗ ${entry.skill}: ${entry.reason}`),
+        ].join('\n'),
+      );
+      if (result.unroutable.length > 0) process.exitCode = 1;
+    });
+
+  program
     .command('config')
     .description('show the resolved workspace config')
     .option('--json', 'emit JSON')
@@ -475,7 +497,20 @@ export function buildProgram(): Command {
       emit(result, options.json === true, (r: Awaited<ReturnType<typeof showConfig>>) =>
         r.config === null
           ? `No config at ${r.configPath} — run \`sdlc init\` first.`
-          : JSON.stringify(r.config, null, 2),
+          : [
+              JSON.stringify(r.config, null, 2),
+              // A flag reading `enabled: true` while nothing reads it is the one
+              // thing a user most needs told, so it goes below the config where
+              // it cannot be lost in the table.
+              ...(r.inert.length === 0
+                ? []
+                : [
+                    '',
+                    `⚠ ${String(r.inert.length)} enabled capability/capabilities are declared but not yet wired —`,
+                    '  turning them on changes nothing today:',
+                    ...r.inert.map((entry) => `    ${entry.key} (lands in ${entry.lands_in})`),
+                  ]),
+            ].join('\n'),
       );
     });
 

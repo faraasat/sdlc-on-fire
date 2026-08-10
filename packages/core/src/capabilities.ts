@@ -32,6 +32,21 @@ export const COST_CLASS_MEANING: Readonly<Record<CostClass, string>> = {
   e: 'persists state that can silently go stale',
 };
 
+/**
+ * Whether turning a flag on actually does anything yet.
+ *
+ * A blind evaluation turned three capabilities on, confirmed via `sdlc config`
+ * that they read `enabled: true`, and observed no behaviour change of any kind —
+ * because no code reads them. Every flag in this registry is in that state
+ * today. Reporting `enabled: true` for a switch wired to nothing is the most
+ * expensive kind of lie a tool can tell: the user proceeds believing a
+ * protection is on.
+ *
+ * So the registry states it. `declared` means the decision is made and the
+ * behaviour is not built; `active` means code actually reads the flag.
+ */
+export type CapabilityStatus = 'declared' | 'active';
+
 export interface CapabilityDefinition {
   readonly key: string;
   readonly summary: string;
@@ -41,6 +56,10 @@ export interface CapabilityDefinition {
   readonly adr: string;
   /** Always false. Present so `config --json` shows the default beside the value. */
   readonly defaultValue: false;
+  /** Whether any code reads this flag yet. */
+  readonly status: CapabilityStatus;
+  /** The task that wires it, while it is still `declared`. */
+  readonly implementedBy?: string | undefined;
 }
 
 function capability(
@@ -48,8 +67,21 @@ function capability(
   summary: string,
   costClasses: readonly CostClass[],
   adr: string,
+  implementedBy?: string,
 ): CapabilityDefinition {
-  return { key, summary, costClasses, adr, defaultValue: false };
+  return {
+    key,
+    summary,
+    costClasses,
+    adr,
+    defaultValue: false,
+    // A capability is `declared` until something reads it. Deriving the status
+    // from the presence of the task rather than declaring both keeps them from
+    // disagreeing: wiring a flag means deleting its task argument, in the same
+    // edit as the code that reads it.
+    status: implementedBy === undefined ? 'active' : 'declared',
+    ...(implementedBy === undefined ? {} : { implementedBy }),
+  };
 }
 
 /**
@@ -64,53 +96,85 @@ export const ADVANCED_CAPABILITIES: readonly CapabilityDefinition[] = [
     'Adversarial review across more than one lens (fan-out > 1).',
     ['a', 'b'],
     'ADR-0066',
+    'P1-AGENT-10',
   ),
   capability(
     'cross_model_review',
     'Route review to a second configured provider rather than the same model.',
     ['a'],
     'ADR-0037',
+    'P1-AGENT-10',
   ),
   capability(
     'high_subagent_concurrency',
     'Raise subagent concurrency above the conservative default.',
     ['a'],
     'ADR-0029',
+    'P1-AGENT-08',
   ),
   capability(
     'api_embedder',
     'Use a hosted embedding API instead of the local model.',
     ['d'],
     'ADR-0004',
+    'P1-CTX-04',
   ),
-  capability('telemetry_export', 'Export OpenTelemetry traces off the machine.', ['d'], 'ADR-0020'),
+  capability(
+    'telemetry_export',
+    'Export OpenTelemetry traces off the machine.',
+    ['d'],
+    'ADR-0020',
+    'P2-OBS-01',
+  ),
   capability(
     'elevated_sandbox',
     'Raise the sandbox tier or broaden the command allowlist.',
     ['c'],
     'ADR-0036',
+    'P1-SEC-02',
   ),
-  capability('unattended_mode', 'Long-run mode with reduced human touchpoints.', ['c'], 'ADR-0049'),
+  capability(
+    'unattended_mode',
+    'Long-run mode with reduced human touchpoints.',
+    ['c'],
+    'ADR-0049',
+    'P2-RUN-01',
+  ),
   capability(
     'self_improvement_loop',
     'Bounded self-improvement loop. Stays human-gated even when enabled.',
     ['c'],
     'ADR-0026',
+    'P2-SELF-01',
   ),
   capability(
     'teammate_memory',
     'Persistent per-teammate memory across sessions.',
     ['e'],
     'ADR-0065',
+    'P1-OBJ-04',
   ),
-  capability('strict_preset', 'The `strict` lifecycle preset.', ['b'], 'ADR-0008'),
-  capability('knowledge_claim_gate', 'The knowledge-claim evidence gate.', ['b'], 'ADR-0019'),
-  capability('definition_of_ready_gate', 'The Definition-of-Ready gate.', ['b'], 'ADR-0031'),
+  capability('strict_preset', 'The `strict` lifecycle preset.', ['b'], 'ADR-0008', 'P1-LIFE-06'),
+  capability(
+    'knowledge_claim_gate',
+    'The knowledge-claim evidence gate.',
+    ['b'],
+    'ADR-0019',
+    'P1-GATE-04',
+  ),
+  capability(
+    'definition_of_ready_gate',
+    'The Definition-of-Ready gate.',
+    ['b'],
+    'ADR-0031',
+    'P1-GATE-07',
+  ),
   capability(
     'connected_database',
     'Connect to a user-supplied Postgres endpoint instead of bundled PGlite.',
     ['a'],
     'ADR-0068',
+    'P1-DB-01',
   ),
 ];
 
@@ -140,6 +204,20 @@ export function capabilityByKey(key: string): CapabilityDefinition | undefined {
 /** Every key a user has turned on, sorted — the set recorded to the audit log at run start. */
 export function enabledCapabilities(config: AdvancedConfig): readonly string[] {
   return CAPABILITY_KEYS.filter((key) => config[key] === true).sort();
+}
+
+/**
+ * Capabilities that are on but wired to nothing.
+ *
+ * Surfaced everywhere the config is displayed. Someone who turned on
+ * `knowledge_claim_gate` and saw `enabled: true` is entitled to know that no
+ * code reads it yet — otherwise they proceed believing a protection is running,
+ * which is worse than never having offered the switch.
+ */
+export function inertCapabilities(config: AdvancedConfig): readonly CapabilityDefinition[] {
+  return ADVANCED_CAPABILITIES.filter(
+    (entry) => config[entry.key] === true && entry.status === 'declared',
+  );
 }
 
 export interface CapabilityDiscoveryRow extends CapabilityDefinition {

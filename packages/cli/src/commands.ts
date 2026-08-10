@@ -10,17 +10,25 @@ import {
   WorkspaceConfigSchema,
   AdvancedConfigSchema,
   describeCapabilities,
+  inertCapabilities,
   docsToGenerate,
   isLifecycleStage,
   isTerminalStage,
   nextStage,
   resolveRequiredStages,
+  loadTierPolicy,
   resolveWorkspaceLayout,
   type CapabilityDiscoveryRow,
   type Preset,
   type WorkspaceConfig,
 } from '@sdlc-on-fire/core';
-import { fillSlots, skillForStage } from '@sdlc-on-fire/agent-manager';
+import {
+  CANONICAL_SKILLS,
+  fillSlots,
+  resolveTier,
+  skillForStage,
+  tierPolicyFromConfig,
+} from '@sdlc-on-fire/agent-manager';
 import { estimateTokens } from '@sdlc-on-fire/context';
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import { attestAll, attestItem, type Attestation, type TreeContext } from './attest.js';
@@ -578,6 +586,20 @@ export async function syncBatch(root: string, since = 'HEAD'): Promise<SyncBatch
 /** `sdlc hooks:install` — install the git hooks that drive `sync:batch`. */
 export async function hooksInstall(root: string): Promise<InstallHooksResult & { root: string }> {
   const layout = resolveWorkspaceLayout(root);
+
+  // Refuse outside a repository. `.git/hooks/` is a plain directory, so writing
+  // into it succeeds whether or not git will ever look there — and a blind
+  // evaluation was told hooks were installed in a workspace that had never been
+  // `git init`'d. Reporting success for a file nothing will execute is worse
+  // than failing: the user stops thinking about it.
+  const git = createGitManager({ repoRoot: layout.root });
+  if (!(await git.isRepo())) {
+    throw new Error(
+      `${layout.root} is not a git repository, so installed hooks would never run. ` +
+        'Run `git init` first, then `sdlc hooks:install`.',
+    );
+  }
+
   return { root: layout.root, ...(await installGitHooks(layout.root)) };
 }
 
@@ -849,6 +871,10 @@ export interface ConfigResult {
   readonly configPath: string;
   readonly config: WorkspaceConfig | null;
   /**
+   * Capabilities the user turned on that nothing reads yet.
+   */
+  readonly inert: readonly { readonly key: string; readonly lands_in: string }[];
+  /**
    * Every advanced capability with its default, current value, ADR and cost
    * class — on or off (ADR-0067). Listing only the enabled ones would make
    * "advanced" mean hidden; the point is that it means deliberate.
@@ -856,12 +882,75 @@ export interface ConfigResult {
   readonly capabilities: readonly CapabilityDiscoveryRow[];
 }
 
+/**
+ * `sdlc agents` — what the tier policy actually routes to (P1-AGENT-08).
+ *
+ * The policy is easy to write and hard to predict: three overrides interacting
+ * across a dozen skills is exactly the kind of thing people get wrong silently.
+ * A resolution that can only be observed by dispatching is a resolution nobody
+ * checks before spending on it — `explainPolicy` existed for this and had no
+ * caller.
+ */
+export interface AgentsResult {
+  readonly maxTier: string;
+  readonly models: Readonly<Record<string, string>>;
+  readonly routes: readonly {
+    readonly skill: string;
+    readonly tier: string;
+    readonly source: string;
+    readonly model: string;
+    readonly fallbacks: readonly string[];
+  }[];
+  /** Skills that cannot route under this policy, with the reason. */
+  readonly unroutable: readonly { readonly skill: string; readonly reason: string }[];
+}
+
+export async function describeAgents(root: string): Promise<AgentsResult> {
+  const config = await readConfig(root);
+  const policyConfig = loadTierPolicy(config?.agents);
+  const policy = tierPolicyFromConfig(policyConfig);
+
+  const routes: {
+    skill: string;
+    tier: string;
+    source: string;
+    model: string;
+    fallbacks: readonly string[];
+  }[] = [];
+  const unroutable: { skill: string; reason: string }[] = [];
+  for (const skill of Object.values(CANONICAL_SKILLS)) {
+    try {
+      // Resolved one at a time rather than through `explainPolicy`, because one
+      // unroutable skill must not hide the routing of the other eleven.
+      const resolved = resolveTier(skill, policy);
+      routes.push({
+        skill: skill.name,
+        tier: resolved.tier,
+        source: resolved.source,
+        model: resolved.model,
+        fallbacks: resolved.fallbacks,
+      });
+    } catch (error) {
+      unroutable.push({ skill: skill.name, reason: (error as Error).message });
+    }
+  }
+
+  return { maxTier: policyConfig.max_tier, models: policyConfig.models, routes, unroutable };
+}
+
 export async function showConfig(root: string): Promise<ConfigResult> {
   const layout = resolveWorkspaceLayout(root);
   const config = await readConfig(root);
+  const advanced = config?.advanced ?? AdvancedConfigSchema.parse({});
   return {
     configPath: layout.configPath,
     config,
-    capabilities: describeCapabilities(config?.advanced ?? AdvancedConfigSchema.parse({})),
+    capabilities: describeCapabilities(advanced),
+    // Listed separately so it cannot be missed in a long table. A capability the
+    // user switched on that nothing reads is the one thing they most need told.
+    inert: inertCapabilities(advanced).map((entry) => ({
+      key: entry.key,
+      lands_in: entry.implementedBy ?? '(unscheduled)',
+    })),
   };
 }
