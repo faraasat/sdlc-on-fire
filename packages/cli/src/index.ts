@@ -64,6 +64,7 @@ import {
 } from './initiative.js';
 import { queueFor } from './queue.js';
 import { detectTools, formatDetect } from './detect.js';
+import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
 import {
@@ -117,6 +118,11 @@ function splitList(value: string | undefined): string[] {
     .split(',')
     .map((entry) => entry.trim())
     .filter((entry) => entry !== '');
+}
+
+/** A non-dry-run import that did not commit is a failure, whatever it printed. */
+function r_committed(result: { dryRun: boolean; committed: boolean }): boolean {
+  return result.dryRun || result.committed;
 }
 
 function emit(value: unknown, json: boolean, human: (value: never) => string): void {
@@ -1014,6 +1020,45 @@ export function buildProgram(): Command {
         formatDetect(r),
       );
     });
+
+  program
+    .command('import')
+    .description("import an existing tool's specs and plans into this workspace (P2-IMP-07)")
+    .option('--from <tool>', 'source tool id; defaults to the highest-confidence detection')
+    .option('--dry-run', 'report exactly what would be written, and write nothing')
+    .option('--into <folder>', 'subfolder to import into', '_imported')
+    .option('--no-preserve-originals', 'skip copying the source tree into .sdlcof/imported/')
+    .option('--on-conflict <policy>', 'skip | overwrite | fail', 'fail')
+    .option('--report <file>', 'also write the full plan as JSON')
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: {
+        from?: string;
+        dryRun?: boolean;
+        into?: string;
+        preserveOriginals?: boolean;
+        onConflict?: string;
+        report?: string;
+        json?: boolean;
+      }): Promise<void> => {
+        const result = await runImport(root(), {
+          from: options.from,
+          dryRun: options.dryRun === true,
+          into: options.into,
+          preserveOriginals: options.preserveOriginals,
+          onConflict: options.onConflict as ConflictPolicy | undefined,
+        });
+        if (options.report !== undefined) {
+          await fs.writeFile(options.report, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+        }
+        emit(result, options.json === true, (r: Awaited<ReturnType<typeof runImport>>) =>
+          formatImport(r),
+        );
+        // A rolled-back import is a failure, and a zero exit would let a script
+        // treat "nothing landed" as success.
+        if (!r_committed(result)) process.exitCode = 1;
+      },
+    );
 
   const skills = program
     .command('skills')
