@@ -52,6 +52,7 @@ import { formatClaims, verifyWorkItemClaims } from './claims.js';
 import { scoreWorkItem } from './spec-score.js';
 import { approveEchoBack, readEchoBack, recordEchoBack } from './echo.js';
 import { directivesFor, postComment } from './comment.js';
+import { checkDocs, formatDocsCheck } from './docs-check.js';
 import { queueFor } from './queue.js';
 import { scanQuality } from './quality.js';
 import {
@@ -854,6 +855,18 @@ export function buildProgram(): Command {
         options.json === true,
         () => text ?? `${id}: no comment carries into the next pack.`,
       );
+    });
+
+  program
+    .command('docs')
+    .description('check documentation freshness against the change window (ADR-0046)')
+    .option('--since <ref>', 'git ref to compare against', 'HEAD~1')
+    .option('--json', 'emit JSON')
+    .action(async (options: { since?: string; json?: boolean }): Promise<void> => {
+      const result = await checkDocs(root(), options.since ?? 'HEAD~1');
+      emit(result, options.json === true, formatDocsCheck);
+      // Advisory findings deliberately do not affect the exit code.
+      if (!result.report.ok) process.exitCode = 1;
     });
 
   program
