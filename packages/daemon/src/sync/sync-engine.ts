@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import path from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
-import { contentHash, isManagedContentPath } from '@sdlc-on-fire/core';
+import {
+  contentHash,
+  isManagedContentPath,
+  type MirrorTable,
+  type StoragePort,
+} from '@sdlc-on-fire/core';
 import { chunkFile, indexableText } from '@sdlc-on-fire/context';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import { SelfWriteRegistry } from './self-write-registry.js';
@@ -15,10 +20,11 @@ import { SelfWriteRegistry } from './self-write-registry.js';
  * truth.
  */
 
-/** Minimal DB surface, so the sync engine never imports the adapter. */
-export interface SyncStore {
-  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
-}
+/**
+ * Sync reaches data through the {@link StoragePort} (ADR-0047), never through a
+ * SQL executor. The alias exists so callers keep a name that says what it is for.
+ */
+export type SyncStore = StoragePort;
 
 export type SyncAction =
   'upserted' | 'deleted' | 'skipped-self-write' | 'skipped-unchanged' | 'failed';
@@ -69,15 +75,6 @@ export interface SyncEngineOptions {
    */
   readonly usePolling?: boolean | undefined;
 }
-
-/**
- * `embeddings.model` for a chunk that is indexed but not embedded.
- *
- * The column is NOT NULL (contract §3.6) and v0.1 ships tsvector-only, so the
- * sentinel says "chunked, deliberately not vectorised" rather than naming a
- * model that never ran. The v0.2 embedder selects on it to find its backlog.
- */
-export const UNEMBEDDED_MODEL = 'none';
 
 /** Work-item ID → the `work_items` row; anything else lands in `docs`. */
 function classify(relativePath: string): 'work_item' | 'doc' {
@@ -144,12 +141,8 @@ export class SyncEngine {
     }
 
     const kind = classify(relativePath);
-    const table = kind === 'work_item' ? 'work_items' : 'docs';
-    const existing = await this.#store.query<{ content_hash: string }>(
-      `SELECT content_hash FROM ${table} WHERE file_path = $1;`,
-      [relativePath],
-    );
-    if (existing[0]?.content_hash === hash) {
+    const table: MirrorTable = kind === 'work_item' ? 'work_items' : 'docs';
+    if ((await this.#store.contentHashFor(table, relativePath)) === hash) {
       return { relativePath, action: 'skipped-unchanged', hash, kind };
     }
 
@@ -162,12 +155,7 @@ export class SyncEngine {
     } else {
       await this.#upsertDoc(relativePath, hash, parsed.data);
     }
-    await this.#reindexChunks(
-      kind === 'work_item' ? 'work_items' : 'docs',
-      sourceId,
-      relativePath,
-      parsed.body,
-    );
+    await this.#reindexChunks(table, sourceId, relativePath, parsed.body);
 
     const outcome: SyncOutcome = { relativePath, action: 'upserted', hash, kind };
     await this.#onReEmbed?.(outcome);
@@ -183,29 +171,21 @@ export class SyncEngine {
     if (id === null) {
       throw new Error(`${relativePath}: work-item frontmatter has no id`);
     }
-    await this.#store.query(
-      `INSERT INTO work_items
-         (id, type, title, status, lifecycle_state, work_type, preset, risk_level, file_path, content_hash, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
-       ON CONFLICT (id) DO UPDATE SET
-         type = EXCLUDED.type, title = EXCLUDED.title, status = EXCLUDED.status,
-         lifecycle_state = EXCLUDED.lifecycle_state, work_type = EXCLUDED.work_type,
-         preset = EXCLUDED.preset, risk_level = EXCLUDED.risk_level,
-         file_path = EXCLUDED.file_path, content_hash = EXCLUDED.content_hash,
-         updated_at = now();`,
-      [
-        id,
-        data['kind'],
-        data['title'],
-        data['status'],
-        data['lifecycle_state'],
-        data['work_type'] ?? null,
-        data['preset'] ?? null,
-        data['risk_level'] ?? null,
-        relativePath,
-        hash,
-      ],
-    );
+    const str = (key: string): string | undefined =>
+      typeof data[key] === 'string' ? data[key] : undefined;
+
+    await this.#store.upsertWorkItem({
+      id,
+      type: str('kind') ?? str('type') ?? '',
+      title: str('title') ?? '',
+      status: str('status') ?? '',
+      lifecycleState: str('lifecycle_state') ?? '',
+      workType: str('work_type'),
+      preset: str('preset'),
+      riskLevel: str('risk_level'),
+      filePath: relativePath,
+      contentHash: hash,
+    });
   }
 
   async #upsertDoc(
@@ -213,23 +193,14 @@ export class SyncEngine {
     hash: string,
     data: Record<string, unknown>,
   ): Promise<void> {
-    const id = typeof data['id'] === 'string' ? data['id'] : relativePath;
-    await this.#store.query(
-      `INSERT INTO docs (id, doc_type, file_path, content_hash, title, metadata, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6, now())
-       ON CONFLICT (id) DO UPDATE SET
-         doc_type = EXCLUDED.doc_type, file_path = EXCLUDED.file_path,
-         content_hash = EXCLUDED.content_hash, title = EXCLUDED.title,
-         metadata = EXCLUDED.metadata, updated_at = now();`,
-      [
-        id,
-        docTypeFor(relativePath),
-        relativePath,
-        hash,
-        typeof data['title'] === 'string' ? data['title'] : null,
-        JSON.stringify(data),
-      ],
-    );
+    await this.#store.upsertDoc({
+      id: typeof data['id'] === 'string' ? data['id'] : relativePath,
+      docType: docTypeFor(relativePath),
+      filePath: relativePath,
+      contentHash: hash,
+      title: typeof data['title'] === 'string' ? data['title'] : undefined,
+      metadata: data,
+    });
   }
 
   /**
@@ -248,61 +219,26 @@ export class SyncEngine {
    * useful now because `chunk_tsv` is generated from `chunk_text` on write.
    */
   async #reindexChunks(
-    sourceTable: 'work_items' | 'docs',
+    sourceTable: MirrorTable,
     sourceId: string,
     relativePath: string,
     body: string,
   ): Promise<void> {
-    const chunks = chunkFile(body, relativePath);
-
-    await this.#store.query('BEGIN;');
-    try {
-      await this.#store.query(
-        'DELETE FROM embeddings WHERE source_table = $1 AND source_id = $2;',
-        [sourceTable, sourceId],
-      );
-      for (const chunk of chunks) {
-        const text = indexableText(chunk);
-        await this.#store.query(
-          `INSERT INTO embeddings
-             (source_table, source_id, chunk_index, chunk_text, content_hash, model, heading_breadcrumb)
-           VALUES ($1,$2,$3,$4,$5,$6,$7);`,
-          [
-            sourceTable,
-            sourceId,
-            chunk.index,
-            text,
-            contentHash(text),
-            UNEMBEDDED_MODEL,
-            chunk.breadcrumb.length === 0 ? null : chunk.breadcrumb,
-          ],
-        );
-      }
-      await this.#store.query('COMMIT;');
-    } catch (error) {
-      await this.#store.query('ROLLBACK;');
-      throw error;
-    }
+    const chunks = chunkFile(body, relativePath).map((chunk) => {
+      const text = indexableText(chunk);
+      return {
+        index: chunk.index,
+        text,
+        contentHash: contentHash(text),
+        ...(chunk.breadcrumb.length === 0 ? {} : { breadcrumb: chunk.breadcrumb }),
+      };
+    });
+    await this.#store.replaceChunks(sourceTable, sourceId, chunks);
   }
 
   async #delete(relativePath: string): Promise<SyncOutcome> {
-    const isWorkItem = classify(relativePath) === 'work_item';
-    const table = isWorkItem ? 'work_items' : 'docs';
-    // Read the id before deleting the row — chunks key on it, not on file_path.
-    const owner = await this.#store.query<{ id: string }>(
-      `SELECT id FROM ${table} WHERE file_path = $1;`,
-      [relativePath],
-    );
-    await this.#store.query(`DELETE FROM ${table} WHERE file_path = $1;`, [relativePath]);
-    const id = owner[0]?.id;
-    if (id !== undefined) {
-      // Hard delete, not a tombstone: the file is gone from git, so there is no
-      // source to reconcile against and a stale chunk would retrieve as truth.
-      await this.#store.query(
-        'DELETE FROM embeddings WHERE source_table = $1 AND source_id = $2;',
-        [table, id],
-      );
-    }
+    const table: MirrorTable = classify(relativePath) === 'work_item' ? 'work_items' : 'docs';
+    await this.#store.removeByPath(table, relativePath);
     return { relativePath, action: 'deleted' };
   }
 
@@ -356,14 +292,11 @@ export class SyncEngine {
     const outcomes: SyncOutcome[] = [];
 
     for (const table of ['work_items', 'docs'] as const) {
-      const rows = await this.#store.query<{ file_path: string }>(
-        `SELECT file_path FROM ${table};`,
-      );
-      for (const row of rows) {
-        const prefix = row.file_path.split('/')[0] ?? '';
+      for (const row of await this.#store.mirroredPaths(table)) {
+        const prefix = row.filePath.split('/')[0] ?? '';
         if (!walked.includes(prefix)) continue;
-        if (present.has(row.file_path)) continue;
-        outcomes.push(await this.#delete(row.file_path));
+        if (present.has(row.filePath)) continue;
+        outcomes.push(await this.#delete(row.filePath));
       }
     }
     return outcomes;

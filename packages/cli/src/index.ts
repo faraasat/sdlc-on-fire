@@ -23,6 +23,7 @@ import {
   init,
   instructions,
   nextSequence,
+  rebuild,
   showConfig,
   status,
   type InstructionsResult,
@@ -202,6 +203,24 @@ export function buildProgram(): Command {
         }
         return lines.join('\n');
       });
+    });
+
+  program
+    .command('db:rebuild')
+    .description('drop the DB mirror and reconstruct it from the files in git')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await rebuild(root());
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof rebuild>>) =>
+        [
+          `Rebuilt mirror from ${r.root}`,
+          `  work items: ${String(r.workItems)}`,
+          `  docs:       ${String(r.docs)}`,
+          `  failed:     ${String(r.failed.length)}`,
+          `  took:       ${String(r.durationMs)}ms`,
+          ...r.failed.map((f) => `    ! ${f.relativePath}: ${f.error}`),
+        ].join('\n'),
+      );
     });
 
   program

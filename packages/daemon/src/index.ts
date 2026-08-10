@@ -9,6 +9,7 @@ export * from './git/naming.js';
 export * from './git/git-manager.js';
 export * from './sync/self-write-registry.js';
 export * from './sync/sync-engine.js';
+export * from './sync/rebuild.js';
 export * from './lifecycle/engine.js';
 export * from './pr/generate.js';
 

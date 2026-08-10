@@ -1,0 +1,149 @@
+/**
+ * The `StoragePort` — the single interface through which data is pulled and
+ * sent (ADR-0047).
+ *
+ * Two rules give this file its shape, and both are load-bearing:
+ *
+ * 1. **Ports never import adapters.** Nothing here may reference Postgres,
+ *    Drizzle, PGlite, or SQL. This module is types and vocabulary only; it sits
+ *    in `core` precisely so every consumer can depend on it without dragging a
+ *    database in.
+ *
+ * 2. **No raw-SQL escape hatch.** The obvious shortcut — a `query(sql)` method —
+ *    would make every caller a Postgres caller again and reduce the port to
+ *    "Postgres with extra steps", the failure ADR-0047 explicitly names. So the
+ *    surface is *operation-oriented* (upsert this item, replace these chunks,
+ *    search, claim) rather than a thin wrapper over a driver. An operation the
+ *    port cannot express is a gap to close by adding an operation, not by
+ *    smuggling a string through.
+ *
+ * Store-specific power is preserved through {@link StorageCapabilities} rather
+ * than erased to a lowest common denominator: an adapter without vector search
+ * says so, and callers degrade instead of breaking.
+ */
+
+/**
+ * What a given adapter can actually do.
+ *
+ * Probed from the live store, never assumed from its name — a Postgres without
+ * the `vector` extension is not a vector store, and finding that out at query
+ * time is finding out too late.
+ */
+export interface StorageCapabilities {
+  /** pgvector (or equivalent) is present, so embedding search is possible. */
+  readonly vectorSearch: boolean;
+  /** Full-text search over chunk content is available. */
+  readonly fullTextSearch: boolean;
+  /** Multi-statement atomicity is available. */
+  readonly transactions: boolean;
+}
+
+/** Which mirror table a row belongs to. The set is closed by contract 01 §2. */
+export type MirrorTable = 'work_items' | 'docs';
+
+/** A work-item card as mirrored from its file. Rebuildable, never authoritative. */
+export interface WorkItemMirror {
+  readonly id: string;
+  readonly type: string;
+  readonly title: string;
+  readonly status: string;
+  readonly lifecycleState: string;
+  readonly workType?: string | undefined;
+  readonly preset?: string | undefined;
+  readonly riskLevel?: string | undefined;
+  readonly filePath: string;
+  readonly contentHash: string;
+}
+
+/** Any non-work-item markdown file, mirrored. */
+export interface DocMirror {
+  readonly id: string;
+  readonly docType: string;
+  readonly filePath: string;
+  readonly contentHash: string;
+  readonly title?: string | undefined;
+  readonly metadata?: Record<string, unknown> | undefined;
+}
+
+/** One chunk of a document's body, as stored for retrieval. */
+export interface ChunkRecord {
+  readonly index: number;
+  readonly text: string;
+  readonly contentHash: string;
+  readonly breadcrumb?: string | undefined;
+}
+
+/** A chunk that matched a search, with its score. */
+export interface ChunkHit {
+  readonly sourceTable: MirrorTable;
+  readonly sourceId: string;
+  readonly index: number;
+  readonly text: string;
+  readonly score: number;
+  readonly breadcrumb?: string | undefined;
+}
+
+/** The stage a work item is recorded at. */
+export interface MirrorStage {
+  readonly lifecycleState: string;
+  readonly status: string;
+}
+
+/**
+ * The data plane.
+ *
+ * Every method is an operation with meaning in this domain, so an adapter for a
+ * different store implements *intent* rather than translating SQL. Methods are
+ * grouped by the subsystem that drives them.
+ */
+export interface StoragePort {
+  readonly capabilities: StorageCapabilities;
+
+  /* ---- content mirror (Storage Manager sync) ---- */
+
+  upsertWorkItem(row: WorkItemMirror): Promise<void>;
+  upsertDoc(row: DocMirror): Promise<void>;
+
+  /** The hash currently mirrored for a path, or `null` when it is not mirrored. */
+  contentHashFor(table: MirrorTable, filePath: string): Promise<string | null>;
+
+  /** Every mirrored path in a table — the input to reconcile's prune pass. */
+  mirroredPaths(table: MirrorTable): Promise<readonly { id: string; filePath: string }[]>;
+
+  /** Removes a mirrored row and everything derived from it. Idempotent. */
+  removeByPath(table: MirrorTable, filePath: string): Promise<void>;
+
+  /* ---- retrieval (Context Manager) ---- */
+
+  /**
+   * Replaces every chunk for one source, atomically where the adapter supports
+   * it. Replace rather than diff: chunk boundaries move when a heading changes,
+   * so chunk 4 before and chunk 4 after are not the same unit.
+   */
+  replaceChunks(
+    table: MirrorTable,
+    sourceId: string,
+    chunks: readonly ChunkRecord[],
+  ): Promise<void>;
+
+  /** Full-text search over chunk content. Empty when `fullTextSearch` is false. */
+  searchChunks(query: string, limit: number): Promise<readonly ChunkHit[]>;
+
+  /* ---- lifecycle ---- */
+
+  stageOf(workItemId: string): Promise<MirrorStage | null>;
+
+  /* ---- rebuild ---- */
+
+  /**
+   * Empties every rebuildable mirror table.
+   *
+   * Scoped deliberately to the *mirror*: work items, docs, and their chunks are
+   * caches of files in git and can be reconstructed. Evidence, gates, approvals
+   * and the audit log are **not** — they are the authoritative record of what
+   * was verified and by whom, and no rebuild may touch them. `db:rebuild` that
+   * silently discarded evidence would turn a maintenance command into a way to
+   * launder a failing gate.
+   */
+  resetMirror(): Promise<void>;
+}

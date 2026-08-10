@@ -2,9 +2,15 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { applySchema, provisionPglite, type ProvisionedDatabase } from '@sdlc-on-fire/db';
+import {
+  applySchema,
+  provisionPglite,
+  PostgresStorageAdapter,
+  UNEMBEDDED_MODEL,
+  type ProvisionedDatabase,
+} from '@sdlc-on-fire/db';
 import { createTsvectorRetriever } from '@sdlc-on-fire/context';
-import { SyncEngine, UNEMBEDDED_MODEL } from './sync-engine.js';
+import { SyncEngine } from './sync-engine.js';
 
 /**
  * Content retrieval, end to end against a real PGlite.
@@ -17,6 +23,7 @@ import { SyncEngine, UNEMBEDDED_MODEL } from './sync-engine.js';
  */
 
 let db: ProvisionedDatabase;
+let port: PostgresStorageAdapter;
 let workspace: string;
 
 const store = {
@@ -43,11 +50,14 @@ beforeAll(async () => {
   workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'chunk-retrieval-ws-'));
   db = await provisionPglite({ workspaceRoot: workspace });
   await applySchema(db);
+  // Sync and retrieval now reach data only through the port (ADR-0047); the raw
+  // `store` below stays for assertions, which legitimately inspect the schema.
+  port = await PostgresStorageAdapter.create(db);
 
   await fs.mkdir(path.join(workspace, 'docs', 'specs'), { recursive: true });
   await fs.writeFile(path.join(workspace, 'docs', 'specs', 'export.md'), SPEC, 'utf8');
 
-  const engine = new SyncEngine({ workspaceRoot: workspace, store });
+  const engine = new SyncEngine({ workspaceRoot: workspace, store: port });
   await engine.reconcile();
 }, 120_000);
 
@@ -82,7 +92,7 @@ describe('chunk persistence (D3)', () => {
 });
 
 describe('retrieval over content, not titles (D3)', () => {
-  const retrieve = () => createTsvectorRetriever(store);
+  const retrieve = () => createTsvectorRetriever(port);
 
   it('finds a chunk by a phrase that appears only in the body', async () => {
     // "quarantine" is nowhere in the title or frontmatter. Under the old
@@ -167,7 +177,7 @@ describe('chunk lifecycle', () => {
       SPEC.replace('quarantine', 'isolate'),
       'utf8',
     );
-    const engine = new SyncEngine({ workspaceRoot: workspace, store });
+    const engine = new SyncEngine({ workspaceRoot: workspace, store: port });
     await engine.reconcile();
 
     const after = await store.query<{ n: number }>(
@@ -176,15 +186,15 @@ describe('chunk lifecycle', () => {
     expect(after[0]?.n).toBe(before[0]?.n);
 
     // The old wording must no longer be retrievable.
-    const stale = await createTsvectorRetriever(store)('quarantine', 5);
+    const stale = await createTsvectorRetriever(port)('quarantine', 5);
     expect(stale).toHaveLength(0);
-    const fresh = await createTsvectorRetriever(store)('isolate', 5);
+    const fresh = await createTsvectorRetriever(port)('isolate', 5);
     expect(fresh.length).toBeGreaterThan(0);
   });
 
   it('removes chunks when the source file is deleted', async () => {
     await fs.rm(path.join(workspace, 'docs', 'specs', 'export.md'));
-    const engine = new SyncEngine({ workspaceRoot: workspace, store });
+    const engine = new SyncEngine({ workspaceRoot: workspace, store: port });
     await engine.reconcile();
 
     const rows = await store.query<{ n: number }>(

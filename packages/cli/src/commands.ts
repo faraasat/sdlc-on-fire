@@ -20,6 +20,8 @@ import {
 import { fillSlots, skillForStage } from '@sdlc-on-fire/agent-manager';
 import { estimateTokens } from '@sdlc-on-fire/context';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
+import { applySchema, provisionPglite, PostgresStorageAdapter } from '@sdlc-on-fire/db';
+import { rebuildMirror } from '@sdlc-on-fire/daemon';
 
 /**
  * Command implementations, kept separate from the Commander wiring.
@@ -358,6 +360,40 @@ export async function instructions(root: string, id: string): Promise<Instructio
       estimatedTokens: estimateTokens(`${skillStable}\n\n${cardCore}`),
     },
   };
+}
+
+export interface RebuildCommandResult {
+  readonly root: string;
+  readonly workItems: number;
+  readonly docs: number;
+  readonly failed: readonly { readonly relativePath: string; readonly error: string }[];
+  readonly durationMs: number;
+}
+
+/**
+ * `sdlc db:rebuild` — throw the mirror away and rebuild it from the files.
+ *
+ * Safe by construction rather than by warning: the mirror is a cache of content
+ * that lives in git, and evidence/gates/audit are deliberately outside what
+ * `resetMirror` touches. There is nothing here to lose that git does not already
+ * hold, which is the whole point of the invariant this command exercises.
+ */
+export async function rebuild(root: string): Promise<RebuildCommandResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const config = await readConfig(root);
+  if (config === null) {
+    throw new Error(`${layout.configPath} not found — run \`sdlc init\` first`);
+  }
+
+  const db = await provisionPglite({ workspaceRoot: layout.root });
+  try {
+    await applySchema(db);
+    const port = await PostgresStorageAdapter.create(db);
+    const result = await rebuildMirror(layout.root, port);
+    return { root: layout.root, ...result };
+  } finally {
+    await db.close();
+  }
 }
 
 export interface ConfigResult {

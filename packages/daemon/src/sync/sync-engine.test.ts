@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { contentHash } from '@sdlc-on-fire/core';
-import { applySchema, provisionPglite, type ProvisionedDatabase } from '@sdlc-on-fire/db';
+import {
+  applySchema,
+  provisionPglite,
+  PostgresStorageAdapter,
+  type ProvisionedDatabase,
+} from '@sdlc-on-fire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SyncEngine, type SyncOutcome } from './sync-engine.js';
 
@@ -13,6 +18,7 @@ import { SyncEngine, type SyncOutcome } from './sync-engine.js';
  */
 
 let db: ProvisionedDatabase;
+let port: PostgresStorageAdapter;
 let root: string;
 let engine: SyncEngine;
 const tempRoots: string[] = [];
@@ -33,7 +39,8 @@ beforeAll(async () => {
   tempRoots.push(root);
   db = await provisionPglite({ workspaceRoot: root });
   await applySchema(db);
-  engine = new SyncEngine({ workspaceRoot: root, store: db });
+  port = await PostgresStorageAdapter.create(db);
+  engine = new SyncEngine({ workspaceRoot: root, store: port });
 }, 90_000);
 
 afterAll(async () => {
@@ -143,7 +150,7 @@ describe('re-embed hook', () => {
     const seen: SyncOutcome[] = [];
     const hooked = new SyncEngine({
       workspaceRoot: root,
-      store: db,
+      store: port,
       onReEmbed: (outcome) => {
         seen.push(outcome);
       },
@@ -201,7 +208,7 @@ describe('watching', () => {
 
     const watched = new SyncEngine({
       workspaceRoot: root,
-      store: db,
+      store: port,
       // Deterministic event source: the assertion is about the engine, not about
       // how promptly macOS feels like delivering an FSEvent under load.
       usePolling: true,
@@ -232,7 +239,7 @@ describe('watching', () => {
 
     const watched = new SyncEngine({
       workspaceRoot: root,
-      store: db,
+      store: port,
       usePolling: true,
       awaitWriteFinishMs: 50,
       onSynced: (outcome) => {

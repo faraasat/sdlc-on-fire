@@ -1,3 +1,4 @@
+import type { StoragePort } from '@sdlc-on-fire/core';
 import type { RetrievedChunk, Retriever } from './assemble.js';
 
 /**
@@ -9,9 +10,13 @@ import type { RetrievedChunk, Retriever } from './assemble.js';
  * hybrid retrieval plugs into later.
  */
 
-export interface RetrievalStore {
-  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
-}
+/**
+ * Retrieval reaches chunks through the {@link StoragePort} (ADR-0047).
+ *
+ * Narrowed to the one method it uses, so a caller can hand over anything that
+ * can search — and so this module never learns that Postgres exists.
+ */
+export type RetrievalStore = Pick<StoragePort, 'searchChunks'>;
 
 /**
  * Turns free text into a `websearch_to_tsquery` input.
@@ -35,45 +40,25 @@ const CHUNK_CHARS = 1_200;
 /**
  * Full-text retriever over chunked document **content**.
  *
- * Searches `embeddings.chunk_text` — the body text the sync pipeline chunks on
- * write — rather than titles. Retrieving titles would make a pack technically
- * "narrower than a full-file dump" while carrying no content at all, which is
- * the letter of the mvp-slice DoD and not its point (P0-SPIKE-02, D3).
+ * Searches chunked body text rather than titles. Retrieving titles would make a
+ * pack technically "narrower than a full-file dump" while carrying no content at
+ * all — the letter of the mvp-slice DoD and not its point (P0-SPIKE-02, D3).
  *
- * Ranks on the stored `chunk_tsv` column, never on `to_tsvector(chunk_text)`:
- * re-deriving the vector per candidate row is a measured 23x slower at 50k rows
- * (P0-SPIKE-02) and the planner cannot use the GIN index for the ORDER BY.
- *
- * `ts_rank_cd` accounts for term proximity — a chunk mentioning both query terms
- * in one paragraph outranks one mentioning them at opposite ends.
+ * Ranking and index strategy belong to the adapter; this module only asks for
+ * the top `limit` chunks and adapts them to the pack's shape.
  */
 export function createTsvectorRetriever(store: RetrievalStore): Retriever {
   return async (query: string, limit: number): Promise<RetrievedChunk[]> => {
     const search = toSearchQuery(query);
     if (search.length === 0) return [];
 
-    const rows = await store.query<{
-      source_id: string;
-      chunk_index: number;
-      chunk_text: string;
-      heading_breadcrumb: string | null;
-      rank: number;
-    }>(
-      `SELECT source_id, chunk_index, chunk_text, heading_breadcrumb,
-              ts_rank_cd(chunk_tsv, websearch_to_tsquery('english', $1)) AS rank
-         FROM embeddings
-        WHERE chunk_tsv @@ websearch_to_tsquery('english', $1)
-          AND tombstoned_at IS NULL
-        ORDER BY rank DESC
-        LIMIT $2;`,
-      [search, limit],
-    );
+    const hits = await store.searchChunks(search, limit);
 
-    return rows.map((row) => ({
-      id: `${row.source_id}#${String(row.chunk_index)}`,
-      text: row.chunk_text,
-      score: Number(row.rank),
-      tokens: Math.ceil(row.chunk_text.length / 4),
+    return hits.map((hit) => ({
+      id: `${hit.sourceId}#${String(hit.index)}`,
+      text: hit.text,
+      score: hit.score,
+      tokens: Math.ceil(hit.text.length / 4),
     }));
   };
 }

@@ -7,7 +7,12 @@ import {
   SyncEngine,
   gatesMustPassGuard,
 } from '@sdlc-on-fire/daemon';
-import { applySchema, provisionPglite, type ProvisionedDatabase } from '@sdlc-on-fire/db';
+import {
+  applySchema,
+  provisionPglite,
+  PostgresStorageAdapter,
+  type ProvisionedDatabase,
+} from '@sdlc-on-fire/db';
 import {
   defaultV01Policy,
   recordGate,
@@ -59,8 +64,11 @@ beforeAll(async () => {
   await init(root);
   db = await provisionPglite({ workspaceRoot: root });
   await applySchema(db);
+  // Sync reaches data through the port (ADR-0047); the lifecycle engine still
+  // takes the executor directly — its own port migration is P0-DB-08 work.
+  const port = await PostgresStorageAdapter.create(db);
 
-  sync = new SyncEngine({ workspaceRoot: root, store: db });
+  sync = new SyncEngine({ workspaceRoot: root, store: port });
   lifecycle = new LifecycleEngine(db);
   lifecycle.registerGuard('gates', gatesMustPassGuard());
 }, 120_000);
