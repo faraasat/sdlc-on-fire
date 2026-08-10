@@ -154,8 +154,11 @@ describe('helpers', () => {
     expect(estimateTokens('a'.repeat(400))).toBeGreaterThan(estimateTokens('a'.repeat(40)));
   });
 
-  it('strips punctuation from a search query', () => {
-    expect(toSearchQuery('Add CSV export (v2)!')).toBe('Add CSV export v2');
+  it('strips punctuation and ORs the terms', () => {
+    // Updated with the A-03 fix: the output is a `to_tsquery` OR expression, not
+    // a word list. The old assertion passed against a retriever that returned
+    // nothing for every realistic query, because `websearch_to_tsquery` ANDs.
+    expect(toSearchQuery('Add CSV export (v2)!')).toBe('add | csv | export | v2');
   });
 
   it('returns an empty query for punctuation-only text', () => {

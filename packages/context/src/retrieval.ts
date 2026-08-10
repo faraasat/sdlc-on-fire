@@ -18,21 +18,44 @@ import type { RetrievedChunk, Retriever } from './assemble.js';
  */
 export type RetrievalStore = Pick<StoragePort, 'searchChunks'>;
 
+/** Terms kept from a query. Beyond this, ranking is unaffected and parsing is not free. */
+const MAX_QUERY_TERMS = 40;
+
 /**
- * Turns free text into a `websearch_to_tsquery` input.
+ * Turns free text into a `to_tsquery` **OR** expression.
  *
- * Uses `websearch_to_tsquery` rather than `to_tsquery` because the latter throws
- * on unescaped punctuation — and the query here is a work item's own prose,
- * which is full of it.
+ * This used to emit a bare word list for `websearch_to_tsquery`, and that is a
+ * defect the A-03 embedding eval found: `websearch_to_tsquery` joins terms with
+ * **AND**, so a 40-term query demanded all forty stems be present in one chunk.
+ * The real caller is `assembleContextPack`, which passes the *entire card body*
+ * as the query — so retrieval returned **zero rows for every realistic query**,
+ * while every test passed, because every test searched for a single invented
+ * word (`pangolins`, `narwhals`). Retrieval "beat naive grep" only on inputs no
+ * user would type.
+ *
+ * OR is what a ranked retriever wants: match anything, and let `ts_rank_cd`
+ * order by how much matched and how close together it is. AND is a filter, and
+ * a filter over free prose is a filter that rejects everything.
+ *
+ * `to_tsquery` is safe here specifically *because* the sanitiser leaves only
+ * letters, digits and the ` | ` we insert — the punctuation objection that
+ * motivated `websearch_to_tsquery` is handled by stripping, not by the parser.
+ * Postgres drops stopwords itself, and an all-stopword query yields an empty
+ * tsquery that matches nothing, which is the correct answer rather than a throw.
  */
 export function toSearchQuery(text: string): string {
-  return text
+  const terms = text
     .replace(/[\r\n]+/g, ' ')
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .trim()
     .split(/\s+/)
-    .slice(0, 40)
-    .join(' ');
+    .filter((term) => term.length > 0);
+
+  // Deduped: a term repeated in the prose is not twice as relevant, and
+  // `to_tsquery` would carry the duplicate into the parsed query.
+  return [...new Set(terms.map((term) => term.toLowerCase()))]
+    .slice(0, MAX_QUERY_TERMS)
+    .join(' | ');
 }
 
 const CHUNK_CHARS = 1_200;

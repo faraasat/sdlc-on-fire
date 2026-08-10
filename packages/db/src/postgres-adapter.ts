@@ -356,6 +356,11 @@ export class PostgresStorageAdapter implements StoragePort {
     // without full-text support returns nothing, which callers already handle.
     if (!this.capabilities.fullTextSearch) return [];
 
+    // `to_tsquery`, not `websearch_to_tsquery`: the latter ANDs its terms, and
+    // the caller passes a whole card body, so every realistic query demanded
+    // forty stems in one chunk and matched nothing (found by the A-03 eval).
+    // `toSearchQuery` hands us a sanitised ` | ` expression, so the punctuation
+    // hazard that `websearch_to_tsquery` exists to absorb cannot reach here.
     const rows = await this.#executor.query<{
       source_table: string;
       source_id: string;
@@ -365,9 +370,9 @@ export class PostgresStorageAdapter implements StoragePort {
       rank: number;
     }>(
       `SELECT source_table, source_id, chunk_index, chunk_text, heading_breadcrumb,
-              ts_rank_cd(chunk_tsv, websearch_to_tsquery('english', $1)) AS rank
+              ts_rank_cd(chunk_tsv, to_tsquery('english', $1)) AS rank
          FROM embeddings
-        WHERE chunk_tsv @@ websearch_to_tsquery('english', $1)
+        WHERE chunk_tsv @@ to_tsquery('english', $1)
           AND tombstoned_at IS NULL
         ORDER BY rank DESC
         LIMIT $2;`,

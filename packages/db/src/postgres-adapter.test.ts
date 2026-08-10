@@ -507,3 +507,57 @@ describe('already-happened ledger (P1-AGENT-04, ADR-0039)', () => {
     expect((await port.claimAction(comment)).first).toBe(true);
   });
 });
+
+/**
+ * The shape `packages/context`'s `toSearchQuery` produces.
+ *
+ * Rebuilt here rather than imported: `db` must not depend on `context`, and a
+ * test that reached across the layering to avoid five lines would be arguing
+ * for an import the architecture does not allow.
+ */
+function orQuery(text: string): string {
+  return [
+    ...new Set(
+      text
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .trim()
+        .split(/\s+/)
+        .map((term) => term.toLowerCase())
+        .filter(Boolean),
+    ),
+  ]
+    .slice(0, 40)
+    .join(' | ');
+}
+
+describe('searchChunks over a realistic query (A-03 regression)', () => {
+  it('finds a chunk from a whole card body, not just a single word', async () => {
+    await port.replaceChunks('docs', 'FEAT-900', [
+      {
+        index: 0,
+        text: 'The importer retries three times with exponential backoff. Rows that fail to parse are reported with their line number.',
+        contentHash: 'h900',
+      },
+    ]);
+
+    const card =
+      'Add CSV import to the ledger. The importer should retry transient failures ' +
+      'three times with exponential backoff, and report any row it cannot parse ' +
+      'along with its line number so a user can fix the source file.';
+
+    // Before the fix this returned zero rows: `websearch_to_tsquery` ANDs, so a
+    // forty-term query demanded forty stems in one chunk. Every existing test
+    // searched for one invented word, so the suite was green and retrieval was
+    // returning nothing for anything a user would actually type.
+    const hits = await port.searchChunks(orQuery(card), 5);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0]?.sourceId).toBe('FEAT-900');
+  });
+
+  it('returns nothing when the query shares no terms with the corpus', async () => {
+    const port = await PostgresStorageAdapter.create(db);
+    // OR must not degrade into "match everything": a query about something else
+    // still has to miss.
+    expect(await port.searchChunks(orQuery('quokka wombat'), 5)).toEqual([]);
+  });
+});
