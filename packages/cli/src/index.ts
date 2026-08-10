@@ -47,6 +47,11 @@ import { auditDependencies } from './audit.js';
 import { branchFor, type BranchResult } from './branch.js';
 import { prFor } from './pr.js';
 import { queueFor } from './queue.js';
+import {
+  listMemory,
+  memoryHistory as memoryHistoryFor,
+  recordMemory as recordMemoryEntry,
+} from './memory.js';
 
 export * from './commands.js';
 
@@ -629,6 +634,105 @@ export function buildProgram(): Command {
       );
       // Exit 0 whatever it found. A non-zero exit on findings would make this
       // blocking through the back door, in CI if nowhere else.
+    });
+
+  const memory = program.command('memory').description('the project typed memory (ADR-0023)');
+
+  memory
+    .command('add')
+    .argument('<title>', 'the subject this claim is about')
+    .argument('<body>', 'the claim itself')
+    .description('record a memory entry, superseding any earlier claim about the same subject')
+    .option('--type <type>', 'episodic | semantic | procedural | prospective', 'semantic')
+    .option(
+      '--source <source>',
+      'user-authored | agent-inferred | retrospective-synthesized',
+      'user-authored',
+    )
+    .option('--by <who>', 'agent or skill name plus run id', process.env['USER'] ?? 'local')
+    .option('--work-item <id>', 'scope it to a work item')
+    .option('--importance <n>', 'salience at write, 0..1')
+    .option('--valid-from <iso>', 'when this became true, if not now')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        title: string,
+        body: string,
+        options: {
+          type?: string;
+          source?: string;
+          by?: string;
+          workItem?: string;
+          importance?: string;
+          validFrom?: string;
+          json?: boolean;
+        },
+      ): Promise<void> => {
+        const result = await recordMemoryEntry(root(), {
+          type: options.type ?? 'semantic',
+          title,
+          body,
+          source: options.source ?? 'user-authored',
+          writtenBy: options.by ?? 'local',
+          workItemId: options.workItem,
+          importance: options.importance === undefined ? undefined : Number(options.importance),
+          validFrom: options.validFrom,
+        });
+        emit(result, options.json === true, (r: typeof result) =>
+          r.recorded
+            ? `recorded #${String(r.entry?.id ?? 0)}${r.entry?.conflict_status === 'contested' ? ' — CONTESTED: an earlier claim about this subject cannot be ordered against it, so neither wins' : ''}`
+            : `not recorded — ${r.reason ?? ''}`,
+        );
+      },
+    );
+
+  memory
+    .command('list')
+    .description('what is currently believed, most salient first')
+    .option('--type <type>', 'filter by memory type')
+    .option('--work-item <id>', 'filter to one work item')
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: { type?: string; workItem?: string; json?: boolean }): Promise<void> => {
+        const result = await listMemory(root(), {
+          type: options.type,
+          workItemId: options.workItem,
+        });
+        emit(result, options.json === true, (r: typeof result) =>
+          r.entries.length === 0
+            ? 'Nothing remembered yet.'
+            : r.entries
+                .map(
+                  (entry) =>
+                    `${entry.score.toFixed(2)}  ${entry.type.padEnd(11)} ${entry.title}\n` +
+                    `        ${entry.body}\n` +
+                    `        ${entry.source_type} by ${entry.written_by}` +
+                    (entry.conflict_status === 'contested' ? '  [CONTESTED]' : ''),
+                )
+                .join('\n'),
+        );
+      },
+    );
+
+  memory
+    .command('history')
+    .argument('<title>', 'the subject to trace')
+    .description('every claim ever made about a subject, including retracted ones')
+    .option('--json', 'emit JSON')
+    .action(async (title: string, options: { json?: boolean }): Promise<void> => {
+      const result = await memoryHistoryFor(root(), title);
+      emit({ title, entries: result }, options.json === true, () =>
+        result.length === 0
+          ? `Nothing recorded about "${title}".`
+          : result
+              .map(
+                (entry) =>
+                  `${entry.valid_from} → ${entry.valid_to ?? 'now'}  [${entry.conflict_status}]\n` +
+                  `        ${entry.body}\n` +
+                  `        ${entry.source_type} by ${entry.written_by}`,
+              )
+              .join('\n'),
+      );
     });
 
   program

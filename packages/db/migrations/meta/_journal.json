@@ -8,6 +8,13 @@
       "when": 1786312954789,
       "tag": "0000_shiny_liz_osborn",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786361434689,
+      "tag": "0001_lethal_omega_sentinel",
+      "breakpoints": true
     }
   ]
 }

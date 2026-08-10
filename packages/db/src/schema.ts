@@ -1,4 +1,5 @@
 import {
+  bigint,
   bigserial,
   boolean,
   check,
@@ -338,3 +339,54 @@ export const auditLog = pgTable('audit_log', {
   recordHash: text('record_hash').notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Typed, provenance-tracked, bi-temporal memory (contract §3.7, ADR-0023).
+ *
+ * Two properties do the work, and both are refusals to delete.
+ *
+ * **Bi-temporal.** A correction closes `valid_to` and points `superseded_by` at
+ * the replacement; the row stays. "What did we think, and when did we stop
+ * thinking it" remains answerable — ADR-0013's immutability applied to belief.
+ *
+ * **Provenance.** `source_type` and `written_by` are `NOT NULL` because the
+ * failure mode of a memory store is accumulation, not scarcity: a wrong
+ * remembered fact is retrieved with exactly the same confidence as a right one.
+ * An entry whose origin is unknown cannot be judged later.
+ */
+export const memoryEntries = pgTable(
+  'memory_entries',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    /** episodic | semantic | procedural | prospective. */
+    type: text('type').notNull(),
+    /** NULL for project-level memory belonging to no single item. */
+    workItemId: text('work_item_id').references(() => workItems.id),
+    /** The subject a claim is about — conflict detection groups on it. */
+    title: text('title').notNull(),
+    body: text('body').notNull(),
+    /** user-authored | agent-inferred | retrospective-synthesized. */
+    sourceType: text('source_type').notNull(),
+    /** Agent or skill name plus run id — who wrote this, concretely. */
+    writtenBy: text('written_by').notNull(),
+    /** Salience at write, assigned once. One weighted term in the score, never a gate. */
+    importance: numeric('importance'),
+    validFrom: timestamp('valid_from', { withTimezone: true }).notNull().defaultNow(),
+    /** NULL means currently believed. A close, never a delete. */
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    supersededBy: bigint('superseded_by', { mode: 'number' }),
+    /** none | superseded | contested. */
+    conflictStatus: text('conflict_status').notNull().default('none'),
+    lastAccessedAt: timestamp('last_accessed_at', { withTimezone: true }),
+    contentHash: text('content_hash').notNull(),
+    /** Backing `.sdlcof/memory/` file, when one exists. */
+    filePath: text('file_path'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('memory_entries_type_idx').on(table.type),
+    index('memory_entries_work_item_idx').on(table.workItemId),
+    // `valid_to IS NULL` is the "currently believed" filter every read runs.
+    index('memory_entries_valid_idx').on(table.validTo),
+  ],
+);

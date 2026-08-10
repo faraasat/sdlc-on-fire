@@ -22,6 +22,8 @@
  * says so, and callers degrade instead of breaking.
  */
 
+import type { MemoryEntry } from './memory-entry.js';
+
 /**
  * What a given adapter can actually do.
  *
@@ -182,6 +184,25 @@ export interface StoragePort {
   readonly capabilities: StorageCapabilities;
 
   /* ---- content mirror (Storage Manager sync) ---- */
+
+  /**
+   * Records a memory entry, applying bi-temporal conflict resolution first
+   * (P1-OBJ-04, ADR-0023).
+   *
+   * The resolution is computed by `resolveConflicts` and *applied* here — the
+   * decision is a pure function so it can be reasoned about and tested without a
+   * database, and the write is the only part that needs one. Returns `null` when
+   * the claim already exists: re-asserting a belief is not a correction, and
+   * recording it again is the accumulation failure this design exists to avoid.
+   */
+  recordMemory(entry: MemoryEntry): Promise<MemoryEntry | null>;
+  /** Entries currently believed, most salient first. */
+  currentMemory(filter?: {
+    workItemId?: string | undefined;
+    type?: string | undefined;
+  }): Promise<readonly MemoryEntry[]>;
+  /** Every entry about a subject, including closed ones — the "why did we change our mind" trail. */
+  memoryHistory(title: string): Promise<readonly MemoryEntry[]>;
 
   upsertWorkItem(row: WorkItemMirror): Promise<void>;
   upsertDoc(row: DocMirror): Promise<void>;

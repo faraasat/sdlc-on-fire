@@ -1,4 +1,5 @@
-import { canonicalJsonHash } from '@sdlc-on-fire/core';
+import { canonicalJsonHash, resolveConflicts } from '@sdlc-on-fire/core';
+import type { MemoryEntry } from '@sdlc-on-fire/core';
 import type {
   AuditChainVerification,
   BudgetScope,
@@ -80,6 +81,45 @@ export async function probeStorageCapabilities(
   };
 }
 
+interface MemoryRow {
+  id: number;
+  type: string;
+  work_item_id: string | null;
+  title: string;
+  body: string;
+  source_type: string;
+  written_by: string;
+  importance: string | number | null;
+  valid_from: Date | string;
+  valid_to: Date | string | null;
+  superseded_by: number | null;
+  conflict_status: string;
+  last_accessed_at: Date | string | null;
+  content_hash: string;
+}
+
+const iso = (value: Date | string | null): string | null =>
+  value === null ? null : value instanceof Date ? value.toISOString() : String(value);
+
+function toMemoryEntry(row: MemoryRow): MemoryEntry {
+  return {
+    id: row.id,
+    type: row.type as MemoryEntry['type'],
+    ...(row.work_item_id === null ? {} : { work_item_id: row.work_item_id }),
+    title: row.title,
+    body: row.body,
+    source_type: row.source_type as MemoryEntry['source_type'],
+    written_by: row.written_by,
+    importance: row.importance === null ? 0.5 : Number(row.importance),
+    valid_from: iso(row.valid_from) ?? new Date(0).toISOString(),
+    valid_to: iso(row.valid_to),
+    superseded_by: row.superseded_by,
+    conflict_status: row.conflict_status as MemoryEntry['conflict_status'],
+    last_accessed_at: iso(row.last_accessed_at),
+    content_hash: row.content_hash,
+  };
+}
+
 export class PostgresStorageAdapter implements StoragePort {
   readonly #executor: SqlExecutor;
   readonly capabilities: StorageCapabilities;
@@ -117,6 +157,88 @@ export class PostgresStorageAdapter implements StoragePort {
       () => undefined,
     );
     return run;
+  }
+
+  /**
+   * Records a memory entry, applying the resolution the pure function computed
+   * (P1-OBJ-04, ADR-0023).
+   *
+   * Supersession and insert happen in one transaction. Half of a correction is
+   * worse than none: an old belief closed with no replacement recorded would
+   * leave the store silently believing nothing about a subject it has an opinion
+   * on, and nothing downstream could tell that from "we never knew".
+   */
+  async recordMemory(entry: MemoryEntry): Promise<MemoryEntry | null> {
+    const existing = await this.memoryHistory(entry.title);
+    const resolution = resolveConflicts(entry, existing);
+    if (resolution.duplicate) return null;
+
+    return this.#atomic(async (tx) => {
+      const rows = await tx.query<{ id: number }>(
+        `INSERT INTO memory_entries
+           (type, work_item_id, title, body, source_type, written_by, importance,
+            valid_from, valid_to, conflict_status, content_hash)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id;`,
+        [
+          entry.type,
+          entry.work_item_id ?? null,
+          entry.title,
+          entry.body,
+          entry.source_type,
+          entry.written_by,
+          entry.importance,
+          entry.valid_from,
+          entry.valid_to,
+          resolution.status,
+          entry.content_hash,
+        ],
+      );
+      const id = rows[0]?.id;
+      if (id === undefined) throw new Error('memory insert returned no id');
+
+      for (const closed of resolution.supersedes) {
+        // Closed, never deleted: "what did we think, and when did we stop
+        // thinking it" has to stay answerable (ADR-0013 applied to belief).
+        await tx.query(
+          `UPDATE memory_entries
+              SET valid_to = $1, superseded_by = $2, conflict_status = 'superseded'
+            WHERE id = $3;`,
+          [closed.validTo, id, closed.id],
+        );
+      }
+      for (const rivalId of resolution.contested) {
+        // Neither wins. A fact recorded today can be about last month, so
+        // "most recent write wins" would discard the better-founded claim.
+        await tx.query(`UPDATE memory_entries SET conflict_status = 'contested' WHERE id = $1;`, [
+          rivalId,
+        ]);
+      }
+
+      return { ...entry, id, conflict_status: resolution.status };
+    });
+  }
+
+  async currentMemory(filter?: {
+    workItemId?: string | undefined;
+    type?: string | undefined;
+  }): Promise<readonly MemoryEntry[]> {
+    const rows = await this.#executor.query<MemoryRow>(
+      `SELECT * FROM memory_entries
+        WHERE valid_to IS NULL AND conflict_status <> 'superseded'
+          AND ($1::text IS NULL OR work_item_id = $1)
+          AND ($2::text IS NULL OR type = $2)
+        ORDER BY importance DESC NULLS LAST, valid_from DESC;`,
+      [filter?.workItemId ?? null, filter?.type ?? null],
+    );
+    return rows.map(toMemoryEntry);
+  }
+
+  async memoryHistory(title: string): Promise<readonly MemoryEntry[]> {
+    const rows = await this.#executor.query<MemoryRow>(
+      'SELECT * FROM memory_entries WHERE lower(btrim(title)) = lower(btrim($1)) ORDER BY valid_from;',
+      [title],
+    );
+    return rows.map(toMemoryEntry);
   }
 
   async upsertWorkItem(row: WorkItemMirror): Promise<void> {

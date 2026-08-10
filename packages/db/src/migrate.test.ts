@@ -67,9 +67,37 @@ describe('generated migration', () => {
 
   it('does not create tables deferred past v0.1', async () => {
     // Building ahead of the slice is as much a defect as building short of it.
+    //
+    // `memory_entries` left this list on 2026-08-10 by an explicit founder scope
+    // decision: the standing instruction is to complete Phase 1 in full, and
+    // P1-OBJ-04 is a Phase-1 task. The guard is loosened deliberately and the
+    // reason is recorded here rather than in a commit message nobody re-reads —
+    // a guard quietly edited to make new code pass is worse than no guard.
+    //
+    // The remaining three are still genuinely unbuilt.
     const tables = await tableNames(db);
-    for (const table of ['traceability_edges', 'memory_entries', 'checkpoints', 'external_ref']) {
+    for (const table of ['traceability_edges', 'checkpoints', 'external_ref']) {
       expect(tables, table).not.toContain(table);
+    }
+  });
+
+  it('creates memory_entries with its bi-temporal columns (P1-OBJ-04)', async () => {
+    // The inverse of the guard above: a table admitted into the slice has to
+    // actually arrive, with the columns the contract specifies. §3.7's whole
+    // point is the two time axes plus the supersession link.
+    const columns = await db.query<{ column_name: string }>(
+      "SELECT column_name FROM information_schema.columns WHERE table_name = 'memory_entries';",
+    );
+    const names = columns.map((row) => row.column_name);
+    for (const column of [
+      'valid_from',
+      'valid_to',
+      'superseded_by',
+      'conflict_status',
+      'source_type',
+      'written_by',
+    ]) {
+      expect(names, column).toContain(column);
     }
   });
 });

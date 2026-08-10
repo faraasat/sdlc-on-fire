@@ -15,6 +15,7 @@ export * from './evidence.js';
 export * from './run.js';
 export * from './context.js';
 export * from './memory.js';
+export * from './memory-entry.js';
 export * from './workspace.js';
 export * from './storage-port.js';
 export * from './capabilities.js';
