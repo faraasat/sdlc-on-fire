@@ -7,6 +7,7 @@ import { evidencePackage } from '@sdlc-on-fire/evidence';
 
 export * from './checkpoint.js';
 export * from './embedder/onnx.js';
+export * from './embedder/reranker.js';
 export * from './embedder/worker.js';
 export * from './sandbox/tiers.js';
 export * from './sandbox/exec.js';
