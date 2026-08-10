@@ -4,3 +4,7 @@ node_modules/
 pnpm-lock.yaml
 *.tsbuildinfo
 .changeset/*.md
+
+# Recorded tool output. Reformatting it would make the fixture no longer
+# be the thing the tool actually printed.
+packages/*/src/__fixtures__/

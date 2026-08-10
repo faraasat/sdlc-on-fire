@@ -126,3 +126,46 @@ describe('dispatch', () => {
     ).rejects.toBeInstanceOf(DispatchError);
   });
 });
+
+describe('recursion depth at the spawn point (P1-AGENT-07)', () => {
+  const transport = (): Promise<{ stdout: string; stderr: string; exitCode: number }> =>
+    Promise.resolve({
+      stdout: goodOutput,
+      stderr: '',
+      exitCode: 0,
+    });
+
+  const request = {
+    skill: IMPLEMENT_SKILL,
+    variables: { work_item_id: 'TASK-001', work_item_title: 'x' },
+    cwd: process.cwd(),
+  };
+
+  it('allows a spawn at or under the limit', async () => {
+    await expect(dispatchSkill({ ...request, depth: 2 }, transport)).resolves.toBeDefined();
+  });
+
+  it('refuses a spawn beyond it', async () => {
+    // The cap lived only in the wave planner, which had no caller anywhere in
+    // the product — so a subagent spawning a subagent was bounded by nothing.
+    await expect(dispatchSkill({ ...request, depth: 3 }, transport)).rejects.toThrow(
+      /beyond the limit of 2/,
+    );
+  });
+
+  it('refuses before spending anything', async () => {
+    // The cheapest refusal is the one that happens before a token is spent, so
+    // the transport must never be reached.
+    let called = false;
+    const spy = (): Promise<{ stdout: string; stderr: string; exitCode: number }> => {
+      called = true;
+      return transport();
+    };
+    await expect(dispatchSkill({ ...request, depth: 3 }, spy)).rejects.toThrow();
+    expect(called).toBe(false);
+  });
+
+  it('treats an unstated depth as a human-initiated spawn', async () => {
+    await expect(dispatchSkill(request, transport)).resolves.toBeDefined();
+  });
+});

@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import os from 'node:os';
 import { computeConfidence, type EvidenceEnvelope, type EvidenceKind } from '@sdlc-on-fire/core';
 import { parseBuildResult, parseTscOutput, parseVitestJson, payloadHash } from './parsers.js';
+import { parseDependencyAudit } from './dependency-audit.js';
 
 /**
  * The verify runner — **the daemon executes the command, never the agent**
@@ -61,6 +62,15 @@ function envelope(
   payload: unknown,
   command: { cmd: string; args: readonly string[]; exitCode: number },
   context: RunContext,
+  /**
+   * Overrides the computed confidence.
+   *
+   * Used by the dependency audit, whose payload is a point-in-time claim about
+   * the ecosystem rather than an observation of this code — it can go out of
+   * date without anything changing here, and saying so in the number is more
+   * honest than letting it read like a test run.
+   */
+  confidenceOverride?: number,
 ): EvidenceEnvelope {
   const producedAt = (context.now ?? new Date()).toISOString();
 
@@ -81,7 +91,8 @@ function envelope(
       exit_code: command.exitCode,
     },
     content_hash: payloadHash(payload),
-    confidence: computeConfidence({ producer: 'daemon', produced_at: producedAt }),
+    confidence:
+      confidenceOverride ?? computeConfidence({ producer: 'daemon', produced_at: producedAt }),
     produced_at: producedAt,
     payload,
   };
@@ -142,4 +153,30 @@ export function extractJson(stream: string): string {
   const end = stream.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) return stream;
   return stream.slice(start, end + 1);
+}
+
+/**
+ * Runs a dependency audit and produces `security-scan` evidence (P1-GATE-10).
+ *
+ * The audit tool exits **non-zero when it finds anything**, which is not a
+ * failure of the run: it found what it was asked to find. Treating that exit
+ * code as an error would discard the very report we came for — the same mistake
+ * the test runner path deliberately avoids.
+ *
+ * `confidence` is lower than a test run's on purpose. An advisory database is a
+ * point-in-time claim about the ecosystem that can change without any code
+ * changing, and evidence that overstates its own certainty is worse than
+ * evidence that is merely old.
+ */
+export async function runDependencyAudit(
+  cmd: string,
+  args: readonly string[],
+  context: RunContext,
+): Promise<EvidenceEnvelope> {
+  const result = await runCommand(cmd, args, context);
+  const payload = parseDependencyAudit(
+    extractJson(result.stdout),
+    `${cmd} ${args.join(' ')}`.trim(),
+  );
+  return envelope('security-scan', payload, { cmd, args, exitCode: result.exitCode }, context, 0.7);
 }

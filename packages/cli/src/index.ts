@@ -12,6 +12,8 @@ import {
   corePackage,
   formatWorkItemId,
   kanbanColumnForStage,
+  APPETITES,
+  AppetiteSchema,
   PRESETS,
   PresetSchema,
   resolveRequiredStages,
@@ -41,6 +43,7 @@ import {
 } from './commands.js';
 import { advanceWorkItem } from './advance.js';
 import { reopenWorkItem, verifyWorkItem } from './advance.js';
+import { auditDependencies } from './audit.js';
 import { branchFor, type BranchResult } from './branch.js';
 
 export * from './commands.js';
@@ -146,12 +149,13 @@ export function buildProgram(): Command {
     .argument('<title>', 'human-readable title')
     .description('create a work item')
     .option('--preset <preset>', 'lite | standard | strict', 'standard')
+    .option('--appetite <appetite>', 'small-batch | big-batch (epics and features only)')
     .option('--json', 'emit JSON')
     .action(
       async (
         kind: string,
         title: string,
-        options: { preset?: string; json?: boolean },
+        options: { preset?: string; appetite?: string; json?: boolean },
       ): Promise<void> => {
         if (!(kind in WORK_ITEM_ID_PREFIX)) {
           throw new Error(
@@ -164,6 +168,23 @@ export function buildProgram(): Command {
         // the ladder resolver, which returned undefined and crashed with a raw
         // TypeError several frames later — an error that named neither the flag
         // nor the valid values.
+        // An appetite is a scoping decision about a whole body of work; a task
+        // inherits its parent's. Silently accepting one on a task would record a
+        // decision at a level where it means nothing.
+        if (options.appetite !== undefined && typedKind !== 'epic' && typedKind !== 'feature') {
+          throw new Error(
+            `--appetite applies to epics and features, not to a ${typedKind}. ` +
+              "A task's appetite is its parent's.",
+          );
+        }
+        const appetiteParsed =
+          options.appetite === undefined ? null : AppetiteSchema.safeParse(options.appetite);
+        if (appetiteParsed !== null && !appetiteParsed.success) {
+          throw new Error(
+            `unknown appetite "${String(options.appetite)}" — expected one of ${APPETITES.join(', ')}`,
+          );
+        }
+
         const presetParsed = PresetSchema.safeParse(options.preset ?? 'standard');
         if (!presetParsed.success) {
           throw new Error(
@@ -198,6 +219,7 @@ export function buildProgram(): Command {
           risk_level: 'low' as const,
           created_at: now,
           updated_at: now,
+          ...(appetiteParsed === null ? {} : { appetite: appetiteParsed.data }),
           ...(typedKind === 'task' ? { verify: 'pnpm test', done: ['tests pass'] } : {}),
           ...(typedKind === 'bug' ? { repro_steps: ['TODO'], severity: 'medium' as const } : {}),
           ...(typedKind === 'story' ? { acceptance_criteria: ['GIVEN … WHEN … THEN …'] } : {}),
@@ -512,6 +534,34 @@ export function buildProgram(): Command {
         ].join('\n'),
       );
       if (result.unroutable.length > 0) process.exitCode = 1;
+    });
+
+  program
+    .command('audit')
+    .description('run a dependency audit and record it as advisory (non-gating) evidence')
+    .option('--command <cmd>', 'audit command to run', 'pnpm audit --json')
+    .option('--json', 'emit JSON')
+    .action(async (options: { command?: string; json?: boolean }): Promise<void> => {
+      const result = await auditDependencies(root(), { command: options.command });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof auditDependencies>>) =>
+        [
+          r.summary,
+          `  evidence: #${String(r.evidenceId)}`,
+          ...r.audit.advisories
+            .slice(0, 10)
+            .map(
+              (advisory) =>
+                `  ${advisory.severity.padEnd(9)} ${advisory.module}${advisory.dev_only ? ' (dev only)' : ''} — ${advisory.title}`,
+            ),
+          r.audit.advisories.length > 10
+            ? `  … and ${String(r.audit.advisories.length - 10)} more`
+            : '',
+        ]
+          .filter((line) => line !== '')
+          .join('\n'),
+      );
+      // Exit 0 whatever it found. A non-zero exit on findings would make this
+      // blocking through the back door, in CI if nowhere else.
     });
 
   program

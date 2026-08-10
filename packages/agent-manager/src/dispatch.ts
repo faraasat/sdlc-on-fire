@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { resolveOutputSchema } from './skills/output-schemas.js';
-import type { CanonicalSkill } from '@sdlc-on-fire/core';
+import { assertWithinDepth, type CanonicalSkill } from '@sdlc-on-fire/core';
 import { fillSlots } from './prompt.js';
 
 /**
@@ -54,6 +54,16 @@ export interface DispatchRequest {
   readonly variables: Record<string, string>;
   readonly cwd: string;
   readonly timeoutMs?: number | undefined;
+  /**
+   * How deep this spawn is: 0 for one a human started, 1 for one a subagent
+   * started (ADR-0029, P1-AGENT-07).
+   *
+   * Enforced here as well as in the wave planner, because a wave is not the only
+   * way a subagent gets spawned — and the planner was, until now, the *only*
+   * place the cap lived and had no caller anywhere. A limit nothing calls reads
+   * in review exactly like a limit.
+   */
+  readonly depth?: number | undefined;
 }
 
 export interface DispatchResult {
@@ -174,6 +184,10 @@ export async function dispatchSkill(
   transport: AgentTransport,
   target = 'claude-code',
 ): Promise<DispatchResult> {
+  // Checked before the prompt is even rendered: the cheapest refusal is the one
+  // that happens before any token is spent.
+  assertWithinDepth(request.depth ?? 0, `dispatch of skill "${request.skill.name}"`);
+
   const prompt = fillSlots(request.skill.task, request.variables);
   const timeoutMs = request.timeoutMs ?? 600_000;
   const startedAt = Date.now();

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BugSchema, FeatureSchema, TaskSchema, WorkItemSchema } from './work-item.js';
+import {
+  APPETITE_MEANING,
+  BugSchema,
+  FeatureSchema,
+  TaskSchema,
+  WorkItemSchema,
+} from './work-item.js';
 
 const SCHEMA_URL = 'https://sdlc-on-fire.dev/schema/work-item.json';
 
@@ -154,5 +160,42 @@ describe('discriminated union', () => {
   it('rejects a kind outside the closed enum', () => {
     // "card" is UI vocabulary and must never be a schema value.
     expect(WorkItemSchema.safeParse(validTask({ kind: 'card' })).success).toBe(false);
+  });
+});
+
+describe('appetite (P1-SKILL-04)', () => {
+  const feature = (): Record<string, unknown> => {
+    const base: Record<string, unknown> = {
+      ...validTask(),
+      id: 'FEAT-001',
+      kind: 'feature',
+      acceptance_criteria: ['GIVEN a report WHEN exporting THEN a CSV downloads'],
+      spec_ref: 'specs/csv-export/spec.md',
+    };
+    delete base['verify'];
+    delete base['done'];
+    return base;
+  };
+
+  it('accepts a declared appetite on a feature', () => {
+    expect(FeatureSchema.safeParse({ ...feature(), appetite: 'small-batch' }).success).toBe(true);
+  });
+
+  it('is absent rather than defaulted when nobody chose one', () => {
+    // A defaulted appetite is one nobody decided, and the entire value of the
+    // field is that it was decided.
+    const parsed = FeatureSchema.parse(feature());
+    expect(parsed.appetite).toBeUndefined();
+  });
+
+  it('refuses a value outside the vocabulary', () => {
+    expect(FeatureSchema.safeParse({ ...feature(), appetite: '2 weeks' }).success).toBe(false);
+  });
+
+  it('states what each appetite buys rather than implying it', () => {
+    // The direction of the constraint is the point: an estimate lets scope fix
+    // the time, an appetite lets time fix the scope.
+    expect(APPETITE_MEANING['small-batch']).toMatch(/cut scope/);
+    expect(APPETITE_MEANING['big-batch']).toMatch(/ceiling/);
   });
 });

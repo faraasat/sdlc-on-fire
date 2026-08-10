@@ -1,3 +1,9 @@
+import {
+  CapExceededError,
+  MAX_CONCURRENCY,
+  MAX_RECURSION_DEPTH,
+  MAX_WAVE_COUNT,
+} from '@sdlc-on-fire/core';
 /**
  * Subagent cap enforcement (P1-SCHED-03, ADR-0029).
  *
@@ -17,19 +23,15 @@
  * complete one — and the caller would act on it as though everything ran.
  */
 
-export const MAX_CONCURRENCY = 8;
-export const MAX_WAVE_COUNT = 32;
-export const MAX_RECURSION_DEPTH = 2;
-
-export class CapExceededError extends Error {
-  override readonly name = 'CapExceededError';
-  constructor(
-    readonly cap: 'concurrency' | 'wave-count' | 'recursion-depth',
-    message: string,
-  ) {
-    super(message);
-  }
-}
+// One source for the numbers (core), two enforcement points: here for a wave,
+// and at the agent manager's dispatch boundary for a single spawn. Re-exported
+// so existing importers of this module are unaffected.
+export {
+  CapExceededError,
+  MAX_CONCURRENCY,
+  MAX_RECURSION_DEPTH,
+  MAX_WAVE_COUNT,
+} from '@sdlc-on-fire/core';
 
 export interface WaveRequest {
   readonly waveId: string;

@@ -47,7 +47,31 @@ export type ExternalRef = z.infer<typeof ExternalRefSchema>;
  * extend this; the discriminated union in {@link WorkItemSchema} is the type
  * every consumer should reach for.
  */
-export const WorkItemBaseFields = z.object({
+export /**
+ * Shape Up's appetite: how much time this is *worth*, not how long it will take
+ * (P1-SKILL-04).
+ *
+ * An estimate answers "how long?" and is a prediction; an appetite answers "how
+ * much are we willing to spend?" and is a decision. The direction of the
+ * constraint is the whole point — an estimate lets scope fix the time, an
+ * appetite lets time fix the scope. That distinction is what makes it worth a
+ * field rather than a note: it changes what happens when the work turns out
+ * bigger than expected.
+ *
+ * Only on epics and features. A task's appetite is its parent's, and asking for
+ * one per task would turn a scoping decision into paperwork.
+ */
+const APPETITES = ['small-batch', 'big-batch'] as const;
+export const AppetiteSchema = z.enum(APPETITES);
+export type Appetite = z.infer<typeof AppetiteSchema>;
+
+/** Roughly what each appetite buys, for the CLI to state rather than imply. */
+export const APPETITE_MEANING: Readonly<Record<Appetite, string>> = {
+  'small-batch': 'a few days of work — if it grows past that, cut scope rather than extend',
+  'big-batch': 'up to a full cycle — still a ceiling, not a budget to fill',
+};
+
+const WorkItemBaseFields = z.object({
   $schema: z.url(),
   id: WorkItemIdSchema,
   kind: WorkItemKindSchema,
@@ -75,6 +99,11 @@ export const WorkItemBaseFields = z.object({
 const EpicFields = WorkItemBaseFields.extend({
   kind: z.literal('epic'),
   goal: z.string().min(1),
+  /**
+   * Optional, and deliberately not defaulted. A defaulted appetite is one nobody
+   * chose, and the value of the field is entirely in its having been decided.
+   */
+  appetite: AppetiteSchema.optional(),
   /** Where a mid-lifecycle-inserted epic enters; defaults to the first resolved stage. */
   entry_stage: LifecycleStageSchema.optional(),
 });
@@ -88,6 +117,8 @@ const StoryFields = WorkItemBaseFields.extend({
 const FeatureFields = WorkItemBaseFields.extend({
   kind: z.literal('feature'),
   spec_ref: z.string().min(1),
+  /** See {@link AppetiteSchema}. Optional and never defaulted. */
+  appetite: AppetiteSchema.optional(),
   acceptance_criteria: z.array(z.string().min(1)).min(1),
 });
 
