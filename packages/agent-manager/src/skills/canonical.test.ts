@@ -3,13 +3,36 @@ import { describe, expect, it } from 'vitest';
 import { ClaudeCodeAdapter } from '../adapters/claude-code.js';
 import { runDoctor } from '../doctor.js';
 import { renderPromptTemplate } from '../prompt.js';
-import { CANONICAL_SKILLS, getSkill, IMPLEMENT_SKILL, SPEC_SKILL } from './canonical.js';
+import {
+  CANONICAL_SKILLS,
+  getSkill,
+  skillForStage,
+  IMPLEMENT_SKILL,
+  SPEC_SKILL,
+} from './canonical.js';
 
 const skills = Object.values(CANONICAL_SKILLS);
 
 describe('canonical skills', () => {
-  it('ships exactly the two v0.1 skills', () => {
-    expect(Object.keys(CANONICAL_SKILLS).sort()).toEqual(['implement', 'spec']);
+  it('ships exactly the three v0.1 skills', () => {
+    // spec + implement (P1-SKILL-01) and review (P1-SKILL-02). `review` was
+    // built but never registered, which made it invisible to stage resolution.
+    expect(Object.keys(CANONICAL_SKILLS).sort()).toEqual(['implement', 'review', 'spec']);
+  });
+
+  it('maps each skill to a distinct stage', () => {
+    // skillForStage resolves by the skill's own stage field, so two skills
+    // claiming one stage would make dispatch order-dependent.
+    const stages = skills.map((skill) => skill.stage);
+    expect(new Set(stages).size).toBe(stages.length);
+  });
+
+  it('resolves a stage to its skill, and leaves daemon stages unclaimed', () => {
+    expect(skillForStage('review')?.name).toBe('review');
+    expect(skillForStage('implement')?.name).toBe('implement');
+    // The daemon runs verify and `done` is a gate outcome — neither is an agent.
+    expect(skillForStage('test')).toBeUndefined();
+    expect(skillForStage('done')).toBeUndefined();
   });
 
   it('every skill validates against the schema', () => {

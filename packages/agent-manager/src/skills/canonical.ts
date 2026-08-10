@@ -1,12 +1,17 @@
 import { CanonicalSkillSchema, type CanonicalSkill } from '@sdlc-on-fire/core';
+import { REVIEW_SKILL } from './review.js';
 
 /**
  * The canonical stage skills (P1-SKILL-01).
  *
- * v0.1 ships **two** — `spec` and `implement` — per mvp-slice; discovery,
- * decompose, plan-story and retrospective are deferred. These are the source
- * every agent surface compiles from (ADR-0007): editing a compiled
- * `.claude/skills/**` file is editing build output.
+ * v0.1 ships `spec` and `implement` (P1-SKILL-01) plus `review` (P1-SKILL-02)
+ * per mvp-slice; discovery, decompose, plan-story and retrospective are
+ * deferred. These are the source every agent surface compiles from (ADR-0007):
+ * editing a compiled `.claude/skills/**` file is editing build output.
+ *
+ * `review` is registered here rather than only exported from its own module. A
+ * skill absent from this registry is invisible to `skillForStage`, so the
+ * `review` stage would report "no skill available" despite having one.
  *
  * They live as data here rather than as `skills/<name>/SKILL.md` files because
  * the workspace scaffolder that would emit those is `P0-CLI-03`, deferred past
@@ -93,8 +98,22 @@ export const IMPLEMENT_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
 export const CANONICAL_SKILLS: Readonly<Record<string, CanonicalSkill>> = {
   spec: SPEC_SKILL,
   implement: IMPLEMENT_SKILL,
+  review: REVIEW_SKILL,
 };
 
 export function getSkill(name: string): CanonicalSkill | undefined {
   return CANONICAL_SKILLS[name];
+}
+
+/**
+ * The skill that drives a lifecycle stage, or `undefined` when none does.
+ *
+ * Resolving by the skill's own `stage` field rather than a second lookup table
+ * keeps one source of truth: a skill that changes stage cannot go on being
+ * dispatched for the old one. Stages with no skill (`test`, `done`) return
+ * `undefined` deliberately — the daemon runs verify, and `done` is a gate
+ * outcome, so neither is an agent's job.
+ */
+export function skillForStage(stage: string): CanonicalSkill | undefined {
+  return Object.values(CANONICAL_SKILLS).find((skill) => skill.stage === stage);
 }

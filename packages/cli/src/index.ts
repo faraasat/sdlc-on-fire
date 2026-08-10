@@ -19,7 +19,14 @@ import {
 import { renderWorkItem } from '@sdlc-on-fire/storage';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { init, nextSequence, showConfig, status } from './commands.js';
+import {
+  init,
+  instructions,
+  nextSequence,
+  showConfig,
+  status,
+  type InstructionsResult,
+} from './commands.js';
 
 export * from './commands.js';
 
@@ -169,6 +176,33 @@ export function buildProgram(): Command {
         );
       },
     );
+
+  program
+    .command('instructions')
+    .argument('<work-item-id>', 'the work item to report on, e.g. FEAT-001')
+    .description('report the next step, its skill template, and the context for a work item')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
+      const result = await instructions(root(), id);
+      emit(result, options.json === true, (r: InstructionsResult) => {
+        const lines = [
+          `${r.workItem.id} — ${r.workItem.title}`,
+          `  stage:  ${r.workItem.stage} (${r.workItem.preset}/${r.workItem.workType})`,
+          `  next:   ${r.nextStage ?? '(none — terminal)'}`,
+        ];
+        if (r.skill === null) {
+          lines.push(`  skill:  none — ${r.reason ?? ''}`);
+        } else {
+          lines.push(
+            `  skill:  ${r.skill.name} → ${r.skill.outputContract.toolName}`,
+            `  tokens: ~${String(r.context?.estimatedTokens ?? 0)}`,
+            '',
+            r.skill.task,
+          );
+        }
+        return lines.join('\n');
+      });
+    });
 
   program
     .command('config')

@@ -41,6 +41,18 @@ export const LIFECYCLE_STAGES = [
 export const LifecycleStageSchema = z.enum(LIFECYCLE_STAGES);
 export type LifecycleStage = z.infer<typeof LifecycleStageSchema>;
 
+/**
+ * Narrows untrusted text to a stage.
+ *
+ * Frontmatter is user- and agent-authored, so `lifecycle_state` arrives as a
+ * plain string. Casting it instead of checking lets a typo behave like a real
+ * stage that merely has no successor — which reads as "terminal", the one
+ * answer a caller must be able to trust.
+ */
+export function isLifecycleStage(value: string): value is LifecycleStage {
+  return (LIFECYCLE_STAGES as readonly string[]).includes(value);
+}
+
 /** `done` is terminal for every `(preset, work_type)` combination (contract §3.2). */
 export const TERMINAL_STAGES: readonly LifecycleStage[] = ['done'];
 

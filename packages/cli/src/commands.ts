@@ -8,9 +8,18 @@ import {
   GITIGNORE_ENTRIES,
   ROOT_FILES,
   WorkspaceConfigSchema,
+  docsToGenerate,
+  isLifecycleStage,
+  isTerminalStage,
+  nextStage,
+  resolveRequiredStages,
   resolveWorkspaceLayout,
+  type Preset,
   type WorkspaceConfig,
 } from '@sdlc-on-fire/core';
+import { fillSlots, skillForStage } from '@sdlc-on-fire/agent-manager';
+import { estimateTokens } from '@sdlc-on-fire/context';
+import { parseFrontmatter } from '@sdlc-on-fire/storage';
 
 /**
  * Command implementations, kept separate from the Commander wiring.
@@ -84,7 +93,14 @@ export async function init(root: string): Promise<InitResult> {
   for (const file of ROOT_FILES) {
     await ensureFile(path.join(layout.root, file), `# ${file.replace(/\.md$/, '')}\n`);
   }
-  for (const file of DOCS_ROOT_FILES) {
+
+  // Honour the config's doc-generation toggles rather than always emitting the
+  // full set. `docsToGenerate` existed and was tested from the day P0-OBJ-02
+  // landed, but nothing called it — so a user who narrowed `docs.generate` got
+  // every file anyway, and the setting silently did nothing.
+  const existingConfig = await readConfig(root);
+  const docs = existingConfig === null ? DOCS_ROOT_FILES : docsToGenerate(existingConfig);
+  for (const file of docs) {
     await ensureFile(path.join(layout.docsDir, file), `# ${file.replace(/\.md$/, '')}\n`);
   }
 
@@ -168,6 +184,180 @@ export async function nextSequence(kanbanDir: string, prefix: string): Promise<n
   };
   await walk(kanbanDir);
   return seen.length === 0 ? 1 : Math.max(...seen) + 1;
+}
+
+export interface InstructionsWorkItem {
+  readonly id: string;
+  readonly title: string;
+  readonly kind: string;
+  readonly preset: string;
+  readonly workType: string;
+  readonly stage: string;
+  readonly filePath: string;
+}
+
+export interface InstructionsSkill {
+  readonly name: string;
+  readonly stage: string;
+  readonly role: string;
+  readonly task: string;
+  readonly stopCondition: string;
+  readonly outputContract: { readonly toolName: string; readonly jsonSchemaRef?: string };
+}
+
+export interface InstructionsResult {
+  readonly workItem: InstructionsWorkItem;
+  /** The stage that comes next on this item's resolved ladder; `null` at the end. */
+  readonly nextStage: string | null;
+  readonly terminal: boolean;
+  /** The skill driving `nextStage`, or `null` when that stage is not an agent's job. */
+  readonly skill: InstructionsSkill | null;
+  /** Why there is no skill, when there isn't one. Always present, never inferred by a caller. */
+  readonly reason: string | null;
+  readonly context: {
+    readonly cardCore: string;
+    readonly skillStable: string;
+    readonly estimatedTokens: number;
+  } | null;
+}
+
+/** Locates a work item's card by id, anywhere in the kanban tree. */
+export async function findWorkItem(
+  kanbanDir: string,
+  id: string,
+): Promise<{ filePath: string; raw: string } | null> {
+  const walk = async (dir: string): Promise<{ filePath: string; raw: string } | null> => {
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        const found = await walk(full);
+        if (found !== null) return found;
+      } else if (entry.name.endsWith('.md')) {
+        const raw = await fs.readFile(full, 'utf8');
+        if (parseFrontmatter(raw).data['id'] === id) return { filePath: full, raw };
+      }
+    }
+    return null;
+  };
+  return walk(kanbanDir);
+}
+
+/**
+ * Answers "what happens next for this work item, and with what prompt".
+ *
+ * The next step is **computed** from the item's resolved stage ladder, never
+ * suggested: `resolveRequiredStages` + `nextStage` are the deterministic
+ * disposer (ADR-0040), so two callers asking the same question at the same
+ * commit get the same answer. This command reports; it never advances anything.
+ *
+ * A stage with no skill is a real, expected answer rather than an error —
+ * `test` belongs to the daemon and `done` is a gate outcome, so `skill` comes
+ * back `null` with a `reason` saying which case it is. A caller that treated
+ * "no skill" as "dispatch anything" would be routing around the gate.
+ */
+export async function instructions(root: string, id: string): Promise<InstructionsResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const found = await findWorkItem(layout.kanbanDir, id);
+  if (found === null) throw new Error(`no work item with id "${id}" under ${layout.kanbanDir}`);
+
+  const parsed = parseFrontmatter(found.raw);
+  const data = parsed.data;
+  const read = (key: string, fallback: string): string =>
+    typeof data[key] === 'string' ? data[key] : fallback;
+
+  const preset = read('preset', 'standard');
+  const workType = read('work_type', 'feature');
+  const stage = read('lifecycle_state', '');
+
+  const workItem: InstructionsWorkItem = {
+    id,
+    title: read('title', ''),
+    kind: read('kind', read('type', '')),
+    preset,
+    workType,
+    stage,
+    filePath: path.relative(layout.root, found.filePath),
+  };
+
+  const ladder = resolveRequiredStages(preset as Preset, workType);
+  if (ladder === null) {
+    throw new Error(`no stage ladder for preset "${preset}" + work_type "${workType}"`);
+  }
+
+  // The card's stage is untrusted text until checked against the vocabulary.
+  // Casting it would let a typo ("implment") fall through as a legitimate stage
+  // that simply has no successor — reported as "terminal", which is a lie.
+  if (!isLifecycleStage(stage)) {
+    return {
+      workItem,
+      nextStage: null,
+      terminal: false,
+      skill: null,
+      reason: `"${stage}" is not a lifecycle stage — ${workItem.filePath} needs a valid lifecycle_state.`,
+      context: null,
+    };
+  }
+
+  const next = nextStage(preset as Preset, workType, stage);
+  if (next === null) {
+    return {
+      workItem,
+      nextStage: null,
+      terminal: isTerminalStage(stage),
+      skill: null,
+      reason: isTerminalStage(stage)
+        ? `${id} is at "${stage}", the end of its ladder — nothing comes next.`
+        : `"${stage}" is not on the ${preset}/${workType} ladder (${ladder.join(' → ')}).`,
+      context: null,
+    };
+  }
+
+  const skill = skillForStage(next);
+  if (skill === undefined) {
+    return {
+      workItem,
+      nextStage: next,
+      terminal: false,
+      skill: null,
+      reason:
+        next === 'test'
+          ? 'The daemon runs verify at the test stage — no agent is dispatched.'
+          : `No skill drives the "${next}" stage in v0.1.`,
+      context: null,
+    };
+  }
+
+  const skillStable = [skill.role, skill.stop_condition].join('\n\n');
+  const cardCore = `# ${workItem.title}\n\n${parsed.body.trim()}`;
+
+  return {
+    workItem,
+    nextStage: next,
+    terminal: false,
+    skill: {
+      name: skill.name,
+      stage: skill.stage,
+      role: skill.role,
+      task: fillSlots(skill.task, {
+        work_item_id: id,
+        work_item_title: workItem.title,
+      }),
+      stopCondition: skill.stop_condition,
+      outputContract: {
+        toolName: skill.output_contract.tool_name,
+        ...(skill.output_contract.json_schema_ref !== undefined
+          ? { jsonSchemaRef: skill.output_contract.json_schema_ref }
+          : {}),
+      },
+    },
+    reason: null,
+    context: {
+      cardCore,
+      skillStable,
+      estimatedTokens: estimateTokens(`${skillStable}\n\n${cardCore}`),
+    },
+  };
 }
 
 export interface ConfigResult {
