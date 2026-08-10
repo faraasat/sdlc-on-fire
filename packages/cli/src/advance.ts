@@ -10,7 +10,7 @@ import {
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import { defaultV01Policy, evaluateGate, persistEvidence } from '@sdlc-on-fire/evidence';
 import { findWorkItem, openWorkspaceDatabase } from './commands.js';
-import { runVerify } from './verify.js';
+import { currentDirtyTreeHash, runVerify } from './verify.js';
 import { applySchema, PostgresStorageAdapter } from '@sdlc-on-fire/db';
 import {
   createGitManager,
@@ -40,6 +40,16 @@ export interface VerifyCommandResult {
   readonly durationMs: number;
   readonly evidenceId: number;
   readonly summary: string;
+  /**
+   * How the result was read: a parsed test report, or only the exit code.
+   *
+   * Surfaced rather than kept internal because the difference is user-facing —
+   * `exit-code-only` means we watched a command succeed, not that we watched a
+   * suite pass, and a caller that cannot tell those apart will conflate them.
+   */
+  readonly report: 'parsed' | 'exit-code-only';
+  readonly testsRun: number;
+  readonly confidence: number;
 }
 
 /** Reads a card's `verify:` command, or explains why there isn't one. */
@@ -65,7 +75,10 @@ async function verifyCommandFor(
 }
 
 export async function verifyWorkItem(root: string, id: string): Promise<VerifyCommandResult> {
-  const { command } = await verifyCommandFor(root, id);
+  const { command, filePath } = await verifyCommandFor(root, id);
+  const { resolveWorkspaceLayout } = await import('@sdlc-on-fire/core');
+  const layout = resolveWorkspaceLayout(root);
+  const card = parseFrontmatter(await fs.readFile(filePath, 'utf8')).data;
   const git = createGitManager({ repoRoot: root });
   const gitSha = (await git.isRepo()) ? await git.headSha() : '0'.repeat(40);
 
@@ -74,8 +87,51 @@ export async function verifyWorkItem(root: string, id: string): Promise<VerifyCo
   const { db } = await openWorkspaceDatabase(root);
   try {
     await applySchema(db);
+
+    // The gate row references the work item, so the mirror has to know about the
+    // card before evidence can be attached to it. Cards are files, and `verify`
+    // is very often the first command run against a freshly written one.
+    const port = await PostgresStorageAdapter.create(db);
+    const declared = typeof card['lifecycle_state'] === 'string' ? card['lifecycle_state'] : '';
+    const stage = isLifecycleStage(declared) ? declared : 'implement';
+    await port.upsertWorkItem({
+      id,
+      type: typeof card['kind'] === 'string' ? card['kind'] : 'task',
+      title: typeof card['title'] === 'string' ? card['title'] : id,
+      status: kanbanColumnForStage(stage),
+      lifecycleState: stage,
+      workType: typeof card['work_type'] === 'string' ? card['work_type'] : 'feature',
+      preset: typeof card['preset'] === 'string' ? card['preset'] : 'standard',
+      filePath: path.relative(layout.root, filePath),
+      contentHash: 'pending',
+    });
+
+    // Link the evidence to *this* work item through a gate row. Persisting the
+    // envelope alone left it unattached, and every later query was therefore
+    // workspace-global: one failing verify anywhere flipped the warning on for
+    // every item, and one passing run anywhere cleared it — including for items
+    // never re-verified. An adversarial evaluation found exactly that.
     const evidenceId = await persistEvidence(db, outcome.envelope);
-    const payload = outcome.envelope.payload as { passed?: number; failed?: number };
+    const gateRows = await db.query<{ id: number }>(
+      `INSERT INTO gates (work_item_id, gate_name, result, evaluated_at)
+       VALUES ($1, 'verify', $2, now()) RETURNING id;`,
+      [id, outcome.ok ? 'pass' : 'fail'],
+    );
+    const gateId = gateRows[0]?.id;
+    if (gateId !== undefined) {
+      await db.query(
+        'INSERT INTO gate_evidence (gate_id, evidence_id) VALUES ($1,$2) ON CONFLICT DO NOTHING;',
+        [gateId, evidenceId],
+      );
+    }
+    const payload = outcome.envelope.payload as {
+      passed?: number;
+      failed?: number;
+      total?: number;
+      report?: 'parsed' | 'exit-code-only';
+    };
+    const report = payload.report ?? 'exit-code-only';
+    const total = payload.total ?? 0;
     return {
       workItemId: id,
       command,
@@ -83,8 +139,13 @@ export async function verifyWorkItem(root: string, id: string): Promise<VerifyCo
       exitCode: outcome.exitCode,
       durationMs: outcome.durationMs,
       evidenceId,
+      report,
+      testsRun: total,
+      confidence: outcome.envelope.confidence,
       summary: outcome.ok
-        ? `passed${payload.passed === undefined ? '' : ` (${String(payload.passed)} tests)`}`
+        ? report === 'parsed'
+          ? `passed (${String(payload.passed ?? total)}/${String(total)} tests)`
+          : 'exited 0 — no test report was parsed, so no test count was observed'
         : `FAILED (exit ${String(outcome.exitCode)})`,
     };
   } finally {
@@ -192,9 +253,14 @@ export async function advanceWorkItem(root: string, id: string): Promise<Advance
       const git = createGitManager({ repoRoot: layout.root });
       const headSha = (await git.isRepo()) ? await git.headSha() : '0'.repeat(40);
 
+      // Scoped to this work item through gates → gate_evidence. Querying
+      // `evidence` globally let another item's passing run satisfy this item's
+      // gate: an adversarial evaluation walked a card to `done` on a green run
+      // that belonged to a different card entirely.
       const rows = await db.query<{
         payload: unknown;
         git_sha: string;
+        dirty_tree_hash: string | null;
         producer: string;
         kind: string;
         content_hash: string;
@@ -202,13 +268,22 @@ export async function advanceWorkItem(root: string, id: string): Promise<Advance
         produced_at: Date | string;
         env: unknown;
       }>(
-        `SELECT kind, producer, git_sha, env, content_hash, confidence, produced_at, payload
-           FROM evidence WHERE kind = 'test' ORDER BY produced_at DESC LIMIT 20;`,
+        `SELECT e.kind, e.producer, e.git_sha, e.dirty_tree_hash, e.env, e.content_hash,
+                e.confidence, e.produced_at, e.payload
+           FROM evidence e
+           JOIN gate_evidence ge ON ge.evidence_id = e.id
+           JOIN gates g ON g.id = ge.gate_id
+          WHERE g.work_item_id = $1 AND e.kind = 'test'
+          ORDER BY e.produced_at DESC LIMIT 20;`,
+        [id],
       );
       const bundle = rows.map((row) => ({
         kind: row.kind as 'test',
         producer: row.producer as 'daemon',
         git_sha: row.git_sha,
+        // Carried so the staleness check can see an uncommitted change. Dropping
+        // it made evidence produced on a dirty tree look current forever.
+        ...(row.dirty_tree_hash === null ? {} : { dirty_tree_hash: row.dirty_tree_hash }),
         env: row.env as { tool_versions: Record<string, string>; os: string },
         content_hash: row.content_hash,
         confidence: Number(row.confidence),
@@ -226,8 +301,10 @@ export async function advanceWorkItem(root: string, id: string): Promise<Advance
         ...defaultV01Policy(preset),
         evidence: [{ kind: 'test' as const, required: true, require_fresh: false }],
       };
+      const currentDirty = await currentDirtyTreeHash(layout.root);
       const verdict = evaluateGate(policy, bundle, [], {
         currentHeadSha: headSha,
+        ...(currentDirty === undefined ? {} : { currentDirtyTreeHash: currentDirty }),
         now: new Date(),
       });
       if (!verdict.pass) {

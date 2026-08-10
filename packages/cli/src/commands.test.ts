@@ -89,7 +89,11 @@ describe('status', () => {
     const result = await status(root);
     expect(result.initialised).toBe(true);
     expect(result.databaseMode).toBe('pglite');
-  });
+    // Explicit timeout: this one boots a real PGlite instance, and under a full
+    // parallel suite the WASM start-up alone can exceed the 5s default. A flaky
+    // timeout in a green suite is worse than a slow test — it teaches people to
+    // re-run instead of read.
+  }, 60_000);
 
   it('returns null counts when no store is reachable', async () => {
     // "We could not look" and "there are none" are different answers; collapsing

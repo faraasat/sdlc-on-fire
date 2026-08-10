@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import os from 'node:os';
 import { promisify } from 'node:util';
 import { EvidenceEnvelopeSchema, type EvidenceEnvelope } from '@sdlc-on-fire/core';
@@ -38,6 +41,64 @@ export interface VerifyOutcome {
  * most important thing this can learn, and throwing would turn it into a stack
  * trace instead of evidence.
  */
+/**
+ * Hashes the uncommitted working tree.
+ *
+ * Without this, evidence produced against uncommitted changes records only the
+ * commit SHA — and a later edit that is *also* uncommitted leaves the SHA
+ * unchanged, so the staleness check sees current evidence for code that has
+ * since changed. An adversarial evaluation walked a work item to `done` through
+ * that gap using nothing but blessed commands.
+ *
+ * `git status --porcelain` plus the diff covers both tracked edits and new
+ * files. An unreadable tree hashes to a unique sentinel rather than to nothing:
+ * "we could not tell" must never collapse into "nothing changed".
+ */
+export async function currentDirtyTreeHash(cwd: string): Promise<string | undefined> {
+  // The workspace's own bookkeeping is excluded deliberately. Advancing a work
+  // item rewrites its card, and if that counted as a change to the tree then
+  // every successful `advance` would immediately invalidate the very evidence
+  // that permitted it — the gate would flag its own correct outcome. The
+  // question this hash answers is "has the code under test changed", and a
+  // lifecycle field is not the code under test.
+  const excludes = [':(exclude)kanban', ':(exclude).sdlcof', ':(exclude)docs'];
+  try {
+    // File *contents*, not `git diff`. A diff against HEAD needs a HEAD, and a
+    // repository with no commit yet is the normal state for a workspace on its
+    // first day — the earlier version fell into its own error path there and
+    // produced a fresh sentinel hash on every call, so evidence was stale the
+    // instant it was written.
+    const status = await run(
+      'git',
+      ['status', '--porcelain', '--untracked-files=all', '--', '.', ...excludes],
+      { cwd },
+    );
+    const paths = status.stdout
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => line.slice(3).trim())
+      // A rename reports "old -> new"; the new path is the one that exists.
+      .map((entry) => entry.split(' -> ').at(-1) ?? entry)
+      .map((entry) => (entry.startsWith('"') && entry.endsWith('"') ? entry.slice(1, -1) : entry))
+      .sort();
+
+    if (paths.length === 0) return undefined; // genuinely clean
+
+    const hash = createHash('sha256');
+    for (const relative of paths) {
+      // A deleted file hashes as its absence rather than being skipped: deleting
+      // the code the tests covered must not look like no change at all.
+      const contents = await readFile(path.join(cwd, relative)).catch(() =>
+        Buffer.from('\0absent'),
+      );
+      hash.update(relative, 'utf8').update('\0').update(contents).update('\0');
+    }
+    return hash.digest('hex');
+  } catch {
+    return createHash('sha256').update(`unreadable-tree:${Date.now().toString()}`).digest('hex');
+  }
+}
+
 export async function runVerify(input: {
   readonly command: string;
   readonly cwd: string;
@@ -72,9 +133,16 @@ export async function runVerify(input: {
   // exit code. An exit code is a weaker signal than a parsed report, but it is
   // never a *wrong* one, and pretending we know test counts we did not read
   // would be inventing evidence.
+  //
+  // `report` records *which* of those two we got. It matters because an exit
+  // code alone cannot tell `pnpm test` from `verify: true` — both exit 0, and an
+  // adversarial evaluation reached `done` by pointing `verify:` at a no-op.
+  // Recording the distinction lets every read path say "verified by exit code
+  // only" instead of implying a suite that was never observed.
   let payload: unknown;
   try {
-    payload = parseVitestJson(stdout);
+    const parsed = parseVitestJson(stdout);
+    payload = { ...parsed, report: 'parsed' as const };
   } catch {
     payload = {
       runner: 'shell',
@@ -82,22 +150,27 @@ export async function runVerify(input: {
       passed: 0,
       failed: ok ? 0 : 1,
       ok,
+      report: 'exit-code-only' as const,
       failures: ok
         ? []
         : [{ file: '(unknown)', title: input.command, message: stderr.slice(0, 2_000) }],
     };
   }
 
+  const dirty = input.dirtyTreeHash ?? (await currentDirtyTreeHash(input.cwd));
+
   const envelope = EvidenceEnvelopeSchema.parse({
     kind: 'test',
     // The daemon ran it. This is the whole distinction the gate turns on.
     producer: 'daemon',
     git_sha: input.gitSha,
-    ...(input.dirtyTreeHash === undefined ? {} : { dirty_tree_hash: input.dirtyTreeHash }),
+    ...(dirty === undefined ? {} : { dirty_tree_hash: dirty }),
     env: { tool_versions: { node: process.version }, os: `${os.platform()}-${os.arch()}` },
     command: { cmd: '/bin/sh', args: ['-c', input.command], cwd: input.cwd, exit_code: exitCode },
     content_hash: payloadHash(payload),
-    confidence: 0.95,
+    // An unparsed report is a weaker observation, and the number says so rather
+    // than flattering it.
+    confidence: (payload as { report?: string }).report === 'parsed' ? 0.95 : 0.6,
     produced_at: new Date().toISOString(),
     payload,
   });

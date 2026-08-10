@@ -23,7 +23,8 @@ import {
 import { fillSlots, skillForStage } from '@sdlc-on-fire/agent-manager';
 import { estimateTokens } from '@sdlc-on-fire/context';
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
-import { attestAll, type Attestation } from './attest.js';
+import { attestAll, attestItem, type Attestation, type TreeContext } from './attest.js';
+import { currentDirtyTreeHash } from './verify.js';
 import {
   applySchema,
   connectToPostgres,
@@ -259,6 +260,17 @@ export interface InstructionsSkill {
 
 export interface InstructionsResult {
   readonly workItem: InstructionsWorkItem;
+  /**
+   * Whether a terminal claim survives its own evidence.
+   *
+   * `instructions` is the command an agent reads before deciding what to do
+   * next, so it is exactly where an unsupported `done` must not go unmentioned.
+   * A blind evaluation hand-edited a card to `done` and this command replied
+   * "nothing comes next" with no hint that the item's recorded verify run had
+   * failed — the tool politely repeating the lie back.
+   */
+  readonly attestation: Attestation;
+  readonly concern?: string | undefined;
   /** The stage that comes next on this item's resolved ladder; `null` at the end. */
   readonly nextStage: string | null;
   readonly terminal: boolean;
@@ -271,6 +283,20 @@ export interface InstructionsResult {
     readonly skillStable: string;
     readonly estimatedTokens: number;
   } | null;
+}
+
+/**
+ * The tree a claim is attested against: HEAD plus any uncommitted state.
+ *
+ * Both halves are needed. HEAD alone cannot see an edit that was never
+ * committed, and evidence produced against a dirty tree stays "current" forever
+ * if the dirt is not part of the comparison.
+ */
+export async function treeContext(root: string): Promise<TreeContext> {
+  const git = createGitManager({ repoRoot: root });
+  const headSha = (await git.isRepo()) ? await git.headSha() : '0'.repeat(40);
+  const dirty = await currentDirtyTreeHash(root);
+  return { headSha, ...(dirty === undefined ? {} : { dirtyTreeHash: dirty }) };
 }
 
 /** Locates a work item's card by id, anywhere in the kanban tree. */
@@ -337,12 +363,33 @@ export async function instructions(root: string, id: string): Promise<Instructio
     throw new Error(`no stage ladder for preset "${preset}" + work_type "${workType}"`);
   }
 
+  // Only terminal stages open the database. A mid-flight item has claimed
+  // nothing, so there is nothing to attest and no reason to pay for a
+  // connection.
+  let attested: { attestation: Attestation; concern?: string | undefined } = {
+    attestation: 'not-applicable',
+  };
+  if (isLifecycleStage(stage) && isTerminalStage(stage)) {
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      attested = await attestItem(db, id, stage, await treeContext(layout.root));
+    } finally {
+      await db.close();
+    }
+  }
+  const claim = {
+    attestation: attested.attestation,
+    ...(attested.concern === undefined ? {} : { concern: attested.concern }),
+  };
+
   // The card's stage is untrusted text until checked against the vocabulary.
   // Casting it would let a typo ("implment") fall through as a legitimate stage
   // that simply has no successor — reported as "terminal", which is a lie.
   if (!isLifecycleStage(stage)) {
     return {
       workItem,
+      ...claim,
       nextStage: null,
       terminal: false,
       skill: null,
@@ -355,6 +402,7 @@ export async function instructions(root: string, id: string): Promise<Instructio
   if (next === null) {
     return {
       workItem,
+      ...claim,
       nextStage: null,
       terminal: isTerminalStage(stage),
       skill: null,
@@ -369,6 +417,7 @@ export async function instructions(root: string, id: string): Promise<Instructio
   if (skill === undefined) {
     return {
       workItem,
+      ...claim,
       nextStage: next,
       terminal: false,
       skill: null,
@@ -385,6 +434,7 @@ export async function instructions(root: string, id: string): Promise<Instructio
 
   return {
     workItem,
+    ...claim,
     nextStage: next,
     terminal: false,
     skill: {
@@ -568,6 +618,7 @@ export async function listWorkItems(root: string): Promise<{ items: readonly Wor
     const attestations = await attestAll(
       db,
       rows.map((row) => ({ id: row.id, lifecycleState: row.lifecycle_state })),
+      await treeContext(layout.root),
     );
     const byId = new Map(attestations.map((entry) => [entry.id, entry]));
 

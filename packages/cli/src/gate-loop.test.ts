@@ -89,7 +89,10 @@ describe('verify runs the command itself', () => {
     await setTest(true);
     const result = await verifyWorkItem(root, 'TASK-001');
     expect(result.ok).toBe(true);
-    expect(result.summary).toMatch(/passed/);
+    // `node test.js` prints no machine-readable report, so the honest summary is
+    // "the command exited 0" — not "the tests passed", which we did not observe.
+    expect(result.report).toBe('exit-code-only');
+    expect(result.summary).toMatch(/exited 0/);
   }, 120_000);
 
   it('refuses a card with no verify command, and says what to add', async () => {

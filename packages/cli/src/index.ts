@@ -235,6 +235,12 @@ export function buildProgram(): Command {
           `  stage:  ${r.workItem.stage} (${r.workItem.preset}/${r.workItem.workType})`,
           `  next:   ${r.nextStage ?? '(none — terminal)'}`,
         ];
+        // The concern goes above the skill, not below it: an agent reading this
+        // to decide what to do next must see "this item's `done` is not backed
+        // by evidence" before anything that looks like an instruction.
+        if (r.attestation === 'unsupported') {
+          lines.push(`  ⚠ UNSUPPORTED CLAIM: ${r.concern ?? 'no passing evidence'}`);
+        }
         if (r.skill === null) {
           lines.push(`  skill:  none — ${r.reason ?? ''}`);
         } else {

@@ -120,7 +120,13 @@ describe('computing the next step', () => {
     expect(result.nextStage).toBeNull();
     expect(result.skill).toBeNull();
     expect(result.reason).toMatch(/end of its ladder/);
-  });
+    // A terminal claim is also attested, and this one has no evidence at all —
+    // `instructions` is the command an agent reads before deciding what to do,
+    // so an unsupported `done` must not arrive there unremarked.
+    expect(result.attestation).toBe('unsupported');
+    expect(result.concern).toMatch(/no verify run was ever recorded/);
+    // Terminal stages open the database to attest, which means booting PGlite.
+  }, 60_000);
 
   it('says so when the recorded stage is not on the item ladder', async () => {
     // A preset change can strand an item on a stage its new ladder lacks.
