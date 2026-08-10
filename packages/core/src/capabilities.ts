@@ -155,13 +155,11 @@ export const ADVANCED_CAPABILITIES: readonly CapabilityDefinition[] = [
     'P1-OBJ-04',
   ),
   capability('strict_preset', 'The `strict` lifecycle preset.', ['b'], 'ADR-0008', 'P1-LIFE-06'),
-  capability(
-    'knowledge_claim_gate',
-    'The knowledge-claim evidence gate.',
-    ['b'],
-    'ADR-0019',
-    'P1-GATE-04',
-  ),
+  // Wired (P1-GATE-04): `sdlc advance` reads this and adds `knowledge-claim` to
+  // the required evidence kinds. The task argument is gone because the code that
+  // reads the flag now exists — which is the only thing that ever moves a
+  // capability off `declared`.
+  capability('knowledge_claim_gate', 'The knowledge-claim evidence gate.', ['b'], 'ADR-0019'),
   capability(
     'definition_of_ready_gate',
     'The Definition-of-Ready gate.',

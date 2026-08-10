@@ -1,6 +1,7 @@
 export * from './parsers.js';
 export * from './parse-runners.js';
 export * from './code-quality.js';
+export * from './knowledge-claim.js';
 export * from './dependency-audit.js';
 export * from './runner.js';
 export * from './evaluate-gate.js';

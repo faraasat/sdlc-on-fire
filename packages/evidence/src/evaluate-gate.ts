@@ -66,7 +66,14 @@ export interface GateVerdict {
   readonly missing: readonly string[];
   /** A qualifying envelope says the check did not pass — remediation is "fix the code". */
   readonly failures: readonly string[];
-  /** Reserved for `knowledge-claim`; dead code in v0.1 but present so the type never breaks. */
+  /**
+   * The verifier declined to conclude — remediation is "give it more context"
+   * (P1-GATE-04, ADR-0019).
+   *
+   * Distinct from `failures` on purpose. "Nothing could check this claim" and
+   * "this claim is wrong" need different human responses, and a reviewer who
+   * sees them in one bucket learns to treat both as noise.
+   */
   readonly abstained: readonly string[];
 }
 
@@ -86,6 +93,18 @@ export function isCurrent(envelope: EvidenceEnvelope, ctx: GateContext): boolean
 
 function mostRecent(envelopes: readonly EvidenceEnvelope[]): EvidenceEnvelope | undefined {
   return [...envelopes].sort((a, b) => Date.parse(b.produced_at) - Date.parse(a.produced_at))[0];
+}
+
+/**
+ * The part of a knowledge-claim bundle this gate reads.
+ *
+ * Structural, not an import of the full {@link ClaimBundle}: `evaluateGate` is
+ * pure and reads envelope payloads, which arrive as `unknown` from the DB. It
+ * needs the two counts and nothing else.
+ */
+interface ClaimBundleShape {
+  readonly unsupported: readonly unknown[];
+  readonly abstained: readonly unknown[];
 }
 
 function payloadOk(payload: unknown): boolean {
@@ -147,7 +166,28 @@ export function evaluateGate(
     }
 
     const latest = mostRecent(candidates);
-    if (latest !== undefined && !payloadOk(latest.payload)) {
+    if (latest === undefined) continue;
+
+    // A knowledge-claim bundle reports two failing modes, and flattening them to
+    // `ok: false` would be the collapse ADR-0019 rejects by name.
+    if (requirement.kind === 'knowledge-claim') {
+      const bundle = latest.payload as Partial<ClaimBundleShape> | undefined;
+      const unsupported = bundle?.unsupported ?? [];
+      const abstainedClaims = bundle?.abstained ?? [];
+      if (unsupported.length > 0) {
+        failures.push(
+          `knowledge-claim: ${String(unsupported.length)} claim(s) cite what does not support them`,
+        );
+      }
+      if (abstainedClaims.length > 0) {
+        abstained.push(
+          `knowledge-claim: ${String(abstainedClaims.length)} claim(s) could not be verified`,
+        );
+      }
+      continue;
+    }
+
+    if (!payloadOk(latest.payload)) {
       failures.push(`${requirement.kind} failing`);
     }
   }

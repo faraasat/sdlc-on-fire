@@ -199,3 +199,63 @@ describe('purity', () => {
     expect(JSON.stringify(allThree)).toBe(snapshot);
   });
 });
+
+describe('knowledge-claim outcomes stay separate (P1-GATE-04, ADR-0019)', () => {
+  const claimPolicy = GatePolicySchema.parse({
+    name: 'claims',
+    evidence: [{ kind: 'knowledge-claim', required: true }],
+  });
+
+  const bundle = (over: { unsupported?: unknown[]; abstained?: unknown[] }): EvidenceEnvelope =>
+    envelope({
+      kind: 'knowledge-claim',
+      payload: {
+        ok: (over.unsupported ?? []).length === 0 && (over.abstained ?? []).length === 0,
+        unsupported: over.unsupported ?? [],
+        abstained: over.abstained ?? [],
+      },
+    });
+
+  it('passes when every claim is grounded', () => {
+    expect(evaluateGate(claimPolicy, [bundle({})], [], ctx)).toMatchObject({ pass: true });
+  });
+
+  it('routes an unsupported claim to failures — flag for review', () => {
+    const verdict = evaluateGate(claimPolicy, [bundle({ unsupported: [{}] })], [], ctx);
+    expect(verdict.failures).toHaveLength(1);
+    expect(verdict.abstained).toHaveLength(0);
+    expect(verdict.pass).toBe(false);
+  });
+
+  it('routes an abstention to abstained — request more context', () => {
+    const verdict = evaluateGate(claimPolicy, [bundle({ abstained: [{}] })], [], ctx);
+    // Two failing modes needing different human responses. Merged, a reviewer
+    // learns to treat every claim-gate result the same way.
+    expect(verdict.abstained).toHaveLength(1);
+    expect(verdict.failures).toHaveLength(0);
+    expect(verdict.pass).toBe(false);
+  });
+
+  it('reports both when both happened', () => {
+    const verdict = evaluateGate(
+      claimPolicy,
+      [bundle({ unsupported: [{}], abstained: [{}, {}] })],
+      [],
+      ctx,
+    );
+    expect(verdict.failures).toHaveLength(1);
+    expect(verdict.abstained).toHaveLength(1);
+  });
+
+  it('still refuses an agent-claim bundle', () => {
+    const verdict = evaluateGate(
+      claimPolicy,
+      [envelope({ kind: 'knowledge-claim', producer: 'agent-claim', payload: { ok: true } })],
+      [],
+      ctx,
+    );
+    // The gate exists because agents cannot verify their own claims; an
+    // agent-authored verification of an agent's claims is the same problem.
+    expect(verdict.missing).toContain('knowledge-claim');
+  });
+});

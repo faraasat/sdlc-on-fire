@@ -379,9 +379,21 @@ export async function advanceWorkItem(
       // single `verify:` command can never satisfy three kinds, and a gate that
       // cannot be satisfied is not a gate, it is a wall. One declared command,
       // one required kind.
+      // The knowledge-claim gate is opt-in (ADR-0067): it is only required when
+      // the workspace turned it on. Reading the flag here is what makes the
+      // switch mean something — a capability nothing consults is a setting that
+      // reports `enabled: true` while protecting nothing.
+      const advancedConfig = await readConfig(layout.root);
+      const claimsRequired = advancedConfig?.advanced?.knowledge_claim_gate === true;
+
       const policy = {
         ...defaultV01Policy(preset),
-        evidence: [{ kind: 'test' as const, required: true, require_fresh: false }],
+        evidence: [
+          { kind: 'test' as const, required: true, require_fresh: false },
+          ...(claimsRequired
+            ? [{ kind: 'knowledge-claim' as const, required: true, require_fresh: false }]
+            : []),
+        ],
       };
       // Entering a terminal stage on a check nobody could read is the hole v007
       // walked through: `verify: echo PASS && exit 0` produced evidence

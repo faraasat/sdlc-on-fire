@@ -47,6 +47,7 @@ import { auditDependencies } from './audit.js';
 import { branchFor, type BranchResult } from './branch.js';
 import { prFor } from './pr.js';
 import { recordReview } from './review.js';
+import { formatClaims, verifyWorkItemClaims } from './claims.js';
 import { queueFor } from './queue.js';
 import { scanQuality } from './quality.js';
 import {
@@ -649,6 +650,41 @@ export function buildProgram(): Command {
         );
       },
     );
+
+  program
+    .command('claims')
+    .argument('<work-item-id>', 'the work item the claims are about')
+    .description('verify what an agent asserted against the chunks it cited (ADR-0019)')
+    .option(
+      '--claim <text>',
+      'a claim, as `<chunk-id>[,<chunk-id>]: <assertion>` (repeatable)',
+      collect,
+      [],
+    )
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { claim?: string[]; json?: boolean }): Promise<void> => {
+      const claims = (options.claim ?? []).map((raw) => {
+        const at = raw.indexOf(':');
+        // An unparseable claim becomes an *uncited* claim rather than an error:
+        // it still gets verified, and abstains for citing nothing. Rejecting it
+        // outright would let a malformed claim disappear from the report.
+        if (at === -1) return { claim: raw.trim(), cited_chunk_ids: [] };
+        return {
+          claim: raw.slice(at + 1).trim(),
+          cited_chunk_ids: raw
+            .slice(0, at)
+            .split(',')
+            .map((part) => part.trim())
+            .filter((part) => part.length > 0),
+        };
+      });
+
+      const result = await verifyWorkItemClaims(root(), id, claims);
+      emit(result, options.json === true, formatClaims);
+      // A gate that reports a problem and exits 0 is a gate nothing downstream
+      // can act on.
+      if (!result.bundle.ok) process.exitCode = 1;
+    });
 
   program
     .command('list')
