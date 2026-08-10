@@ -48,6 +48,7 @@ import { branchFor, type BranchResult } from './branch.js';
 import { prFor } from './pr.js';
 import { recordReview } from './review.js';
 import { queueFor } from './queue.js';
+import { scanQuality } from './quality.js';
 import {
   listMemory,
   memoryHistory as memoryHistoryFor,
@@ -821,6 +822,32 @@ export function buildProgram(): Command {
               )
               .join('\n'),
       );
+    });
+
+  program
+    .command('quality')
+    .argument('[path]', 'directory to scan (defaults to the workspace root)')
+    .description('doc-comment presence on exported API, plus comment-bloat candidates')
+    .option('--json', 'emit JSON')
+    .action(async (target: string | undefined, options: { json?: boolean }): Promise<void> => {
+      const result = await scanQuality(root(), target);
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof scanQuality>>) =>
+        [
+          `${r.scanned}: ${String(r.documented)}/${String(r.exported)} exported symbols documented across ${String(r.files)} file(s)`,
+          ...r.undocumented
+            .slice(0, 20)
+            .map((finding) => `  ✗ ${finding.file}:${String(finding.line)} ${finding.symbol}`),
+          r.undocumented.length > 20 ? `  … and ${String(r.undocumented.length - 20)} more` : '',
+          // Kept below and labelled: a heuristic printed alongside a
+          // deterministic failure acquires authority it has not earned.
+          r.advisory.length === 0
+            ? ''
+            : `\nadvisory (never blocks): ${String(r.advisory.length)} comment block(s) long enough that the rationale belongs in an ADR`,
+        ]
+          .filter((line) => line !== '')
+          .join('\n'),
+      );
+      if (!result.ok) process.exitCode = 1;
     });
 
   program
