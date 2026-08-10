@@ -122,12 +122,13 @@ export class PostgresStorageAdapter implements StoragePort {
   async upsertWorkItem(row: WorkItemMirror): Promise<void> {
     await this.#executor.query(
       `INSERT INTO work_items
-         (id, type, title, status, lifecycle_state, work_type, preset, risk_level, file_path, content_hash, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+         (id, type, title, status, lifecycle_state, work_type, preset, risk_level, parent_id, file_path, content_hash, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, now())
        ON CONFLICT (id) DO UPDATE SET
          type = EXCLUDED.type, title = EXCLUDED.title, status = EXCLUDED.status,
          lifecycle_state = EXCLUDED.lifecycle_state, work_type = EXCLUDED.work_type,
          preset = EXCLUDED.preset, risk_level = EXCLUDED.risk_level,
+         parent_id = EXCLUDED.parent_id,
          file_path = EXCLUDED.file_path, content_hash = EXCLUDED.content_hash,
          updated_at = now();`,
       [
@@ -139,6 +140,7 @@ export class PostgresStorageAdapter implements StoragePort {
         row.workType ?? null,
         row.preset ?? null,
         row.riskLevel ?? null,
+        row.parentId ?? null,
         row.filePath,
         row.contentHash,
       ],

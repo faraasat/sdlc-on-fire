@@ -251,3 +251,114 @@ describe('parseWorktreePorcelain', () => {
     expect(parseWorktreePorcelain('')).toEqual([]);
   });
 });
+
+describe('provenance and squash-and-sign (P1-GIT-01)', () => {
+  const PROVENANCE = { tool: 'Claude-Code', model: 'claude-opus-4-5-20260101' };
+
+  it('stamps every commit it makes with the running tool and model', async () => {
+    const { root } = await newRepo();
+    const git = createGitManager({ repoRoot: root, provenance: PROVENANCE });
+
+    await fs.writeFile(path.join(root, 'src.ts'), 'export const a = 1;\n');
+    await git.commit('feat: add a', ['src.ts']);
+
+    const message = await simpleGit(root).raw(['log', '-1', '--format=%B']);
+    expect(message).toContain('Assisted-by: Claude-Code:claude-opus-4-5-20260101');
+    // Read back through git's own trailer parser, not a substring match: the
+    // point of the trailer is that git can query it, and a line git does not
+    // recognise as a trailer is just prose that happens to contain a colon.
+    const trailers = await simpleGit(root).raw([
+      'log',
+      '-1',
+      '--format=%(trailers:key=Assisted-by,valueonly)',
+    ]);
+    expect(trailers.trim()).toBe('Claude-Code:claude-opus-4-5-20260101');
+  });
+
+  it('keeps the bookkeeping trailer queryable alongside provenance', async () => {
+    const { root } = await newRepo();
+    const git = createGitManager({ repoRoot: root, provenance: PROVENANCE });
+
+    await fs.mkdir(path.join(root, 'kanban'), { recursive: true });
+    await fs.writeFile(path.join(root, 'kanban', 'TASK-001.md'), 'card\n');
+    const result = await git.commit('chore: card', ['kanban/TASK-001.md']);
+    expect(result.bookkeeping).toBe(true);
+
+    const both = await simpleGit(root).raw([
+      'log',
+      '-1',
+      '--format=%(trailers:key=Sdlc-Bookkeeping,valueonly)%(trailers:key=Assisted-by,valueonly)',
+    ]);
+    expect(both).toContain('true');
+    expect(both).toContain('Claude-Code:claude-opus-4-5-20260101');
+  });
+
+  it('collapses a branch’s noisy intermediates into one commit with the same tree', async () => {
+    const { root } = await newRepo();
+    const git = createGitManager({ repoRoot: root, provenance: PROVENANCE });
+    const raw = simpleGit(root);
+
+    await git.createBranch('feat/TASK-001-thing');
+    for (const [file, body] of [
+      ['a.ts', 'export const a = 1;\n'],
+      ['b.ts', 'export const b = 2;\n'],
+      ['a.ts', 'export const a = 11;\n'],
+    ] as const) {
+      await fs.writeFile(path.join(root, file), body);
+      await git.commit(`wip: ${file}`, [file]);
+    }
+    const treeBefore = (await raw.raw(['rev-parse', 'HEAD^{tree}'])).trim();
+
+    const result = await git.squashAndSign({
+      baseRef: 'main',
+      message: 'feat(TASK-001): the thing',
+    });
+
+    // Same content, one commit. A squash that changed the tree would be a
+    // rewrite, not a normalisation.
+    expect((await raw.raw(['rev-parse', 'HEAD^{tree}'])).trim()).toBe(treeBefore);
+    const count = (await raw.raw(['rev-list', '--count', 'main..HEAD'])).trim();
+    expect(count).toBe('1');
+    expect(result.branch).toBe('feat/TASK-001-thing');
+    expect([...result.changes.product].sort()).toEqual(['a.ts', 'b.ts']);
+
+    const message = await raw.raw(['log', '-1', '--format=%B']);
+    expect(message).toContain('feat(TASK-001): the thing');
+    expect(message).toContain('Assisted-by: Claude-Code:claude-opus-4-5-20260101');
+    expect(message).not.toContain('wip:');
+  });
+
+  it('refuses to squash the base branch itself', async () => {
+    const { root } = await newRepo();
+    const git = createGitManager({ repoRoot: root, provenance: PROVENANCE });
+
+    await fs.writeFile(path.join(root, 'a.ts'), 'export const a = 1;\n');
+    await git.commit('feat: a', ['a.ts']);
+
+    // ADR-0013: a correction is a new commit, never a rewrite of shared history.
+    await expect(git.squashAndSign({ baseRef: 'main', message: 'feat: x' })).rejects.toThrow(
+      /refusing to squash "main"/,
+    );
+  });
+
+  it('refuses when the branch changed nothing', async () => {
+    const { root } = await newRepo();
+    const git = createGitManager({ repoRoot: root, provenance: PROVENANCE });
+    await git.createBranch('feat/TASK-002-empty');
+
+    await expect(
+      git.squashAndSign({ baseRef: 'main', message: 'feat: nothing' }),
+    ).rejects.toBeInstanceOf(NothingToCommitError);
+  });
+
+  it('leaves commits unattributed when no provenance is configured', async () => {
+    // Absent attribution is honest; a default tool name would be a fabrication.
+    const { root } = await newRepo();
+    const git = createGitManager({ repoRoot: root });
+    await fs.writeFile(path.join(root, 'a.ts'), 'export const a = 1;\n');
+    await git.commit('feat: a', ['a.ts']);
+
+    const message = await simpleGit(root).raw(['log', '-1', '--format=%B']);
+    expect(message).not.toContain('Assisted-by');
+  });
+});

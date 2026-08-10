@@ -40,6 +40,7 @@ import {
 } from './commands.js';
 import { advanceWorkItem } from './advance.js';
 import { verifyWorkItem } from './advance.js';
+import { branchFor, type BranchResult } from './branch.js';
 
 export * from './commands.js';
 
@@ -414,6 +415,38 @@ export function buildProgram(): Command {
       );
       if (!result.moved) process.exitCode = 1;
     });
+
+  program
+    .command('branch')
+    .argument('<work-item-id>', 'the work item to name a branch for, e.g. TASK-001')
+    .description("derive a work item's branch name from its hierarchy, and optionally create it")
+    .option('--actor <name>', 'who is claiming the work — required with --create')
+    .option('--create', 'actually create and check out the branch')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        options: { actor?: string; create?: boolean; json?: boolean },
+      ): Promise<void> => {
+        const result = await branchFor(root(), id, {
+          actor: options.actor,
+          create: options.create,
+        });
+        emit(result, options.json === true, (r: BranchResult) =>
+          [
+            r.branch,
+            r.hierarchy.length === 0
+              ? '  (no parent hierarchy — name derives from the item alone)'
+              : `  under: ${r.hierarchy.map((entry) => `${entry.id} (${entry.kind})`).join(' → ')}`,
+            r.created ? '  created and checked out' : '',
+            r.refusal === undefined ? '' : `  ✗ ${r.refusal}`,
+          ]
+            .filter((line) => line !== '')
+            .join('\n'),
+        );
+        if (result.refusal !== undefined) process.exitCode = 1;
+      },
+    );
 
   program
     .command('list')

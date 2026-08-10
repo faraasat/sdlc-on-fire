@@ -3,8 +3,11 @@ import { simpleGit, type SimpleGit } from 'simple-git';
 import {
   classifyChanges,
   DEFAULT_MANAGED_PREFIXES,
+  assistedByTrailer,
+  BOOKKEEPING_TRAILER,
   isBookkeepingOnly,
-  withBookkeepingTrailer,
+  withTrailers,
+  type Provenance,
   type ClassifiedChanges,
 } from './naming.js';
 
@@ -53,6 +56,39 @@ export interface GitManagerOptions {
   readonly repoRoot: string;
   /** Workspace prefixes treated as tool-managed. Defaults to the contracts/06 set. */
   readonly managedPrefixes?: readonly string[] | undefined;
+  /**
+   * Recorded as `Assisted-by:` on every commit this manager makes.
+   *
+   * Set per-daemon rather than per-call so a commit path that forgets to pass it
+   * cannot silently produce an unattributed commit — the attribution is a
+   * property of *who is running*, not of the individual commit.
+   */
+  readonly provenance?: Provenance | undefined;
+}
+
+/** Options for {@link GitManager.squashAndSign}. */
+export interface SquashOptions {
+  /** The branch this work started from — everything after it is collapsed. */
+  readonly baseRef: string;
+  readonly message: string;
+  /**
+   * Sign the resulting commit (`git commit -S`).
+   *
+   * Off by default. Signing needs a key this process may not have, and a commit
+   * that silently failed to sign while the caller believed it was signed is
+   * worse than one honestly unsigned.
+   */
+  readonly sign?: boolean | undefined;
+}
+
+export class ProtectedBranchError extends Error {
+  constructor(branch: string) {
+    super(
+      `refusing to squash "${branch}" — it is the base branch, and rewriting shared history ` +
+        'is not a normalisation step (ADR-0013: a correction is a new commit, never a rewrite).',
+    );
+    this.name = 'ProtectedBranchError';
+  }
 }
 
 export interface GitManager {
@@ -89,6 +125,19 @@ export interface GitManager {
    * automatically when the set touches only managed paths.
    */
   commit(message: string, paths: readonly string[]): Promise<CommitResult>;
+  /**
+   * Collapses this branch's commits since `baseRef` into one signed commit.
+   *
+   * The `git-sign` pattern (techniques/27 §2.3): an agent's branch accumulates
+   * noisy intermediates ("fix lint", "update test") that carry no information a
+   * reviewer wants, and as of 2026 no major coding agent can sign its own
+   * commits, so agent-authored work lands "Unverified" by default. Squashing to
+   * a single commit under a key this process actually holds fixes both at once.
+   *
+   * This rewrites only the *unmerged* branch, never shared history — squashing
+   * the base branch is refused outright.
+   */
+  squashAndSign(options: SquashOptions): Promise<CommitResult>;
   addWorktree(worktreePath: string, branch: string, startPoint?: string): Promise<void>;
   listWorktrees(): Promise<Worktree[]>;
   removeWorktree(worktreePath: string, options?: { force?: boolean }): Promise<void>;
@@ -144,6 +193,21 @@ export function createGitManager(options: GitManagerOptions): GitManager {
 
   async function assertRepo(): Promise<void> {
     if (!(await git.checkIsRepo())) throw new NotARepositoryError(repoRoot);
+  }
+
+  /**
+   * Assembles the message's trailer block.
+   *
+   * Both trailers go in one block. Git only reads trailers from the last
+   * paragraph, so a second paragraph would make the first unqueryable — the
+   * failure would be silent and would only surface much later, when someone
+   * asked the log a question it could no longer answer.
+   */
+  function applyTrailers(message: string, bookkeeping: boolean): string {
+    const additions: string[] = [];
+    if (bookkeeping) additions.push(BOOKKEEPING_TRAILER);
+    if (options.provenance !== undefined) additions.push(assistedByTrailer(options.provenance));
+    return withTrailers(message, additions);
   }
 
   async function changedPaths(): Promise<string[]> {
@@ -231,7 +295,7 @@ export function createGitManager(options: GitManagerOptions): GitManager {
 
       const changes = classifyChanges(paths, managedPrefixes);
       const bookkeeping = isBookkeepingOnly(paths, managedPrefixes);
-      const finalMessage = bookkeeping ? withBookkeepingTrailer(message) : message.trimEnd();
+      const finalMessage = applyTrailers(message, bookkeeping);
 
       await git.add([...paths]);
       const result = await git.commit(finalMessage, [...paths]);
@@ -242,6 +306,40 @@ export function createGitManager(options: GitManagerOptions): GitManager {
         branch: summary.current,
         bookkeeping,
         changes,
+      };
+    },
+
+    async squashAndSign(opts: SquashOptions): Promise<CommitResult> {
+      await assertRepo();
+      const summary = await git.branchLocal();
+      const branch = summary.current;
+      if (branch === opts.baseRef) throw new ProtectedBranchError(branch);
+
+      // What lands is the *net* change against the base, not a replay of the
+      // intermediate commits. `reset --soft` moves the branch pointer back while
+      // leaving the tree exactly as the work left it, so the single commit that
+      // follows has the same content the branch had — no rebase, no conflict
+      // resolution, nothing for an agent to get wrong mid-way.
+      const paths = await git.raw(['diff', '--name-only', `${opts.baseRef}...HEAD`]);
+      const changed = paths
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '');
+      if (changed.length === 0) throw new NothingToCommitError();
+
+      await git.raw(['reset', '--soft', opts.baseRef]);
+
+      const bookkeeping = isBookkeepingOnly(changed, managedPrefixes);
+      const message = applyTrailers(opts.message, bookkeeping);
+      const args = ['commit', '-m', message];
+      if (opts.sign === true) args.push('-S');
+      await git.raw(args);
+
+      return {
+        sha: (await git.revparse(['HEAD'])).trim(),
+        branch,
+        bookkeeping,
+        changes: classifyChanges(changed, managedPrefixes),
       };
     },
 

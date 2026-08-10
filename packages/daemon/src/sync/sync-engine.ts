@@ -216,6 +216,10 @@ export class SyncEngine {
       workType: str('work_type'),
       preset: str('preset'),
       riskLevel: str('risk_level'),
+      // `parent_id` was on the cards and in the schema from the start, and the
+      // sync silently dropped it — so the mirror could not answer "what epic is
+      // this under?" about data it already held.
+      parentId: str('parent_id') ?? null,
       filePath: relativePath,
       contentHash: hash,
     });

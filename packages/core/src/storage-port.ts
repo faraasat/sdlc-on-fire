@@ -51,6 +51,17 @@ export interface WorkItemMirror {
   readonly workType?: string | undefined;
   readonly preset?: string | undefined;
   readonly riskLevel?: string | undefined;
+  /**
+   * The item this one hangs from — the epic above a feature, the feature above
+   * a task.
+   *
+   * The column and its index shipped with the schema and nothing ever wrote to
+   * them, so every hierarchy question ("what epic is this under?") had no answer
+   * in the mirror despite the cards carrying `parent_id` all along. Branch names
+   * derive from this chain (ADR-0048), which is what finally made the gap
+   * visible.
+   */
+  readonly parentId?: string | null | undefined;
   readonly filePath: string;
   readonly contentHash: string;
 }
