@@ -125,7 +125,12 @@ export function buildProgram(): Command {
           `  root:    ${r.root}`,
           `  created: ${r.created.length} file(s)`,
           `  skipped: ${r.skipped.length} existing file(s)`,
-        ].join('\n'),
+          r.initialisedGit
+            ? '  git:     initialised a repository (content in git is how this tool stores work)'
+            : '',
+        ]
+          .filter((line) => line !== '')
+          .join('\n'),
       );
     });
 
@@ -562,7 +567,7 @@ export function buildProgram(): Command {
           ? 'No work items yet. Create one with `sdlc new feature "..."`.'
           : r.items
               .flatMap((item) => [
-                `${item.attestation === 'unsupported' ? '⚠' : ' '} ${item.id.padEnd(12)} ${item.lifecycleState.padEnd(16)} ${item.title}`,
+                `${item.attestation === 'unsupported' ? '⚠' : item.attestation === 'stale' ? '~' : ' '} ${item.id.padEnd(12)} ${item.lifecycleState.padEnd(16)} ${item.title}`,
                 ...(item.concern === undefined ? [] : [`    ↳ ${item.concern}`]),
               ])
               .join('\n'),

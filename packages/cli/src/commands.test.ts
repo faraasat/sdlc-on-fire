@@ -1,10 +1,21 @@
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
+import { promisify } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
 import { DOCS_ROOT_FILES, ROOT_FILES } from '@sdlc-on-fire/core';
 import { parseWorkItem } from '@sdlc-on-fire/storage';
 import { afterEach, describe, expect, it } from 'vitest';
-import { init, nextSequence, readConfig, showConfig, status } from './commands.js';
+import {
+  captureItem,
+  init,
+  nextSequence,
+  readConfig,
+  showConfig,
+  status,
+  triageItem,
+} from './commands.js';
 import { buildProgram } from './index.js';
 
 const tempDirs: string[] = [];
@@ -191,4 +202,41 @@ describe('config', () => {
     expect(result.config).toBeNull();
     expect(result.configPath).toContain('.sdlcof');
   });
+});
+
+describe('init sets up what the rest of the tool needs (v006)', () => {
+  it('creates a git repository, because four commands require one', async () => {
+    // Scaffolding a workspace that cannot use `branch --create`, `hooks:install`,
+    // `verify` or `advance` — and saying nothing — left a first-time user to
+    // find out from a refusal several commands later.
+    const root = await workspace();
+    const result = await init(root);
+    expect(result.initialisedGit).toBe(true);
+    expect(existsSync(path.join(root, '.git'))).toBe(true);
+  }, 60_000);
+
+  it('leaves an existing repository entirely alone', async () => {
+    const root = await workspace();
+    await promisify(execFile)('git', ['init', '-q'], { cwd: root });
+    const result = await init(root);
+    expect(result.initialisedGit).toBe(false);
+  }, 60_000);
+});
+
+describe('triage retires the capture (v006)', () => {
+  it('moves the capture out of the mirrored tree instead of abandoning it', async () => {
+    // It used to be left in place with `kind: capture`, which the work-item
+    // validator rejects — so every later `db:rebuild` reported `failed: 1` on a
+    // file the tool itself created and then abandoned.
+    const root = await workspace();
+    await init(root);
+    const captured = await captureItem(root, 'Commas break the CSV export');
+    const triaged = await triageItem(root, captured.id, 'task');
+
+    expect(existsSync(path.join(root, captured.filePath))).toBe(false);
+    expect(triaged.archivedTo).toBeDefined();
+    // Moved, not deleted: the original wording is often the only record of what
+    // was actually meant.
+    expect(existsSync(path.join(root, triaged.archivedTo ?? ''))).toBe(true);
+  }, 60_000);
 });

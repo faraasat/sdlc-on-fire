@@ -311,6 +311,7 @@ export async function advanceWorkItem(
         payload: unknown;
         git_sha: string;
         dirty_tree_hash: string | null;
+        command: unknown;
         producer: string;
         kind: string;
         content_hash: string;
@@ -318,7 +319,7 @@ export async function advanceWorkItem(
         produced_at: Date | string;
         env: unknown;
       }>(
-        `SELECT e.kind, e.producer, e.git_sha, e.dirty_tree_hash, e.env, e.content_hash,
+        `SELECT e.kind, e.producer, e.git_sha, e.dirty_tree_hash, e.env, e.command, e.content_hash,
                 e.confidence, e.produced_at, e.payload
            FROM evidence e
            JOIN gate_evidence ge ON ge.evidence_id = e.id
@@ -327,20 +328,36 @@ export async function advanceWorkItem(
           ORDER BY e.produced_at DESC LIMIT 20;`,
         [id],
       );
-      const bundle = rows.map((row) => ({
-        kind: row.kind as 'test',
-        producer: row.producer as 'daemon',
-        git_sha: row.git_sha,
-        // Carried so the staleness check can see an uncommitted change. Dropping
-        // it made evidence produced on a dirty tree look current forever.
-        ...(row.dirty_tree_hash === null ? {} : { dirty_tree_hash: row.dirty_tree_hash }),
-        env: row.env as { tool_versions: Record<string, string>; os: string },
-        content_hash: row.content_hash,
-        confidence: Number(row.confidence),
-        produced_at:
-          row.produced_at instanceof Date ? row.produced_at.toISOString() : String(row.produced_at),
-        payload: row.payload,
-      }));
+      // Evidence produced by a *different* check is not evidence about this
+      // one. Without this, editing one line of YAML — `verify: pnpm test` to
+      // `verify: "true"` — walked an item to `done` with the real suite failing
+      // untouched, and every downstream check was satisfied because from its
+      // point of view the check genuinely passed.
+      const matchesDeclaredCommand = (command: unknown): boolean => {
+        const args = (command as { args?: string[] } | null)?.args;
+        const ran = args?.at(-1);
+        return ran === undefined || ran.trim() === (verifyCommand ?? '').trim();
+      };
+      const swapped = rows.filter((row) => !matchesDeclaredCommand(row.command)).length;
+
+      const bundle = rows
+        .filter((row) => matchesDeclaredCommand(row.command))
+        .map((row) => ({
+          kind: row.kind as 'test',
+          producer: row.producer as 'daemon',
+          git_sha: row.git_sha,
+          // Carried so the staleness check can see an uncommitted change. Dropping
+          // it made evidence produced on a dirty tree look current forever.
+          ...(row.dirty_tree_hash === null ? {} : { dirty_tree_hash: row.dirty_tree_hash }),
+          env: row.env as { tool_versions: Record<string, string>; os: string },
+          content_hash: row.content_hash,
+          confidence: Number(row.confidence),
+          produced_at:
+            row.produced_at instanceof Date
+              ? row.produced_at.toISOString()
+              : String(row.produced_at),
+          payload: row.payload,
+        }));
 
       // The policy must ask only for what this card can actually produce. The
       // default v0.1 policy demands test + typecheck + build; a card declaring a
@@ -365,6 +382,14 @@ export async function advanceWorkItem(
           // command they had just run; they retried six times and concluded the
           // gate was broken. It was not — it was inarticulate.
           const priorRuns = bundle.filter((envelope) => envelope.kind === kind);
+          if (priorRuns.length === 0 && swapped > 0) {
+            refusals.push(
+              `gate: ${id} has ${String(swapped)} recorded ${kind} run(s), but none of them ran ` +
+                `\`${verifyCommand ?? ''}\` — the card's \`verify:\` changed after they passed. Re-run ` +
+                `\`sdlc verify ${id}\`.`,
+            );
+            continue;
+          }
           refusals.push(
             priorRuns.length === 0
               ? `gate: no ${kind} evidence for ${id} — run \`sdlc verify ${id}\` (an agent saying it passed does not count)`
@@ -479,7 +504,13 @@ export async function reopenWorkItem(
       return { workItemId: id, from, to: from, reopened: false, reason: `claim: ${ownership}` };
     }
 
-    const attested = await attestItem(db, id, from, await treeContext(layout.root));
+    const attested = await attestItem(
+      db,
+      id,
+      from,
+      await treeContext(layout.root),
+      typeof data['verify'] === 'string' ? data['verify'] : undefined,
+    );
     if (attested.attestation !== 'unsupported') {
       return {
         workItemId: id,
@@ -489,7 +520,9 @@ export async function reopenWorkItem(
         reason:
           attested.attestation === 'supported'
             ? `${id} is "${from}" and its evidence supports that — reopening a legitimately-finished item is a lifecycle decision, not a correction`
-            : `${id} is at "${from}", which is not a terminal claim — there is nothing to retract`,
+            : attested.attestation === 'stale'
+              ? `${id} is "${from}" on a run that passed against an earlier tree. That is a prompt to re-run \`sdlc verify ${id}\`, not grounds to retract the claim — reopening honest work because someone else edited a file is how a warning stops being read`
+              : `${id} is at "${from}", which is not a terminal claim — there is nothing to retract`,
       };
     }
 

@@ -1,5 +1,9 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { promisify } from 'node:util';
 import path from 'node:path';
+
+const execFileAsync = promisify(execFile);
 import { parse as parseYaml } from 'yaml';
 import {
   DOCS_ROOT_FILES,
@@ -62,6 +66,8 @@ export interface InitResult {
   readonly created: readonly string[];
   readonly skipped: readonly string[];
   readonly alreadyInitialised: boolean;
+  /** Whether this call created the git repository. False when one already existed. */
+  readonly initialisedGit: boolean;
 }
 
 export interface StatusResult {
@@ -161,7 +167,29 @@ export async function init(root: string): Promise<InitResult> {
     if (existing === '') created.push('.gitignore');
   }
 
-  return { root: layout.root, created, skipped, alreadyInitialised };
+  // The workspace's whole premise is that content lives in git, and four
+  // commands (`branch --create`, `hooks:install`, `verify`, `advance`) need a
+  // repository to work at all. Scaffolding a workspace that cannot use them and
+  // saying nothing left a first-time user to discover it from a refusal several
+  // commands later — a blind evaluation hit exactly that.
+  //
+  // `git init` creates a repository and touches nothing that already exists, so
+  // it is safe to run here; an existing repository is left entirely alone.
+  const git = createGitManager({ repoRoot: layout.root });
+  let initialisedGit = false;
+  if (!(await git.isRepo())) {
+    try {
+      await execFileAsync('git', ['init', '-q'], { cwd: layout.root });
+      initialisedGit = true;
+    } catch {
+      // A machine without git is a real situation, and it is not a reason to
+      // fail the scaffold — every file-based command still works. The status
+      // line says what happened rather than pretending it succeeded.
+      initialisedGit = false;
+    }
+  }
+
+  return { root: layout.root, created, skipped, alreadyInitialised, initialisedGit };
 }
 
 export interface StatusStore {
@@ -382,7 +410,13 @@ export async function instructions(root: string, id: string): Promise<Instructio
     const { db } = await openWorkspaceDatabase(root);
     try {
       await applySchema(db);
-      attested = await attestItem(db, id, stage, await treeContext(layout.root));
+      attested = await attestItem(
+        db,
+        id,
+        stage,
+        await treeContext(layout.root),
+        typeof data['verify'] === 'string' ? data['verify'] : undefined,
+      );
     } finally {
       await db.close();
     }
@@ -644,11 +678,24 @@ export async function listWorkItems(root: string): Promise<{ items: readonly Wor
       file_path: string;
     }>('SELECT id, title, lifecycle_state, status, file_path FROM work_items ORDER BY id;');
 
-    const attestations = await attestAll(
-      db,
-      rows.map((row) => ({ id: row.id, lifecycleState: row.lifecycle_state })),
-      await treeContext(layout.root),
+    // The card's *current* `verify:` travels with each item, so attestation can
+    // tell evidence produced by this check from evidence produced by a different
+    // one that has since been swapped in.
+    const withCommands = await Promise.all(
+      rows.map(async (row) => {
+        const raw = await fs
+          .readFile(path.join(layout.root, row.file_path), 'utf8')
+          .catch(() => '');
+        const declared = raw === '' ? undefined : parseFrontmatter(raw).data['verify'];
+        return {
+          id: row.id,
+          lifecycleState: row.lifecycle_state,
+          ...(typeof declared === 'string' ? { verifyCommand: declared } : {}),
+        };
+      }),
     );
+
+    const attestations = await attestAll(db, withCommands, await treeContext(layout.root));
     const byId = new Map(attestations.map((entry) => [entry.id, entry]));
 
     return {
@@ -727,6 +774,8 @@ export async function captureItem(root: string, note: string): Promise<CaptureRe
 }
 
 export interface TriageResult {
+  /** Where the retired capture went, so it can still be read. */
+  readonly archivedTo?: string;
   readonly capturedId: string;
   readonly workItemId: string;
   readonly filePath: string;
@@ -814,7 +863,26 @@ export async function triageItem(
 
   await fs.writeFile(filePath, renderWorkItem(item as never, body), 'utf8');
 
-  return { capturedId, workItemId: id, filePath: path.relative(layout.root, filePath), kind };
+  // The capture is retired, not left lying about. It was previously kept in
+  // place with `kind: capture`, which the work-item validator rejects — so every
+  // `db:rebuild` from then on reported `failed: 1` on a file the tool itself had
+  // created and then abandoned. A permanent, self-inflicted error is worse than
+  // either deleting it or keeping it valid.
+  //
+  // Moved rather than deleted: the original wording is often the only record of
+  // what was actually meant, and `_archive/` is outside the tree the mirror
+  // walks, so it stops being ingested without ceasing to exist.
+  const archiveDir = path.join(layout.root, '.sdlcof', 'archive', 'captures');
+  await fs.mkdir(archiveDir, { recursive: true });
+  await fs.rename(found.filePath, path.join(archiveDir, path.basename(found.filePath)));
+
+  return {
+    capturedId,
+    workItemId: id,
+    filePath: path.relative(layout.root, filePath),
+    kind,
+    archivedTo: path.relative(layout.root, path.join(archiveDir, path.basename(found.filePath))),
+  };
 }
 
 export interface ClaimResult {

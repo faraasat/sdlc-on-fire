@@ -108,8 +108,10 @@ describe('bypass 1 — evidence that outlived the code it was about', () => {
 
     await setTest(false);
     const after = await attestationOf('TASK-001');
-    expect(after.attestation).toBe('unsupported');
-    expect(after.concern).toMatch(/predates the current working tree/);
+    // Stale, not unsupported: the run really did pass, against code that has
+    // since moved. Those are different claims (see the v006 tests below).
+    expect(after.attestation).toBe('stale');
+    expect(after.concern).toMatch(/to confirm it still does/);
   }, 180_000);
 });
 
@@ -327,5 +329,77 @@ describe('claim ownership (v005)', () => {
     const result = await advanceWorkItem(root, 'TASK-205', { actor: 'alice' });
     expect(result.refusals).toEqual([]);
     expect(result.moved).toBe(true);
+  }, 180_000);
+});
+
+describe('bypass 4 — the card lying about what "verify" means (v006)', () => {
+  it('refuses evidence produced by a command the card no longer declares', async () => {
+    // The evaluator's exact move: no code touched, no flag hidden, one line of
+    // YAML edited. `verify: node test.js` becomes `verify: exit 0`, re-run
+    // verify and advance, and the item reaches `done` with passing evidence
+    // while the real suite fails untouched.
+    await setTest(false); // the real suite is red the whole way through
+
+    // Point `verify:` at something that proves nothing, and run it. This is a
+    // genuine, passing, daemon-produced run — the exploit needs no forgery.
+    await writeCard('TASK-300', 'exit 0', 'test');
+    const cheap = await verifyWorkItem(root, 'TASK-300');
+    expect(cheap.ok).toBe(true);
+
+    // Put the real check back on the card. The item now claims to be gated on a
+    // suite that has never passed, backed by evidence from a command that is no
+    // longer declared.
+    await writeCard('TASK-300', 'node test.js', 'test');
+
+    const after = await advanceWorkItem(root, 'TASK-300');
+    expect(after.moved).toBe(false);
+    expect(after.refusals.join('\n')).toMatch(/changed after they passed/);
+  }, 180_000);
+
+  it('reports a swapped check as unsupported, naming both commands', async () => {
+    await writeCard('TASK-301', 'exit 0');
+    await verifyWorkItem(root, 'TASK-301');
+    await writeCard('TASK-301', 'node test.js', 'done');
+    await setTest(false);
+
+    const attested = await attestationOf('TASK-301');
+    expect(attested.attestation).toBe('unsupported');
+    expect(attested.concern).toMatch(/The check changed after it passed/);
+    expect(attested.concern).toMatch(/exit 0/);
+  }, 180_000);
+});
+
+describe('stale is not the same claim as unsupported (v006)', () => {
+  it('flags an honest item whose tree moved as stale, not unsupported', async () => {
+    // The evaluation got this exactly backwards: an honestly-finished item was
+    // flagged `unsupported` because an *unrelated* task's file changed the
+    // shared tree, while a fabricated one stayed `supported`. The louder warning
+    // landed on the honest work.
+    await writeCard('TASK-302', 'node test.js');
+    await setTest(true);
+    await verifyWorkItem(root, 'TASK-302');
+    await writeCard('TASK-302', 'node test.js', 'done');
+    expect((await attestationOf('TASK-302')).attestation).toBe('supported');
+
+    // Somebody else's file lands in the same workspace.
+    await fs.writeFile(path.join(root, 'unrelated.js'), '// somebody else\n', 'utf8');
+
+    const after = await attestationOf('TASK-302');
+    expect(after.attestation).toBe('stale');
+    expect(after.concern).toMatch(/to confirm it still does/);
+  }, 180_000);
+
+  it('will not reopen honest work merely because the tree moved', async () => {
+    await writeCard('TASK-303', 'node test.js');
+    await setTest(true);
+    await verifyWorkItem(root, 'TASK-303');
+    await writeCard('TASK-303', 'node test.js', 'done');
+    await fs.writeFile(path.join(root, 'unrelated.js'), '// somebody else\n', 'utf8');
+
+    const result = await reopenWorkItem(root, 'TASK-303');
+    expect(result.reopened).toBe(false);
+    // Reopening honest work because someone else edited a file is how a warning
+    // stops being read.
+    expect(result.reason).toMatch(/not grounds to retract/);
   }, 180_000);
 });

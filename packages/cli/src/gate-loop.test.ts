@@ -196,11 +196,17 @@ describe('soft insertion: capture and triage (P1-INS-01)', () => {
     expect(raw).toContain(captured.id);
   }, 120_000);
 
-  it('leaves the capture in place rather than deleting it', async () => {
-    // The original wording is often the only record of what was actually meant.
+  it('archives the capture rather than deleting it or abandoning it', async () => {
+    // The original wording is often the only record of what was actually meant,
+    // so it is kept — but *out of the mirrored tree*. Left in place it carried
+    // `kind: capture`, which the work-item validator rejects, so every later
+    // `db:rebuild` reported `failed: 1` on a file the tool itself had created
+    // and then abandoned. A permanent self-inflicted error is not preservation.
     const captured = await captureItem(root, 'something subtle about encodings');
-    await triageItem(root, captured.id, 'task');
-    await expect(fs.stat(path.join(root, captured.filePath))).resolves.toBeDefined();
+    const triaged = await triageItem(root, captured.id, 'task');
+
+    await expect(fs.stat(path.join(root, captured.filePath))).rejects.toThrow();
+    await expect(fs.stat(path.join(root, triaged.archivedTo ?? ''))).resolves.toBeDefined();
   }, 120_000);
 
   it('rejects an unknown kind at triage, naming the valid ones', async () => {
