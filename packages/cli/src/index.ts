@@ -48,6 +48,7 @@ import { branchFor, type BranchResult } from './branch.js';
 import { prFor } from './pr.js';
 import { recordReview } from './review.js';
 import { formatClaims, verifyWorkItemClaims } from './claims.js';
+import { scoreWorkItem } from './spec-score.js';
 import { queueFor } from './queue.js';
 import { scanQuality } from './quality.js';
 import {
@@ -703,6 +704,19 @@ export function buildProgram(): Command {
       // A gate that reports a problem and exits 0 is a gate nothing downstream
       // can act on.
       if (!result.bundle.ok) process.exitCode = 1;
+    });
+
+  program
+    .command('score')
+    .argument('<work-item-id>', 'the work item to score')
+    .description('observed spec-quality score — a trend line, never a gate (P1-OBJ-07)')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
+      const result = await scoreWorkItem(root(), id);
+      const { formatSpecQuality } = await import('@sdlc-on-fire/evidence');
+      emit(result, options.json === true, formatSpecQuality);
+      // Deliberately no non-zero exit. An exit code is how an observed number
+      // becomes a gate by accident in somebody's CI.
     });
 
   program

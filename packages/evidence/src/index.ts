@@ -4,6 +4,7 @@ export * from './code-quality.js';
 export * from './knowledge-claim.js';
 export * from './definition-of-ready.js';
 export * from './traceability.js';
+export * from './spec-quality.js';
 export * from './dependency-audit.js';
 export * from './runner.js';
 export * from './evaluate-gate.js';
