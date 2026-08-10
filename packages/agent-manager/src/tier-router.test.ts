@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { explainPolicy, resolveTier, UnroutableTierError, type TierPolicy } from './tier-router.js';
+import {
+  explainPolicy,
+  NoRouteError,
+  resolveTier,
+  routeForDispatch,
+  UnroutableTierError,
+  type TierPolicy,
+} from './tier-router.js';
 import { CANONICAL_SKILLS, SPEC_SKILL, IMPLEMENT_SKILL } from './skills/canonical.js';
 import { REVIEW_SKILL } from './skills/review.js';
 
@@ -89,5 +96,52 @@ describe('explaining a policy before committing to it', () => {
     // Everything else keeps its own tier.
     const spec = explained.find((entry) => entry.skill === 'spec');
     expect(spec?.source).toBe('skill-default');
+  });
+});
+
+describe('dispatch-time routing with fallbacks (P1-AGENT-06)', () => {
+  const withFallbacks: TierPolicy = {
+    ...policy,
+    fallbacks: { medium: ['model-medium-b', 'model-medium-c'], high: [] },
+  };
+
+  it('uses the primary when it is reachable', async () => {
+    const route = await routeForDispatch(SPEC_SKILL, withFallbacks, () => true);
+    expect(route.model).toBe('model-medium');
+    expect(route.usedFallback).toBe(false);
+  });
+
+  it('falls back in declared order', async () => {
+    const route = await routeForDispatch(
+      SPEC_SKILL,
+      withFallbacks,
+      (model) => model === 'model-medium-b',
+    );
+    expect(route.model).toBe('model-medium-b');
+    expect(route.usedFallback).toBe(true);
+  });
+
+  it('never crosses tiers to find something that works', async () => {
+    // Falling back from a high-tier review to a cheap model produces an answer
+    // that looks like a review and is not — worse than failing.
+    await expect(routeForDispatch(REVIEW_SKILL, withFallbacks, () => false)).rejects.toThrow(
+      NoRouteError,
+    );
+  });
+
+  it('names every model it tried, so the failure is diagnosable', async () => {
+    await expect(routeForDispatch(SPEC_SKILL, withFallbacks, () => false)).rejects.toThrow(
+      /model-medium, model-medium-b, model-medium-c/,
+    );
+  });
+
+  it('stays within the tier an override selected', async () => {
+    const route = await routeForDispatch(
+      SPEC_SKILL,
+      { ...withFallbacks, skillOverrides: { spec: 'high' } },
+      (model) => model === 'model-high',
+    );
+    expect(route.tier).toBe('high');
+    expect(route.model).toBe('model-high');
   });
 });

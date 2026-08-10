@@ -21,11 +21,24 @@ export interface TierResolution {
   readonly tier: SkillTier;
   readonly source: TierSource;
   readonly model: string;
+  /** Models to try, in order, if `model` cannot be reached. May be empty. */
+  readonly fallbacks: readonly string[];
 }
 
 export interface TierPolicy {
   /** Concrete model per tier. The only place a model ID appears. */
   readonly models: Readonly<Record<SkillTier, string>>;
+  /**
+   * Ordered alternatives per tier, tried when the primary is unavailable
+   * (P1-AGENT-06).
+   *
+   * Fallbacks are declared per tier rather than globally because "what to use
+   * instead" depends on what the work needed. Falling back from a high-tier
+   * review to a cheap model produces an answer that looks like a review and is
+   * not, which is worse than failing — so a tier with no acceptable substitute
+   * declares none and the dispatch fails loudly.
+   */
+  readonly fallbacks?: Readonly<Partial<Record<SkillTier, readonly string[]>>> | undefined;
   /** Force a tier for one named skill. Highest precedence — most specific wins. */
   readonly skillOverrides?: Readonly<Record<string, SkillTier>> | undefined;
   /** Force a tier for every skill at a stage, e.g. run all reviews high. */
@@ -67,7 +80,43 @@ export function resolveTier(skill: CanonicalSkill, policy: TierPolicy): TierReso
     throw new UnroutableTierError(tier, skill.name);
   }
 
-  return { tier, source, model };
+  return { tier, source, model, fallbacks: policy.fallbacks?.[tier] ?? [] };
+}
+
+export class NoRouteError extends Error {
+  override readonly name = 'NoRouteError';
+  constructor(skill: string, tier: SkillTier, tried: readonly string[]) {
+    super(
+      `every model for tier "${tier}" was unavailable for skill "${skill}" (tried ${tried.join(', ')}). ` +
+        'Refusing rather than substituting a model from another tier — an answer produced at the ' +
+        'wrong capability level looks like the right one.',
+    );
+  }
+}
+
+/**
+ * Dispatch-time routing: the first model that is actually reachable
+ * (P1-AGENT-06).
+ *
+ * `isAvailable` is injected rather than probed here, because "available" means
+ * different things to different callers — a rate-limit window, a missing API
+ * key, a provider outage. What this owns is the *order*, and the rule that we
+ * never silently cross tiers to find something that works.
+ */
+export async function routeForDispatch(
+  skill: CanonicalSkill,
+  policy: TierPolicy,
+  isAvailable: (model: string) => Promise<boolean> | boolean,
+): Promise<{ model: string; tier: SkillTier; usedFallback: boolean }> {
+  const resolved = resolveTier(skill, policy);
+  const candidates = [resolved.model, ...resolved.fallbacks];
+
+  for (const [index, model] of candidates.entries()) {
+    if (await isAvailable(model)) {
+      return { model, tier: resolved.tier, usedFallback: index > 0 };
+    }
+  }
+  throw new NoRouteError(skill.name, resolved.tier, candidates);
 }
 
 /**
