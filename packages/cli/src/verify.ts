@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { promisify } from 'node:util';
 import { EvidenceEnvelopeSchema, type EvidenceEnvelope } from '@sdlc-on-fire/core';
-import { parseVitestJson, payloadHash } from '@sdlc-on-fire/evidence';
+import { parseRunnerOutput, parseVitestJson, payloadHash } from '@sdlc-on-fire/evidence';
 import {
   SandboxConfigSchema,
   type SandboxConfig,
@@ -179,17 +179,25 @@ export async function runVerify(input: {
     const parsed = parseVitestJson(stdout);
     payload = { ...parsed, report: 'parsed' as const };
   } catch {
-    payload = {
-      runner: 'shell',
-      total: 0,
-      passed: 0,
-      failed: ok ? 0 : 1,
-      ok,
-      report: 'exit-code-only' as const,
-      failures: ok
-        ? []
-        : [{ file: '(unknown)', title: input.command, message: stderr.slice(0, 2_000) }],
-    };
+    // Not JSON — try the formats real runners actually print. Until this
+    // existed, an honest `node --test` run and a fabricated `echo PASS && exit 0`
+    // produced identical evidence, so nothing downstream (and no human reading
+    // the PR) could tell them apart.
+    const fromRunner = parseRunnerOutput(`${stdout}\n${stderr}`);
+    payload =
+      fromRunner !== null
+        ? { ...fromRunner, report: 'parsed' as const }
+        : {
+            runner: 'shell',
+            total: 0,
+            passed: 0,
+            failed: ok ? 0 : 1,
+            ok,
+            report: 'exit-code-only' as const,
+            failures: ok
+              ? []
+              : [{ file: '(unknown)', title: input.command, message: stderr.slice(0, 2_000) }],
+          };
   }
 
   const dirty = input.dirtyTreeHash ?? (await currentDirtyTreeHash(input.cwd));

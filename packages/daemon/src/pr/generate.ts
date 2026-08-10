@@ -45,9 +45,17 @@ export function summariseEvidence(
     // as "[object Object]" in the PR body, which reads as a bug to a reviewer.
     const scalar = (value: unknown): string =>
       typeof value === 'number' || typeof value === 'string' ? String(value) : '?';
+    // "0/0 passed" read as a healthy row. A blind evaluator pointed out the
+    // consequence: an honest 8-test suite and a fabricated `echo PASS` rendered
+    // *identically*, so a careful human reviewing the PR had no signal at all.
+    // An unread check now says it was unread, in the place a reviewer looks.
+    const total = Number(payload?.['total'] ?? 0);
+    const unread = payload?.['report'] !== 'parsed' || total === 0;
     const detail =
       envelope.kind === 'test' && payload !== null
-        ? `${scalar(payload['passed'])}/${scalar(payload['total'])} passed`
+        ? unread
+          ? `NO TEST COUNT OBSERVED — the command exited ${scalar(envelope.command?.exit_code)} and nothing counted a test`
+          : `${scalar(payload['passed'])}/${scalar(payload['total'])} passed`
         : `exit ${scalar(envelope.command?.exit_code)}`;
 
     return {

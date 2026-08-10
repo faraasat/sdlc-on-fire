@@ -14,7 +14,9 @@ function envelope(over: Partial<EvidenceEnvelope> = {}): EvidenceEnvelope {
     content_hash: 'b'.repeat(64),
     confidence: 0.95,
     produced_at: '2026-08-10T00:00:00.000Z',
-    payload: { ok: true, passed: 5, total: 5 },
+    // `report: 'parsed'` is what distinguishes a counted suite from a command
+    // that merely exited 0 — without it the row now says so, which is the point.
+    payload: { ok: true, passed: 5, total: 5, report: 'parsed' },
     ...over,
   };
 }
@@ -89,5 +91,22 @@ describe('PR body', () => {
 describe('PR title', () => {
   it('scopes to the work item for git log --grep', () => {
     expect(renderPrTitle('FEAT-001', 'Add CSV export')).toBe('feat(FEAT-001): Add CSV export');
+  });
+});
+
+describe('an unread check cannot look like a passing one (v007)', () => {
+  it('says plainly that nothing counted a test', () => {
+    // "0/0 passed" read as a healthy row, so an honest eight-test suite and a
+    // fabricated `echo PASS` rendered identically and a careful reviewer had no
+    // signal at all.
+    const row = summariseEvidence(
+      [envelope({ payload: { ok: true, passed: 0, total: 0, report: 'exit-code-only' } })],
+      HEAD,
+    )[0];
+    expect(row?.detail).toMatch(/NO TEST COUNT OBSERVED/);
+  });
+
+  it('still reports a real count when there is one', () => {
+    expect(summariseEvidence([envelope()], HEAD)[0]?.detail).toBe('5/5 passed');
   });
 });

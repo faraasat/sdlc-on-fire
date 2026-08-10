@@ -83,6 +83,14 @@ export const cliDependencies: readonly PackageInfo[] = [
  * they end up disagreeing.
  */
 
+/** Splits a comma-separated option into trimmed, non-empty entries. */
+function splitList(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+}
+
 function emit(value: unknown, json: boolean, human: (value: never) => string): void {
   process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${human(value as never)}\n`);
 }
@@ -162,12 +170,23 @@ export function buildProgram(): Command {
     .description('create a work item')
     .option('--preset <preset>', 'lite | standard | strict', 'standard')
     .option('--appetite <appetite>', 'small-batch | big-batch (epics and features only)')
+    .option(
+      '--blocked-by <ids>',
+      'comma-separated work items that must finish first — drives `sdlc queue`',
+    )
+    .option('--owns <globs>', 'comma-separated file globs this item owns, for wave packing')
     .option('--json', 'emit JSON')
     .action(
       async (
         kind: string,
         title: string,
-        options: { preset?: string; appetite?: string; json?: boolean },
+        options: {
+          preset?: string;
+          appetite?: string;
+          blockedBy?: string;
+          owns?: string;
+          json?: boolean;
+        },
       ): Promise<void> => {
         if (!(kind in WORK_ITEM_ID_PREFIX)) {
           throw new Error(
@@ -232,6 +251,16 @@ export function buildProgram(): Command {
           created_at: now,
           updated_at: now,
           ...(appetiteParsed === null ? {} : { appetite: appetiteParsed.data }),
+          // Emitted only when declared. `blocked_by` and `file_ownership` drive
+          // `sdlc queue`, and until they were reachable from `new` the scheduler
+          // looked to a first-time user like it ordered by creation date — the
+          // fields existed on the schema and nothing ever wrote them.
+          ...(splitList(options.blockedBy).length === 0
+            ? {}
+            : { blocked_by: splitList(options.blockedBy) }),
+          ...(splitList(options.owns).length === 0
+            ? {}
+            : { file_ownership: splitList(options.owns) }),
           ...(typedKind === 'task' ? { verify: 'pnpm test', done: ['tests pass'] } : {}),
           ...(typedKind === 'bug' ? { repro_steps: ['TODO'], severity: 'medium' as const } : {}),
           ...(typedKind === 'story' ? { acceptance_criteria: ['GIVEN … WHEN … THEN …'] } : {}),
@@ -552,15 +581,28 @@ export function buildProgram(): Command {
         if (r.waves.length === 0) {
           return `Nothing open.${r.completed.length === 0 ? '' : ` ${String(r.completed.length)} item(s) done.`}`;
         }
-        return r.waves
-          .flatMap((wave) => [
-            `wave ${String(wave.index)}${wave.index === 0 ? '  (ready now)' : '  (waiting on wave ' + String(wave.index - 1) + ')'}`,
-            ...wave.items.map(
-              (item) =>
-                `  ${item.id.padEnd(12)} ${item.riskLevel.padEnd(7)} ${item.lifecycleState.padEnd(16)} ${item.title}` +
-                (item.claimedBy === null ? '' : `  [claimed by ${item.claimedBy}]`),
-            ),
-          ])
+        const declaresNothing = r.waves.every((wave) =>
+          wave.items.every((item) => item.blockedBy.length === 0),
+        );
+        return [
+          ...(declaresNothing
+            ? [
+                'No work item declares `blocked_by`, so this ordering carries no dependency',
+                'information. Add one with `sdlc new … --blocked-by TASK-001`.',
+                '',
+              ]
+            : []),
+        ]
+          .concat(
+            r.waves.flatMap((wave) => [
+              `wave ${String(wave.index)}${wave.index === 0 ? '  (ready now)' : '  (waiting on wave ' + String(wave.index - 1) + ')'}`,
+              ...wave.items.map(
+                (item) =>
+                  `  ${item.id.padEnd(12)} ${item.riskLevel.padEnd(7)} ${item.lifecycleState.padEnd(16)} ${item.title}` +
+                  (item.claimedBy === null ? '' : `  [claimed by ${item.claimedBy}]`),
+              ),
+            ]),
+          )
           .join('\n');
       });
     });

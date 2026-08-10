@@ -403,3 +403,58 @@ describe('stale is not the same claim as unsupported (v006)', () => {
     expect(result.reason).toMatch(/not grounds to retract/);
   }, 180_000);
 });
+
+describe('bypass 5 — a check that never ran anything (v007)', () => {
+  it('refuses a terminal transition on a command with no readable test count', async () => {
+    // The fourth way a blind evaluator got to `done`: point `verify:` at a fake
+    // command and leave it there. The v006 binding compares evidence to what the
+    // card *currently* declares — and here they matched, because the card had
+    // simply redefined what "verify" means, permanently.
+    await writeCard('TASK-400', 'echo FAKE PASS && exit 0', 'review');
+    const verified = await verifyWorkItem(root, 'TASK-400');
+    expect(verified.ok).toBe(true); // the command genuinely succeeded
+    expect(verified.report).toBe('exit-code-only');
+
+    const result = await advanceWorkItem(root, 'TASK-400');
+    expect(result.moved).toBe(false);
+    expect(result.refusals.join('\n')).toMatch(/no readable test count/);
+  }, 180_000);
+
+  it('lets a real runner through, because now it can be read', async () => {
+    // The fix is *seeing more*, not another rule: a real suite produces a real
+    // count, so a no-op can no longer borrow its appearance.
+    await fs.writeFile(
+      path.join(root, 'real.test.js'),
+      'import { test } from "node:test";\nimport assert from "node:assert";\ntest("a", () => assert.equal(1,1));\n',
+      'utf8',
+    );
+    await writeCard('TASK-401', 'node --test real.test.js', 'review');
+
+    const verified = await verifyWorkItem(root, 'TASK-401');
+    expect(verified.report).toBe('parsed');
+    expect(verified.testsRun).toBeGreaterThan(0);
+
+    const result = await advanceWorkItem(root, 'TASK-401');
+    expect(result.refusals.join('\n')).not.toMatch(/no readable test count/);
+  }, 180_000);
+
+  it('allows an unreadable check only when the card says so out loud', async () => {
+    // The escape hatch is a declaration on the card, not a silent default: a
+    // genuinely uncountable check is a fact worth stating where a reviewer sees
+    // it.
+    const dir = path.join(root, 'kanban', '_inbox');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(
+      path.join(dir, 'TASK-402.md'),
+      CARD('TASK-402', 'echo FAKE PASS && exit 0', 'review').replace(
+        'risk_level: low',
+        'risk_level: low\nverify_unparseable: true',
+      ),
+      'utf8',
+    );
+
+    await verifyWorkItem(root, 'TASK-402');
+    const result = await advanceWorkItem(root, 'TASK-402');
+    expect(result.refusals.join('\n')).not.toMatch(/no readable test count/);
+  }, 180_000);
+});

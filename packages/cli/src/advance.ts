@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   isLifecycleStage,
+  isTerminalStage,
   kanbanColumnForStage,
   nextStage,
   resolveRequiredStages,
@@ -382,6 +383,29 @@ export async function advanceWorkItem(
         ...defaultV01Policy(preset),
         evidence: [{ kind: 'test' as const, required: true, require_fresh: false }],
       };
+      // Entering a terminal stage on a check nobody could read is the hole v007
+      // walked through: `verify: echo PASS && exit 0` produced evidence
+      // indistinguishable from a real suite. Now that most real runners parse,
+      // an unreadable check at the *end* of the ladder is rare enough to be
+      // worth stopping — and the escape hatch is a field on the card, so a
+      // genuinely unparseable check is declared out loud rather than assumed.
+      const acknowledged = data['verify_unparseable'] === true;
+      const latest = bundle
+        .filter((envelope) => envelope.kind === 'test')
+        .sort((a, b) => Date.parse(b.produced_at) - Date.parse(a.produced_at))[0];
+      const observed = (latest?.payload as { total?: number } | undefined)?.total ?? 0;
+      const readable =
+        (latest?.payload as { report?: string } | undefined)?.report === 'parsed' && observed > 0;
+
+      if (isTerminalStage(to) && latest !== undefined && !readable && !acknowledged) {
+        refusals.push(
+          `gate: ${id}'s check produced no readable test count — \`${verifyCommand ?? ''}\` exited 0 ` +
+            'but nothing observed a test run. A command that exits 0 without running anything is ' +
+            'indistinguishable from a passing suite here. Point `verify:` at a real runner, or set ' +
+            '`verify_unparseable: true` on the card to state plainly that this check cannot be counted.',
+        );
+      }
+
       const currentDirty = await currentDirtyTreeHash(layout.root);
       const verdict = evaluateGate(policy, bundle, [], {
         currentHeadSha: headSha,

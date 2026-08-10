@@ -3,6 +3,7 @@ import os from 'node:os';
 import { computeConfidence, type EvidenceEnvelope, type EvidenceKind } from '@sdlc-on-fire/core';
 import { parseBuildResult, parseTscOutput, parseVitestJson, payloadHash } from './parsers.js';
 import { parseDependencyAudit } from './dependency-audit.js';
+import { parseRunnerOutput } from './parse-runners.js';
 
 /**
  * The verify runner — **the daemon executes the command, never the agent**
@@ -113,8 +114,36 @@ export async function runTests(
   const result = await runCommand(cmd, args, context);
   // Runners print progress to stderr and the report to stdout; some prepend
   // noise, so take the JSON document rather than the whole stream.
-  const payload = parseVitestJson(extractJson(result.stdout));
-  return envelope('test', payload, { cmd, args, exitCode: result.exitCode }, context);
+  //
+  // `report` is stamped here as well as in the CLI's verify path. Two producers
+  // of test evidence and only one recording whether a count was *observed* meant
+  // a genuinely parsed run rendered in the PR as "no test count observed" —
+  // exactly the confusion the field exists to remove.
+  const parsed = ((): { payload: unknown; report: 'parsed' | 'exit-code-only' } => {
+    try {
+      return { payload: parseVitestJson(extractJson(result.stdout)), report: 'parsed' };
+    } catch {
+      const fromRunner = parseRunnerOutput(`${result.stdout}\n${result.stderr}`);
+      if (fromRunner !== null) return { payload: fromRunner, report: 'parsed' };
+      return {
+        payload: {
+          runner: 'shell',
+          total: 0,
+          passed: 0,
+          failed: result.exitCode === 0 ? 0 : 1,
+          ok: result.exitCode === 0,
+          failures: [],
+        },
+        report: 'exit-code-only',
+      };
+    }
+  })();
+  return envelope(
+    'test',
+    { ...(parsed.payload as Record<string, unknown>), report: parsed.report },
+    { cmd, args, exitCode: result.exitCode },
+    context,
+  );
 }
 
 export async function runTypecheck(

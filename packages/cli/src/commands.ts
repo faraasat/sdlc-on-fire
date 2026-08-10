@@ -226,6 +226,14 @@ export async function status(root: string, store?: StatusStore): Promise<StatusR
       // already-migrated database; without it, `status` on a fresh workspace
       // fails with `relation "work_items" does not exist`.
       await applySchema(handle.db);
+      // Sync before counting. Reading the mirror as it stood made `status`
+      // disagree with `list` and `queue`, which both sync first — and two
+      // commands giving different answers to "how many work items are there"
+      // is worse than either being slow.
+      await rebuildMirror(
+        resolveWorkspaceLayout(root).root,
+        await PostgresStorageAdapter.create(handle.db),
+      );
       store = handle.db;
     } catch {
       // Genuinely unreachable (locked by a running daemon, bad connection
@@ -625,6 +633,16 @@ export async function syncBatch(root: string, since = 'HEAD'): Promise<SyncBatch
     throw new Error(`${layout.root} is not a git repository`);
   }
 
+  // A repository with no commits has no HEAD, and git's own message for that
+  // ("fatal: ambiguous argument 'HEAD'") tells a first-time user nothing about
+  // what to do. This is the normal state of a workspace on its first day.
+  if ((await git.headSha()) === '0'.repeat(40)) {
+    throw new Error(
+      `${layout.root} has no commits yet, so there is nothing to sync from. ` +
+        'Commit the workspace first (`git add -A && git commit -m "chore: init"`), then re-run.',
+    );
+  }
+
   const changed = await git.changedInCommit(since);
   const { db } = await openWorkspaceDatabase(root);
   try {
@@ -945,12 +963,25 @@ export async function claimWorkItem(
 
     if (state === null) {
       const held = await port.claimOf(id);
+      if (held === null) {
+        // "already held by (unknown)" for an id that does not exist sent a blind
+        // evaluator looking for a phantom claimant. Two different failures need
+        // two different messages.
+        const known = await db.query<{ id: string }>('SELECT id FROM work_items WHERE id = $1;', [
+          id,
+        ]);
+        if (known.length === 0) {
+          throw new Error(
+            `no work item with id "${id}" — check \`sdlc list\` for the ids that exist`,
+          );
+        }
+      }
       return {
         workItemId: id,
         claimedBy: actor,
         leaseExpiresAt: '',
         granted: false,
-        heldBy: held?.claimedBy ?? '(unknown — the work item may not exist)',
+        heldBy: held?.claimedBy ?? '(the lease could not be taken)',
       };
     }
     return {
