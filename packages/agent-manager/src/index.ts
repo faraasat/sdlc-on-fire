@@ -8,6 +8,7 @@ export * from './skills/retrospective.js';
 export * from './dispatch.js';
 export * from './tier-router.js';
 export * from './fixtures.js';
+export * from './isolation.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
