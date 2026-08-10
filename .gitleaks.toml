@@ -1,0 +1,18 @@
+# Secret-scan configuration for the public product repo (P0-META-04).
+title = "sdlc-on-fire"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and documented examples that look like secrets but are not."
+paths = [
+  # Connection strings in tests point at throwaway local containers. They are
+  # listed explicitly rather than by a broad pattern, so a real credential
+  # pasted into a test file is still caught.
+  '''packages/db/src/connected\.test\.ts''',
+]
+regexes = [
+  # The documented placeholder in error messages and docblocks.
+  '''postgres://user:password@host:port/database''',
+]
