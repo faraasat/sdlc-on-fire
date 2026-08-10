@@ -20,6 +20,8 @@ import {
   isTerminalStage,
   nextStage,
   resolveRequiredStages,
+  explainRequiredChecks,
+  FocusProfileSchema,
   loadTierPolicy,
   undeclaredModels,
   resolveWorkspaceLayout,
@@ -970,6 +972,18 @@ export interface ConfigResult {
    */
   readonly inert: readonly { readonly key: string; readonly lands_in: string }[];
   /**
+   * What the declared focus actually requires, and where each requirement came
+   * from (P1-LIFE-06, ADR-0054).
+   *
+   * Shown with attribution because a required set with no provenance cannot be
+   * argued with: nobody can tell a check the baseline demands from one the
+   * declaration added, so nobody can tell whether lowering the declaration would
+   * remove it. Making that legible is the point of the whole feature — "we
+   * hardened the important part" has to be visible as required evidence rather
+   * than as an intention.
+   */
+  readonly requiredChecks: readonly { readonly kind: string; readonly because: string }[];
+  /**
    * Every advanced capability with its default, current value, ADR and cost
    * class — on or off (ADR-0067). Listing only the enabled ones would make
    * "advanced" mean hidden; the point is that it means deliberate.
@@ -1058,6 +1072,9 @@ export async function showConfig(root: string): Promise<ConfigResult> {
     capabilities: describeCapabilities(advanced),
     // Listed separately so it cannot be missed in a long table. A capability the
     // user switched on that nothing reads is the one thing they most need told.
+    requiredChecks: explainRequiredChecks(config?.focus ?? FocusProfileSchema.parse({})).map(
+      (entry) => ({ kind: entry.kind, because: entry.dimension }),
+    ),
     inert: inertCapabilities(advanced).map((entry) => ({
       key: entry.key,
       lands_in: entry.implementedBy ?? '(unscheduled)',

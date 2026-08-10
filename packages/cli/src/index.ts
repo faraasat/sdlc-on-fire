@@ -750,6 +750,9 @@ export function buildProgram(): Command {
           ? `No config at ${r.configPath} — run \`sdlc init\` first.`
           : [
               JSON.stringify(r.config, null, 2),
+              '',
+              'required evidence for this project:',
+              ...r.requiredChecks.map((entry) => `  ${entry.kind.padEnd(16)} ${entry.because}`),
               // A flag reading `enabled: true` while nothing reads it is the one
               // thing a user most needs told, so it goes below the config where
               // it cannot be lost in the table.

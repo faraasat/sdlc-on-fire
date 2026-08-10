@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { AdvancedConfigSchema } from './capabilities.js';
+import { FocusProfileSchema } from './focus.js';
 import { TierPolicyConfigSchema, tierPolicyViolations } from './tier-policy.js';
 
 /**
@@ -126,6 +127,15 @@ export const WorkspaceConfigSchema = z
       })
       .prefault({}),
     preset: z.enum(['lite', 'standard', 'strict']).default('standard'),
+    /**
+     * Where this project's value and risk concentrate (ADR-0054, P1-LIFE-06).
+     *
+     * Optional: an undeclared project gets the balanced baseline. Inferring a
+     * focus from the code would be a model judgement in a decision path, which
+     * ADR-0040 rules out — and the floors mean declaring nothing is never the
+     * unsafe choice.
+     */
+    focus: FocusProfileSchema,
   })
   .superRefine((config, ctx) => {
     // Reported at config-parse time, not at dispatch: a policy error discovered
