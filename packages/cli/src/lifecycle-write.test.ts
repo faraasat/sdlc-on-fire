@@ -105,6 +105,28 @@ describe('the swap itself', () => {
 });
 
 describe('through the command', () => {
+  it('does not eat frontmatter it does not model', async () => {
+    // Found by walking the v0.1 DoD by hand, not by any test: `sdlc advance`
+    // serialized Zod's parsed output, which contains only the keys the schema
+    // knows — so every other key in a git-tracked card was deleted by an
+    // ordinary transition, and the result parsed cleanly.
+    await fs.writeFile(
+      cardPath(),
+      CARD('implement').replace('verify: node test.js', 'verify: node test.js\nowner: farasat'),
+      'utf8',
+    );
+    await claimWorkItem(root, 'TASK-001', 'alice');
+    await verifyWorkItem(root, 'TASK-001', { actor: 'alice' });
+    await advanceWorkItem(root, 'TASK-001', { actor: 'alice' });
+
+    const after = await fs.readFile(cardPath(), 'utf8');
+    expect(after).toContain('owner: farasat');
+    // `verify:` is modelled on tasks but not features, so on a feature card the
+    // transition deleted the command — and the next gate then refused the item
+    // for "declares no `verify:` command", naming a field the tool had removed.
+    expect(after).toContain('verify: node test.js');
+  }, 180_000);
+
   it('refuses to apply a transition decided against a card that has since changed', async () => {
     await claimWorkItem(root, 'TASK-001', 'alice');
     await verifyWorkItem(root, 'TASK-001', { actor: 'alice' });

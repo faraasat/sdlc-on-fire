@@ -101,11 +101,41 @@ export interface WriteWorkItemOptions {
   readonly allowTerminal?: boolean | undefined;
 }
 
+/**
+ * Keys the schema does not model, carried through a rewrite untouched.
+ *
+ * Zod's `safeParse` returns only the keys it knows about, so serializing
+ * `validated.data` **deletes everything else in the file** — a user's `owner:`,
+ * a `jira_ref:`, a field from a newer schema this binary predates. That is a
+ * content-in-git violation with the worst possible shape: an ordinary
+ * `sdlc advance` destroys hand-written content in a git-tracked file, the
+ * result parses cleanly, and nothing reports a loss.
+ *
+ * It also defeats the product. `verify:` is modelled on tasks but not features,
+ * so a feature card carrying one had it deleted by the transition — and the very
+ * next gate refused the item for "declares no `verify:` command", naming a field
+ * the tool had just removed itself.
+ *
+ * Modelled keys still come from the validated object: a rewrite is the one place
+ * that normalises them, and letting a raw input value win would defeat the
+ * validation it just passed.
+ */
+function withUnmodelledKeys(
+  item: WorkItem,
+  validated: Record<string, unknown>,
+): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(item as Record<string, unknown>)) {
+    if (!(key in validated) && value !== undefined) extra[key] = value;
+  }
+  return { ...extra, ...validated };
+}
+
 /** Renders a validated work item to canonical Markdown. Pure — writes nothing. */
 export function renderWorkItem(item: WorkItem, body: string): string {
   const validated = WorkItemSchema.safeParse(item);
   if (!validated.success) throw new ValidationError('<memory>', issueStrings(validated.error));
-  return serializeFrontmatter(validated.data, body);
+  return serializeFrontmatter(withUnmodelledKeys(item, validated.data), body);
 }
 
 /**
@@ -135,5 +165,9 @@ export async function writeWorkItem(
   }
 
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, serializeFrontmatter(validated.data, body), 'utf8');
+  await fs.writeFile(
+    filePath,
+    serializeFrontmatter(withUnmodelledKeys(item, validated.data), body),
+    'utf8',
+  );
 }

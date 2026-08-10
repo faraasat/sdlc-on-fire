@@ -112,10 +112,16 @@ async function assertClaimOwnership(
   const held = await port.claimOf(id);
   if (held === null) return null;
   if (actor !== undefined && held.claimedBy === actor) return null;
+  // Naming what actually works. This used to end "take it over deliberately with
+  // `sdlc claim`" — run exactly that and it refuses with "already held by", because
+  // no takeover exists: contention hardening rides with team mode (ADR-0048 §v0.1).
+  // An error that prescribes a command which cannot work is worse than one that
+  // only states the problem.
   return (
     `${id} is claimed by "${held.claimedBy}"` +
     (actor === undefined ? ' — pass `--as <actor>` to say who you are' : `, not by "${actor}"`) +
-    '. Wait for the lease to lapse, or take it over deliberately with `sdlc claim`.'
+    `. Either run it as the holder (\`--as ${held.claimedBy}\`) or wait for the lease to lapse; ` +
+    'there is no takeover in v0.1.'
   );
 }
 

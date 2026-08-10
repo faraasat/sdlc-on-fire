@@ -63,6 +63,7 @@ import {
   type InitiativeKind,
 } from './initiative.js';
 import { queueFor } from './queue.js';
+import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
 import {
   listMemory,
@@ -119,6 +120,28 @@ function splitList(value: string | undefined): string[] {
 
 function emit(value: unknown, json: boolean, human: (value: never) => string): void {
   process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${human(value as never)}\n`);
+}
+
+/**
+ * Blocks until the person at the keyboard types the work item's id.
+ *
+ * The TTY check alone proves a terminal exists, not that anyone read anything —
+ * an agent driving a pty would satisfy it. Typing the id back is cheap for a
+ * human who is present and is the second thing an unattended caller cannot do.
+ */
+async function confirmAtTerminal(id: string): Promise<void> {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question(
+      `Approving ${id} says a human read the agent's understanding and agrees.\n` +
+        `Type ${id} to confirm: `,
+    );
+    if (answer.trim() !== id)
+      throw new Error(`${id}: not approved — the confirmation did not match`);
+  } finally {
+    rl.close();
+  }
 }
 
 /** Read from package.json so the flag cannot drift from what was published. */
@@ -792,8 +815,15 @@ export function buildProgram(): Command {
         id: string,
         options: { as?: string; answer?: string[]; correction?: string[]; json?: boolean },
       ): Promise<void> => {
+        // Presence is read off the process, never off `--as`: an agent can type
+        // any actor string, and did — `--as agent` used to write "decided by:
+        // agent (human)" straight into human-loop.md.
+        const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+        if (interactive) await confirmAtTerminal(id);
+
         const result = await approveEchoBack(root(), id, {
           actor: options.as ?? 'local',
+          presence: interactive ? 'interactive-tty' : 'unattended',
           decision: (options.correction ?? []).length > 0 ? 'corrected' : 'approved',
           answers: options.answer,
           corrections: options.correction,
@@ -959,6 +989,34 @@ export function buildProgram(): Command {
                 ...(item.concern === undefined ? [] : [`    ↳ ${item.concern}`]),
               ])
               .join('\n'),
+      );
+    });
+
+  const skills = program
+    .command('skills')
+    .description('the canonical skills and the agent surfaces they compile to (contract 04)');
+
+  skills
+    .command('doctor')
+    .description('check every canonical skill against every target before anything is written')
+    .option('--json', 'emit JSON')
+    .action((options: { json?: boolean }): void => {
+      const report = doctorSkills();
+      emit(report, options.json === true, (r: ReturnType<typeof doctorSkills>) => formatDoctor(r));
+      // An error-severity finding means a compile would drop something. Exiting
+      // non-zero is what lets this sit in a pre-commit hook or CI at all.
+      if (!report.ok) process.exitCode = 1;
+    });
+
+  skills
+    .command('compile')
+    .description('compile the canonical skills to the Claude Code surface')
+    .option('--dry-run', 'report what would be written without writing it')
+    .option('--json', 'emit JSON')
+    .action(async (options: { dryRun?: boolean; json?: boolean }): Promise<void> => {
+      const result = await compileSkills(root(), { dryRun: options.dryRun === true });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof compileSkills>>) =>
+        formatCompile(r, options.dryRun === true),
       );
     });
 

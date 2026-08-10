@@ -52,6 +52,19 @@ describe('parsing a work item', () => {
     expect(parsed.body).toBe('## Notes\n\nSome body.\n');
   });
 
+  it('carries keys the schema does not model through a rewrite', () => {
+    // Zod returns only the keys it knows, so serializing its output deletes
+    // everything else in the file. An ordinary `sdlc advance` was destroying
+    // hand-written frontmatter in a git-tracked card, and the result parsed
+    // cleanly — nothing anywhere reported a loss.
+    const rendered = renderWorkItem(
+      task({ owner: 'farasat', jira_ref: 'PROJ-4471' }),
+      '## Notes\n\nSome body.\n',
+    );
+    expect(rendered).toContain('owner: farasat');
+    expect(rendered).toContain('jira_ref: PROJ-4471');
+  });
+
   it('reports schema violations with field paths', () => {
     // status disagrees with lifecycle_state — a cross-field invariant.
     const bad = renderWorkItem.bind(null, task({ status: 'Done' }), 'body');
@@ -115,6 +128,17 @@ describe('writing', () => {
     );
     // Nothing was written.
     await expect(fs.stat(target)).rejects.toThrow();
+  });
+
+  it('carries unmodelled keys to disk, not just through render', async () => {
+    // `renderWorkItem` and `writeWorkItem` validate separately and serialize
+    // separately, so fixing one leaves the other still deleting the file's
+    // hand-written fields — and this is the path that actually touches disk.
+    const target = await tempFile();
+    await writeWorkItem(target, task({ owner: 'farasat', jira_ref: 'PROJ-4471' }), 'body\n');
+    const raw = await fs.readFile(target, 'utf8');
+    expect(raw).toContain('owner: farasat');
+    expect(raw).toContain('jira_ref: PROJ-4471');
   });
 
   it('reads back what it wrote', async () => {

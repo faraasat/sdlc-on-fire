@@ -86,7 +86,7 @@ describe('the gate in the transition path', () => {
 
   it('lifts the refusal once a human approved', async () => {
     await recordEchoBack(root, echo());
-    await approveEchoBack(root, 'FEAT-001', { actor: 'ana' });
+    await approveEchoBack(root, 'FEAT-001', { actor: 'ana', presence: 'interactive-tty' });
     const result = await advanceWorkItem(root, 'FEAT-001', { actor: 'ana' });
     expect(result.refusals.filter((reason) => reason.startsWith('echo-back:'))).toEqual([]);
   }, 60_000);
@@ -105,17 +105,46 @@ describe('the gate in the transition path', () => {
 });
 
 describe('approval', () => {
+  it('refuses to approve without a human at a terminal', async () => {
+    await recordEchoBack(root, echo());
+    // The hole this closes: `--as` is a string, so `sdlc echo approve --as agent`
+    // used to succeed and write "decided by: agent (human)" into human-loop.md.
+    // The one gate that breaks the agent-approves-its-own-understanding
+    // circularity was satisfiable by the agent. A TTY is a property of the
+    // process, not a claim the caller makes about itself.
+    await expect(
+      approveEchoBack(root, 'FEAT-001', { actor: 'agent', presence: 'unattended' }),
+    ).rejects.toThrow(/needs a human at a terminal/);
+    // Nothing written, so nothing downstream can read a half-approval as real.
+    expect(await readEchoApproval(root, 'FEAT-001')).toBeNull();
+  }, 60_000);
+
+  it('does not let an unattended approval unblock the transition', async () => {
+    await recordEchoBack(root, echo());
+    await approveEchoBack(root, 'FEAT-001', {
+      actor: 'agent',
+      presence: 'unattended',
+    }).catch(() => undefined);
+
+    const result = await advanceWorkItem(root, 'FEAT-001', { actor: 'agent' });
+    // The refusal must survive the attempt — a gate that stays shut only until
+    // something throws is not a gate.
+    expect(result.refusals.some((reason) => reason.startsWith('echo-back:'))).toBe(true);
+  }, 60_000);
+
   it('refuses to record an approval that skipped a question', async () => {
     await recordEchoBack(root, echo({ questions: ['Which currency?'], ambiguity: 'high' }));
-    await expect(approveEchoBack(root, 'FEAT-001', { actor: 'ana' })).rejects.toThrow(/unanswered/);
+    await expect(
+      approveEchoBack(root, 'FEAT-001', { actor: 'ana', presence: 'interactive-tty' }),
+    ).rejects.toThrow(/unanswered/);
     // And nothing was written, so a later read cannot find a half-approval.
     expect(await readEchoApproval(root, 'FEAT-001')).toBeNull();
   }, 60_000);
 
   it('refuses to approve an item that never restated anything', async () => {
-    await expect(approveEchoBack(root, 'FEAT-001', { actor: 'ana' })).rejects.toThrow(
-      /restate its understanding first/,
-    );
+    await expect(
+      approveEchoBack(root, 'FEAT-001', { actor: 'ana', presence: 'interactive-tty' }),
+    ).rejects.toThrow(/restate its understanding first/);
   }, 60_000);
 });
 
@@ -133,6 +162,7 @@ describe('the durable record (contracts/06)', () => {
     await recordEchoBack(root, echo());
     await approveEchoBack(root, 'FEAT-001', {
       actor: 'ana',
+      presence: 'interactive-tty',
       decision: 'corrected',
       corrections: ['it is TSV, not CSV'],
     });

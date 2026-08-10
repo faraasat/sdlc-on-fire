@@ -83,23 +83,56 @@ export interface ApproveResult {
 }
 
 /**
+ * How the caller established that a human is actually present.
+ *
+ * Not something the caller asserts about itself — `--as human` is a string an
+ * agent can type as easily as a person can, and it did: walking the v0.1 DoD by
+ * hand, `sdlc echo approve --as agent` succeeded and wrote **"decided by: agent
+ * (human)"** into `human-loop.md`. The schema made an agent-kind approval
+ * inexpressible; the CLI simply stamped `human` on whoever called it, so the one
+ * gate that exists to break the agent-approves-its-own-understanding circularity
+ * was satisfiable by the agent.
+ *
+ * An attached terminal is a property of the *process*, checked by the runtime —
+ * the deterministic disposer ADR-0040 asks for, in place of a claim. A dispatched
+ * agent runs with piped stdio and cannot produce one.
+ */
+export type HumanPresence =
+  /** stdin and stdout are both TTYs and the person confirmed at the prompt. */
+  | 'interactive-tty'
+  /** No terminal: a script, a CI job, or an agent. Cannot approve. */
+  | 'unattended';
+
+/**
  * Records a human's decision on a restated understanding.
  *
  * The approval is validated against the echo-back it answers, not accepted on
  * its own: an approval naming fewer answers than there were questions approves
  * an understanding nobody completed, and it is refused before anything is
  * written.
+ *
+ * `presence` is computed by the command layer from the process it is running in,
+ * never taken from an argument the caller supplies about itself.
  */
 export async function approveEchoBack(
   root: string,
   id: string,
   input: {
     readonly actor: string;
+    readonly presence: HumanPresence;
     readonly decision?: 'approved' | 'corrected' | undefined;
     readonly answers?: readonly string[] | undefined;
     readonly corrections?: readonly string[] | undefined;
   },
 ): Promise<ApproveResult> {
+  if (input.presence !== 'interactive-tty') {
+    throw new Error(
+      `${id}: approving an echo-back needs a human at a terminal, and this process does not have one. ` +
+        'This gate exists so an agent cannot approve its own understanding, and an agent runs exactly ' +
+        'like this — no TTY. Run `sdlc echo approve` yourself from an interactive shell.',
+    );
+  }
+
   const echo = await readEchoBack(root, id);
   if (echo === null) {
     throw new Error(
@@ -109,8 +142,8 @@ export async function approveEchoBack(
 
   const approval = ApprovalSchema.parse({
     actor: input.actor,
-    // Humans only, structurally (architecture §5). There is no flag here for a
-    // caller to set the other way.
+    // Humans only, structurally (architecture §5) — and now only reachable when
+    // the process actually has a human attached, checked above.
     actorKind: 'human',
     decision: input.decision ?? 'approved',
     answers: [...(input.answers ?? [])],
