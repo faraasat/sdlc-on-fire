@@ -22,11 +22,25 @@ import type { AgentTransport } from './dispatch.js';
 
 let dir: string;
 
+/**
+ * A spec output that satisfies the skill's contract, plus whatever this test
+ * wants to say. Payloads here used to be arbitrary objects; the output contract
+ * is now applied at the dispatch boundary, so a fixture that would be refused in
+ * production is no longer a useful stand-in for one that would not.
+ */
+const specOutput = (extra: Record<string, unknown>): Record<string, unknown> => ({
+  work_item_id: 'FEAT-001',
+  summary: 'CSV export',
+  acceptance_criteria: ['GIVEN a table WHEN exported THEN a .csv is written'],
+  non_goals: ['multi-currency'],
+  ...extra,
+});
+
 const transportReturning =
-  (output: unknown): AgentTransport =>
+  (output: Record<string, unknown>): AgentTransport =>
   () =>
     Promise.resolve({
-      stdout: `spec_output ${JSON.stringify(output)}`,
+      stdout: `spec_output ${JSON.stringify(specOutput(output))}`,
       stderr: '',
       exitCode: 0,
     });
@@ -47,7 +61,7 @@ afterAll(async () => {
 
 describe('what comes back to the parent', () => {
   it('returns the whole output when it is small', async () => {
-    const result = await dispatchIsolated(request, transportReturning({ title: 'CSV export' }), {
+    const result = await dispatchIsolated(request, transportReturning({}), {
       artifactDir: dir,
       runId: 'small',
     });
@@ -56,7 +70,7 @@ describe('what comes back to the parent', () => {
   });
 
   it('bounds a large output so the parent context does not absorb it', async () => {
-    const big = { notes: 'x'.repeat(50_000) };
+    const big = { open_questions: ['x'.repeat(50_000)] };
     const result = await dispatchIsolated(request, transportReturning(big), {
       artifactDir: dir,
       runId: 'big',
@@ -72,7 +86,7 @@ describe('what comes back to the parent', () => {
     // partial one — the reader stops looking for what is missing.
     const result = await dispatchIsolated(
       request,
-      transportReturning({ notes: 'y'.repeat(50_000) }),
+      transportReturning({ open_questions: ['y'.repeat(50_000)] }),
       { artifactDir: dir, runId: 'cut' },
     );
     expect(result.summary).toMatch(/truncated/);
@@ -84,20 +98,20 @@ describe('the pointer', () => {
   it('writes the complete output before anything is truncated', async () => {
     // A summary is not a place to lose data; a caller that wants the detail
     // must always be able to get it.
-    const big = { notes: 'z'.repeat(50_000) };
+    const big = { open_questions: ['z'.repeat(50_000)] };
     const result = await dispatchIsolated(request, transportReturning(big), {
       artifactDir: dir,
       runId: 'pointer',
     });
 
     const onDisk = JSON.parse(await fs.readFile(result.outputPath, 'utf8')) as typeof big;
-    expect(onDisk.notes).toHaveLength(50_000);
+    expect(onDisk.open_questions[0]).toHaveLength(50_000);
     expect(result.fullLength).toBeGreaterThan(50_000);
   });
 
   it('creates the artifact directory rather than failing on a fresh workspace', async () => {
     const fresh = path.join(dir, 'nested', 'run-1');
-    const result = await dispatchIsolated(request, transportReturning({ ok: 1 }), {
+    const result = await dispatchIsolated(request, transportReturning({}), {
       artifactDir: fresh,
       runId: 'nested',
     });
@@ -118,7 +132,7 @@ describe('per-stage budgets', () => {
   it('honours an explicit override', async () => {
     const result = await dispatchIsolated(
       request,
-      transportReturning({ notes: 'q'.repeat(10_000) }),
+      transportReturning({ open_questions: ['q'.repeat(10_000)] }),
       { artifactDir: dir, runId: 'override', summaryBudgetChars: 200 },
     );
     expect(result.summary.length).toBeLessThan(500);

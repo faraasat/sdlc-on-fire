@@ -431,7 +431,13 @@ export async function instructions(root: string, id: string): Promise<Instructio
       skill: null,
       reason:
         next === 'test'
-          ? 'The daemon runs verify at the test stage — no agent is dispatched.'
+          ? // Names the command, not the component. A blind evaluation read
+            // "the daemon runs verify", went looking for `sdlc daemon`, and
+            // found nothing — the long-running daemon is deferred past v0.1, so
+            // describing the mechanism by a name with no command behind it sent
+            // them hunting for something that does not exist. What actually runs
+            // verify today is this:
+            `No agent is dispatched at the test stage — run \`sdlc verify ${id}\`, which executes the card's own \`verify:\` command and records the result as evidence.`
           : `No skill drives the "${next}" stage in v0.1.`,
       context: null,
     };

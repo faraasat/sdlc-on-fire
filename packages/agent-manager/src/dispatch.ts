@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { resolveOutputSchema } from './skills/output-schemas.js';
 import type { CanonicalSkill } from '@sdlc-on-fire/core';
 import { fillSlots } from './prompt.js';
 
@@ -131,6 +132,31 @@ export function extractToolOutput(stdout: string, skill: CanonicalSkill): Record
       skill.name,
       marker,
       `output claims verification results (${forbidden.join(', ')}) — the daemon runs verify, not the agent`,
+    );
+  }
+
+  // The declared schema, actually applied. Until now `json_schema_ref` named a
+  // file that did not exist and nothing validated against it, so the "output
+  // contract" was a sentence in a prompt: an agent could emit any JSON object at
+  // all and the only rejection it risked was the forbidden-field guard above.
+  const schema = resolveOutputSchema(skill.output_contract.json_schema_ref);
+  if (schema === undefined) {
+    throw new OutputContractError(
+      skill.name,
+      marker,
+      `declares json_schema_ref "${skill.output_contract.json_schema_ref}", which resolves to nothing — ` +
+        'a contract that cannot be applied is not a contract',
+    );
+  }
+  const validated = schema.safeParse(output);
+  if (!validated.success) {
+    throw new OutputContractError(
+      skill.name,
+      marker,
+      `output does not satisfy ${skill.output_contract.json_schema_ref}: ` +
+        validated.error.issues
+          .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+          .join('; '),
     );
   }
 

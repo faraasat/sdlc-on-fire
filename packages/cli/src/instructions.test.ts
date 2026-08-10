@@ -103,7 +103,9 @@ describe('computing the next step', () => {
     const result = await instructions(root, 'TASK-001');
     expect(result.nextStage).toBe('test');
     expect(result.skill).toBeNull();
-    expect(result.reason).toMatch(/daemon runs verify/);
+    // The reason must name a command the user can actually run.
+    expect(result.reason).toMatch(/sdlc verify/);
+    expect(result.reason).not.toMatch(/\bdaemon\b/);
   });
 
   it('reports terminal rather than inventing a next stage', async () => {

@@ -227,7 +227,8 @@ describe('the walking skeleton, end to end', () => {
     // the compiled skill instead of leaving it on disk.
     const transport: AgentTransport = () =>
       Promise.resolve({
-        stdout: 'implement_output {"filesChanged":["src/csv.ts"],"summary":"Added CSV export."}',
+        stdout:
+          'implement_output {"work_item_id":"TASK-001","files_changed":["src/csv.ts"],"summary":"Added CSV export."}',
         stderr: '',
         exitCode: 0,
       });
@@ -249,7 +250,8 @@ describe('the walking skeleton, end to end', () => {
     // Refused at the dispatch boundary, before the claim can reach a run record.
     const lying: AgentTransport = () =>
       Promise.resolve({
-        stdout: 'implement_output {"summary":"done","testsPassed":true}',
+        stdout:
+          'implement_output {"work_item_id":"TASK-001","files_changed":["src/csv.ts"],"summary":"done","testsPassed":true}',
         stderr: '',
         exitCode: 0,
       });

@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claimWorkItem, init, instructions, listWorkItems } from './commands.js';
-import { advanceWorkItem, verifyWorkItem } from './advance.js';
+import { advanceWorkItem, reopenWorkItem, verifyWorkItem } from './advance.js';
 
 /**
  * The three routes a blind adversarial evaluation used to reach `done` with a
@@ -223,7 +223,7 @@ describe('the gate must not refuse work that is genuinely done', () => {
       expect(verified.ok).toBe(true);
 
       await claimWorkItem(bare, 'TASK-100', 'alice');
-      const moved = await advanceWorkItem(bare, 'TASK-100');
+      const moved = await advanceWorkItem(bare, 'TASK-100', { actor: 'alice' });
       // Asserting it *moved*, not merely that the wording changed: the previous
       // version of this test checked the refusal text and passed even with the
       // bug still in place.
@@ -248,5 +248,84 @@ describe('the gate must not refuse work that is genuinely done', () => {
     expect(reasons).toMatch(/re-run/);
     // "Run verify" would send the user to do what they already did.
     expect(reasons).not.toMatch(/no test evidence for/);
+  }, 180_000);
+});
+
+describe('retracting an unsupported claim', () => {
+  it('walks a fabricated done back to implement', async () => {
+    // Detection without remediation left the honest path harder than the
+    // dishonest one: the flag was permanent and the only way to correct it was
+    // to hand-edit the card — the same move that produced the false claim.
+    await writeCard('TASK-200', 'node test.js', 'done');
+    await setTest(true);
+
+    const before = await attestationOf('TASK-200');
+    expect(before.attestation).toBe('unsupported');
+
+    const result = await reopenWorkItem(root, 'TASK-200');
+    expect(result.reopened).toBe(true);
+    expect(result.to).toBe('implement');
+    expect(result.reason).toMatch(/no verify run was ever recorded/);
+
+    // And the card on disk actually moved — the mirror is not the source.
+    const card = await fs.readFile(path.join(root, 'kanban', '_inbox', 'TASK-200.md'), 'utf8');
+    expect(card).toContain('lifecycle_state: implement');
+  }, 180_000);
+
+  it('refuses to reopen a claim its evidence supports', async () => {
+    // A correction, not a general "move backwards": walking a legitimately-done
+    // item back is a lifecycle decision, and no evidence says it should happen.
+    await writeCard('TASK-201', 'node test.js');
+    await setTest(true);
+    await verifyWorkItem(root, 'TASK-201');
+    await writeCard('TASK-201', 'node test.js', 'done');
+    expect((await attestationOf('TASK-201')).attestation).toBe('supported');
+
+    const result = await reopenWorkItem(root, 'TASK-201');
+    expect(result.reopened).toBe(false);
+    expect(result.reason).toMatch(/its evidence supports that/);
+  }, 180_000);
+
+  it('refuses on an item that has claimed nothing', async () => {
+    await writeCard('TASK-202', 'node test.js');
+    const result = await reopenWorkItem(root, 'TASK-202');
+    expect(result.reopened).toBe(false);
+    expect(result.reason).toMatch(/nothing to retract/);
+  }, 180_000);
+});
+
+describe('claim ownership (v005)', () => {
+  it('refuses to advance an item someone else holds', async () => {
+    // The lease was enforced only between competing `claim` calls, and every
+    // command that actually did something to an item ignored who held it.
+    await writeCard('TASK-203', 'node test.js', 'test');
+    await setTest(true);
+    await claimWorkItem(root, 'TASK-203', 'bob');
+    await verifyWorkItem(root, 'TASK-203', { actor: 'bob' });
+
+    const result = await advanceWorkItem(root, 'TASK-203', { actor: 'alice' });
+    expect(result.moved).toBe(false);
+    expect(result.refusals.join('\n')).toMatch(/claimed by "bob", not by "alice"/);
+  }, 180_000);
+
+  it('refuses to record evidence against someone else’s item', async () => {
+    await writeCard('TASK-204', 'node test.js');
+    await setTest(true);
+    await claimWorkItem(root, 'TASK-204', 'bob');
+
+    await expect(verifyWorkItem(root, 'TASK-204', { actor: 'alice' })).rejects.toThrow(
+      /claimed by "bob"/,
+    );
+  }, 180_000);
+
+  it('lets the holder proceed', async () => {
+    await writeCard('TASK-205', 'node test.js', 'test');
+    await setTest(true);
+    await claimWorkItem(root, 'TASK-205', 'alice');
+    await verifyWorkItem(root, 'TASK-205', { actor: 'alice' });
+
+    const result = await advanceWorkItem(root, 'TASK-205', { actor: 'alice' });
+    expect(result.refusals).toEqual([]);
+    expect(result.moved).toBe(true);
   }, 180_000);
 });

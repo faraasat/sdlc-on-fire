@@ -79,7 +79,7 @@ describe('verify runs the command itself', () => {
     // "The tests failed" is the most important thing this can learn; throwing
     // would turn it into a stack trace instead of evidence.
     await setTest(false);
-    const result = await verifyWorkItem(root, 'TASK-001');
+    const result = await verifyWorkItem(root, 'TASK-001', { actor: 'tester' });
     expect(result.ok).toBe(false);
     expect(result.exitCode).not.toBe(0);
     expect(result.evidenceId).toBeGreaterThan(0);
@@ -87,7 +87,7 @@ describe('verify runs the command itself', () => {
 
   it('records evidence attributed to the daemon, never to an agent', async () => {
     await setTest(true);
-    const result = await verifyWorkItem(root, 'TASK-001');
+    const result = await verifyWorkItem(root, 'TASK-001', { actor: 'tester' });
     expect(result.ok).toBe(true);
     // `node test.js` prints no machine-readable report, so the honest summary is
     // "the command exited 0" — not "the tests passed", which we did not observe.
@@ -108,7 +108,7 @@ describe('verify runs the command itself', () => {
 describe('advance refuses without real, current evidence', () => {
   it('blocks when nothing has been verified', async () => {
     await claimWorkItem(root, 'TASK-001', 'tester');
-    const result = await advanceWorkItem(root, 'TASK-001');
+    const result = await advanceWorkItem(root, 'TASK-001', { actor: 'tester' });
 
     expect(result.moved).toBe(false);
     // The refusal must be actionable: naming the command that fixes it.
@@ -120,9 +120,9 @@ describe('advance refuses without real, current evidence', () => {
     // collapsing them sends the user to the wrong place.
     await claimWorkItem(root, 'TASK-001', 'tester');
     await setTest(false);
-    await verifyWorkItem(root, 'TASK-001');
+    await verifyWorkItem(root, 'TASK-001', { actor: 'tester' });
 
-    const result = await advanceWorkItem(root, 'TASK-001');
+    const result = await advanceWorkItem(root, 'TASK-001', { actor: 'tester' });
     expect(result.moved).toBe(false);
     expect(result.refusals.join(' ')).toMatch(/fix the code/);
   }, 120_000);
@@ -131,22 +131,22 @@ describe('advance refuses without real, current evidence', () => {
     // A refusal a user cannot act on teaches them the tool is broken rather
     // than strict, so the guard and its remedy ship together.
     await setTest(true);
-    await verifyWorkItem(root, 'TASK-001');
+    await verifyWorkItem(root, 'TASK-001', { actor: 'tester' });
 
-    const unclaimed = await advanceWorkItem(root, 'TASK-001');
+    const unclaimed = await advanceWorkItem(root, 'TASK-001', { actor: 'tester' });
     expect(unclaimed.refusals.join(' ')).toMatch(/no live claim/);
 
     await claimWorkItem(root, 'TASK-001', 'tester');
-    const claimed = await advanceWorkItem(root, 'TASK-001');
+    const claimed = await advanceWorkItem(root, 'TASK-001', { actor: 'tester' });
     expect(claimed.moved).toBe(true);
   }, 120_000);
 
   it('moves once the evidence is real and current, and rewrites the card', async () => {
     await claimWorkItem(root, 'TASK-001', 'tester');
     await setTest(true);
-    await verifyWorkItem(root, 'TASK-001');
+    await verifyWorkItem(root, 'TASK-001', { actor: 'tester' });
 
-    const result = await advanceWorkItem(root, 'TASK-001');
+    const result = await advanceWorkItem(root, 'TASK-001', { actor: 'tester' });
     expect(result.moved).toBe(true);
     expect(result.from).toBe('implement');
     expect(result.to).toBe('test');

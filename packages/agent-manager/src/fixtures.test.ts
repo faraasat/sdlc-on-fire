@@ -19,10 +19,12 @@ const fixture = (over: Partial<SkillFixture>): SkillFixture =>
   SkillFixtureSchema.parse({
     name: 'baseline',
     recordedOutput: `spec_output ${JSON.stringify({
-      title: 'CSV export',
+      work_item_id: 'FEAT-001',
+      summary: 'CSV export',
       acceptance_criteria: ['GIVEN a table WHEN export THEN a .csv is written'],
+      non_goals: ['multi-currency'],
     })}`,
-    assertions: [{ path: 'title', equals: 'CSV export' }],
+    assertions: [{ path: 'summary', equals: 'CSV export' }],
     ...over,
   });
 
@@ -35,7 +37,7 @@ describe('replaying a fixture', () => {
 
   it('fails with the actual value, not just "assertion failed"', () => {
     const result = runFixtures(SPEC_SKILL, [
-      fixture({ assertions: [{ path: 'title', equals: 'Something else' }] }),
+      fixture({ assertions: [{ path: 'summary', equals: 'Something else' }] }),
     ]);
     expect(result.ok).toBe(false);
     expect(result.failures[0]?.reason).toContain('CSV export');
@@ -44,11 +46,20 @@ describe('replaying a fixture', () => {
   it('checks presence separately from equality', () => {
     // An empty array is present-but-useless; the distinction matters for a
     // field like acceptance_criteria.
-    const empty = `spec_output ${JSON.stringify({ title: 'x', acceptance_criteria: [] })}`;
+    const empty = `spec_output ${JSON.stringify({
+      work_item_id: 'FEAT-001',
+      summary: 'x',
+      acceptance_criteria: ['GIVEN a WHEN b THEN c'],
+      non_goals: ['none'],
+      // Present and empty. `acceptance_criteria` can no longer be used to make
+      // this point — the output contract refuses an empty one outright — so the
+      // distinction is drawn on a field the schema does allow to be empty.
+      open_questions: [],
+    })}`;
     const result = runFixtures(SPEC_SKILL, [
       fixture({
         recordedOutput: empty,
-        assertions: [{ path: 'acceptance_criteria', present: true }],
+        assertions: [{ path: 'open_questions', present: true }],
       }),
     ]);
     expect(result.ok).toBe(false);
@@ -77,12 +88,18 @@ describe('fixtures that pin a rejection', () => {
   it('passes when the output is refused for the stated reason', () => {
     // The agent-claims-its-own-tests-passed refusal is behaviour worth
     // regression-testing, not just an implementation detail.
-    const lying = `spec_output ${JSON.stringify({ title: 'x', testsPassed: true })}`;
+    const lying = `spec_output ${JSON.stringify({
+      work_item_id: 'FEAT-001',
+      summary: 'x',
+      acceptance_criteria: ['GIVEN a WHEN b THEN c'],
+      non_goals: ['none'],
+      testsPassed: true,
+    })}`;
     const result = runFixtures(SPEC_SKILL, [
       fixture({
         recordedOutput: lying,
         expectsRejection: 'claims verification results',
-        assertions: [{ path: 'title', present: true }],
+        assertions: [{ path: 'summary', present: true }],
       }),
     ]);
     expect(result.ok).toBe(true);

@@ -9,7 +9,8 @@ import {
 } from '@sdlc-on-fire/core';
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import { defaultV01Policy, evaluateGate, persistEvidence } from '@sdlc-on-fire/evidence';
-import { findWorkItem, openWorkspaceDatabase } from './commands.js';
+import { findWorkItem, openWorkspaceDatabase, treeContext } from './commands.js';
+import { attestItem } from './attest.js';
 import { currentDirtyTreeHash, runVerify } from './verify.js';
 import { applySchema, PostgresStorageAdapter } from '@sdlc-on-fire/db';
 import {
@@ -74,7 +75,40 @@ async function verifyCommandFor(
   return { command, filePath: found.filePath };
 }
 
-export async function verifyWorkItem(root: string, id: string): Promise<VerifyCommandResult> {
+/**
+ * Refuses when someone else holds the claim.
+ *
+ * The claim was enforced only between competing `claim` calls: two actors could
+ * not both take an item, and then every command that actually *did* something to
+ * it ignored who held it. A lease nothing consults is a lease that prevents
+ * nothing — a blind evaluation walked items through their whole lifecycle
+ * without ever holding the claim, and the one guard that mentions claims only
+ * asked whether *a* claim existed, never whose.
+ *
+ * An unclaimed item is not refused. Claiming is how you announce work is yours,
+ * and requiring it to run a check would make looking at something cost more than
+ * taking it.
+ */
+async function assertClaimOwnership(
+  port: { claimOf(id: string): Promise<{ claimedBy: string } | null> },
+  id: string,
+  actor: string | undefined,
+): Promise<string | null> {
+  const held = await port.claimOf(id);
+  if (held === null) return null;
+  if (actor !== undefined && held.claimedBy === actor) return null;
+  return (
+    `${id} is claimed by "${held.claimedBy}"` +
+    (actor === undefined ? ' — pass `--as <actor>` to say who you are' : `, not by "${actor}"`) +
+    '. Wait for the lease to lapse, or take it over deliberately with `sdlc claim`.'
+  );
+}
+
+export async function verifyWorkItem(
+  root: string,
+  id: string,
+  options: { actor?: string | undefined } = {},
+): Promise<VerifyCommandResult> {
   const { command, filePath } = await verifyCommandFor(root, id);
   const { resolveWorkspaceLayout } = await import('@sdlc-on-fire/core');
   const layout = resolveWorkspaceLayout(root);
@@ -105,6 +139,11 @@ export async function verifyWorkItem(root: string, id: string): Promise<VerifyCo
       filePath: path.relative(layout.root, filePath),
       contentHash: 'pending',
     });
+
+    // Recording evidence against an item is a write to someone else's work.
+    // Running the check is free; attributing the result is not.
+    const ownership = await assertClaimOwnership(port, id, options.actor);
+    if (ownership !== null) throw new Error(ownership);
 
     // Link the evidence to *this* work item through a gate row. Persisting the
     // envelope alone left it unattached, and every later query was therefore
@@ -170,7 +209,11 @@ export interface AdvanceResult {
  * and leaving the card behind would make the two disagree, and the card would
  * win on the next sync.
  */
-export async function advanceWorkItem(root: string, id: string): Promise<AdvanceResult> {
+export async function advanceWorkItem(
+  root: string,
+  id: string,
+  options: { actor?: string | undefined } = {},
+): Promise<AdvanceResult> {
   const { resolveWorkspaceLayout } = await import('@sdlc-on-fire/core');
   const layout = resolveWorkspaceLayout(root);
   const found = await findWorkItem(layout.kanbanDir, id);
@@ -225,6 +268,12 @@ export async function advanceWorkItem(root: string, id: string): Promise<Advance
     });
 
     const refusals: string[] = [];
+
+    // 0. Whose work is this? Checked before the guards, because "you do not hold
+    // this item" is a more useful thing to be told than a gate verdict about an
+    // item that is not yours.
+    const ownership = await assertClaimOwnership(port, id, options.actor);
+    if (ownership !== null) refusals.push(`claim: ${ownership}`);
 
     // 1. Structural + invariant guards.
     const decision = await engine.canTransition(id, to);
@@ -360,6 +409,110 @@ export async function advanceWorkItem(root: string, id: string): Promise<Advance
     );
 
     return { workItemId: id, from, to, moved: true, refusals: [] };
+  } finally {
+    await db.close();
+  }
+}
+
+export interface ReopenResult {
+  readonly workItemId: string;
+  readonly from: string;
+  readonly to: string;
+  readonly reopened: boolean;
+  readonly reason: string;
+}
+
+/**
+ * `sdlc reopen` — the action an unsupported claim was missing.
+ *
+ * Attestation told the truth and offered nothing to do about it: a `done` with
+ * no passing evidence was flagged on every read, forever, and the only way to
+ * correct it was to hand-edit the card — the same move that produced the false
+ * claim in the first place. A tool that can detect a lie and cannot help you
+ * retract it has made the honest path harder than the dishonest one.
+ *
+ * It refuses on a *supported* claim. This is a correction, not a general "move
+ * backwards" command: walking a legitimately-done item back to `implement` is a
+ * lifecycle decision, and there is no evidence anywhere that says it should
+ * happen. Reversing an unsupported one needs no such judgement — the item's own
+ * evidence already says the claim was never true.
+ */
+export async function reopenWorkItem(
+  root: string,
+  id: string,
+  options: { actor?: string | undefined } = {},
+): Promise<ReopenResult> {
+  const { resolveWorkspaceLayout } = await import('@sdlc-on-fire/core');
+  const layout = resolveWorkspaceLayout(root);
+  const found = await findWorkItem(layout.kanbanDir, id);
+  if (found === null) throw new Error(`no work item with id "${id}" under ${layout.kanbanDir}`);
+
+  const parsed = parseFrontmatter(found.raw);
+  const data = parsed.data;
+  const from = typeof data['lifecycle_state'] === 'string' ? data['lifecycle_state'] : '';
+  const preset = (typeof data['preset'] === 'string' ? data['preset'] : 'standard') as Preset;
+  const workType = typeof data['work_type'] === 'string' ? data['work_type'] : 'feature';
+
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const port = await PostgresStorageAdapter.create(db);
+    await port.upsertWorkItem({
+      id,
+      type: typeof data['kind'] === 'string' ? data['kind'] : 'task',
+      title: typeof data['title'] === 'string' ? data['title'] : id,
+      status: kanbanColumnForStage(isLifecycleStage(from) ? from : 'implement'),
+      lifecycleState: from,
+      workType,
+      preset,
+      filePath: path.relative(layout.root, found.filePath),
+      contentHash: 'pending',
+    });
+
+    const ownership = await assertClaimOwnership(port, id, options.actor);
+    if (ownership !== null) {
+      return { workItemId: id, from, to: from, reopened: false, reason: `claim: ${ownership}` };
+    }
+
+    const attested = await attestItem(db, id, from, await treeContext(layout.root));
+    if (attested.attestation !== 'unsupported') {
+      return {
+        workItemId: id,
+        from,
+        to: from,
+        reopened: false,
+        reason:
+          attested.attestation === 'supported'
+            ? `${id} is "${from}" and its evidence supports that — reopening a legitimately-finished item is a lifecycle decision, not a correction`
+            : `${id} is at "${from}", which is not a terminal claim — there is nothing to retract`,
+      };
+    }
+
+    // Back to the last stage that produces something checkable, not to the very
+    // start. The work was done; what was never true is the claim that it passed.
+    const ladder = resolveRequiredStages(preset, workType) ?? [];
+    const to = ladder.includes('implement') ? 'implement' : (ladder[0] ?? 'implement');
+
+    // Same shape as `advance`: the card is rewritten, unmodelled frontmatter
+    // keys preserved, and the mirror follows on the next sync.
+    const rewritten = renderWorkItem(
+      {
+        ...data,
+        lifecycle_state: to,
+        status: kanbanColumnForStage(to),
+        updated_at: new Date().toISOString(),
+      } as never,
+      parsed.body.trim() + '\n',
+    );
+    await fs.writeFile(found.filePath, rewritten, 'utf8');
+
+    return {
+      workItemId: id,
+      from,
+      to,
+      reopened: true,
+      reason: attested.concern ?? 'the claim was not supported by evidence',
+    };
   } finally {
     await db.close();
   }

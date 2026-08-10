@@ -40,7 +40,7 @@ import {
   type InstructionsResult,
 } from './commands.js';
 import { advanceWorkItem } from './advance.js';
-import { verifyWorkItem } from './advance.js';
+import { reopenWorkItem, verifyWorkItem } from './advance.js';
 import { branchFor, type BranchResult } from './branch.js';
 
 export * from './commands.js';
@@ -385,9 +385,10 @@ export function buildProgram(): Command {
     .command('verify')
     .argument('<work-item-id>', 'the work item whose verify command to run')
     .description("run the work item's own verify command and record the result as evidence")
+    .option('--as <actor>', 'who is running the check', process.env['USER'] ?? 'local')
     .option('--json', 'emit JSON')
-    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
-      const result = await verifyWorkItem(root(), id);
+    .action(async (id: string, options: { as?: string; json?: boolean }): Promise<void> => {
+      const result = await verifyWorkItem(root(), id, { actor: options.as });
       emit(result, options.json === true, (r: Awaited<ReturnType<typeof verifyWorkItem>>) =>
         [
           `${r.workItemId}: ${r.summary}`,
@@ -403,9 +404,14 @@ export function buildProgram(): Command {
     .command('advance')
     .argument('<work-item-id>', 'the work item to move to its next stage')
     .description('move a work item to its next lifecycle stage, if the guards and gate allow it')
+    .option(
+      '--as <actor>',
+      'who is advancing it — must hold the claim',
+      process.env['USER'] ?? 'local',
+    )
     .option('--json', 'emit JSON')
-    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
-      const result = await advanceWorkItem(root(), id);
+    .action(async (id: string, options: { as?: string; json?: boolean }): Promise<void> => {
+      const result = await advanceWorkItem(root(), id, { actor: options.as });
       emit(result, options.json === true, (r: Awaited<ReturnType<typeof advanceWorkItem>>) =>
         r.moved
           ? `${r.workItemId}: ${r.from} → ${r.to}`
@@ -448,6 +454,26 @@ export function buildProgram(): Command {
         if (result.refusal !== undefined) process.exitCode = 1;
       },
     );
+
+  program
+    .command('reopen')
+    .argument('<work-item-id>', 'the work item whose terminal claim is not supported')
+    .description('retract a done/terminal claim that its own evidence does not support')
+    .option(
+      '--as <actor>',
+      'who is retracting it — must hold the claim',
+      process.env['USER'] ?? 'local',
+    )
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { as?: string; json?: boolean }): Promise<void> => {
+      const result = await reopenWorkItem(root(), id, { actor: options.as });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof reopenWorkItem>>) =>
+        r.reopened
+          ? `${r.workItemId}: ${r.from} → ${r.to}\n  reason: ${r.reason}`
+          : `${r.workItemId}: not reopened\n  ✗ ${r.reason}`,
+      );
+      if (!result.reopened) process.exitCode = 1;
+    });
 
   program
     .command('list')

@@ -29,10 +29,22 @@ async function writeFakeCli(name: string, body: string): Promise<string> {
   return file;
 }
 
+/**
+ * A real contract, not a stand-in. The output contract is applied at the
+ * dispatch boundary now, so a skill declaring a `json_schema_ref` that resolves
+ * to nothing cannot dispatch at all — which is the point, and would make a
+ * hand-rolled fixture here test a path production never takes.
+ *
+ * These tests are about plumbing (flags, envelope, stdin), so each probe rides
+ * in `open_questions`, a field the spec contract allows to hold anything.
+ */
 const skill = {
   name: 'spec',
   task: 'Write a spec for {{topic}}',
-  output_contract: { tool_name: 'emit_spec' },
+  output_contract: {
+    tool_name: 'emit_spec',
+    json_schema_ref: 'schemas/spec-output.schema.json',
+  },
 } as unknown as CanonicalSkill;
 
 const request = { skill, variables: { topic: 'CSV export' }, cwd: process.cwd() };
@@ -52,13 +64,17 @@ describe('claudeCodeTransport over a real process', () => {
       `const argv = process.argv.slice(2);
        process.stdout.write(JSON.stringify({
          type: 'result', subtype: 'success', is_error: false,
-         result: 'emit_spec ' + JSON.stringify({ argv }),
+         result: 'emit_spec ' + JSON.stringify({
+           work_item_id: 'FEAT-001', summary: 'CSV export',
+           acceptance_criteria: ['GIVEN a table WHEN exported THEN a .csv is written'],
+           non_goals: ['multi-currency'], open_questions: argv,
+         }),
          session_id: 'x', total_cost_usd: 0,
        }));`,
     );
 
     const result = await dispatchSkill(request, claudeCodeTransport(bin));
-    const argv = result.output['argv'] as string[];
+    const argv = result.output['open_questions'] as string[];
 
     expect(argv[0]).toBe('-p');
     // Slots must already be filled — the CLI receives the rendered prompt.
@@ -71,14 +87,18 @@ describe('claudeCodeTransport over a real process', () => {
       'wrapped.mjs',
       `process.stdout.write(JSON.stringify({
          type: 'result', subtype: 'success', is_error: false,
-         result: 'emit_spec ' + JSON.stringify({ title: 'CSV export', sections: 3 }),
+         result: 'emit_spec ' + JSON.stringify({
+           work_item_id: 'FEAT-001', summary: 'CSV export',
+           acceptance_criteria: ['GIVEN a table WHEN exported THEN a .csv is written'],
+           non_goals: ['multi-currency'],
+         }),
          session_id: 'abc123', total_cost_usd: 0.014,
        }));`,
     );
 
     const result = await dispatchSkill(request, claudeCodeTransport(bin));
 
-    expect(result.output).toEqual({ title: 'CSV export', sections: 3 });
+    expect(result.output).toMatchObject({ work_item_id: 'FEAT-001', summary: 'CSV export' });
     // The regression: envelope fields must never surface as skill output.
     expect(result.output).not.toHaveProperty('session_id');
     expect(result.output).not.toHaveProperty('total_cost_usd');
@@ -115,7 +135,11 @@ describe('claudeCodeTransport over a real process', () => {
       'liar.mjs',
       `process.stdout.write(JSON.stringify({
          type: 'result', subtype: 'success', is_error: false,
-         result: 'emit_spec ' + JSON.stringify({ title: 'x', testsPassed: true }),
+         result: 'emit_spec ' + JSON.stringify({
+           work_item_id: 'FEAT-001', summary: 'x',
+           acceptance_criteria: ['GIVEN a WHEN b THEN c'],
+           non_goals: ['none'], testsPassed: true,
+         }),
          session_id: 'x', total_cost_usd: 0,
        }));`,
     );
@@ -137,14 +161,18 @@ describe('claudeCodeTransport over a real process', () => {
        process.stdin.on('end', () => {
          process.stdout.write(JSON.stringify({
            type: 'result', subtype: 'success', is_error: false,
-           result: 'emit_spec ' + JSON.stringify({ stdinBytes: seen.length }),
+           result: 'emit_spec ' + JSON.stringify({
+             work_item_id: 'FEAT-001', summary: 'CSV export',
+             acceptance_criteria: ['GIVEN a table WHEN exported THEN a .csv is written'],
+             non_goals: ['multi-currency'], open_questions: [String(seen.length)],
+           }),
            session_id: 'x', total_cost_usd: 0,
          }));
        });`,
     );
 
     const result = await dispatchSkill({ ...request, timeoutMs: 10_000 }, claudeCodeTransport(bin));
-    expect(result.output).toEqual({ stdinBytes: 0 });
+    expect(result.output['open_questions']).toEqual(['0']);
   });
 
   it('reports the target own message rather than its subtype', async () => {

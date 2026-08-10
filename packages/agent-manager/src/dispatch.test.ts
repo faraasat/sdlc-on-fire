@@ -15,12 +15,13 @@ function transport(stdout: string, exitCode = 0): AgentTransport {
   return () => Promise.resolve({ stdout, stderr: '', exitCode });
 }
 
-const goodOutput = 'implement_output {"filesChanged":["src/csv.ts"],"summary":"Added export."}';
+const goodOutput = `implement_output {"work_item_id":"TASK-001","summary":"Added export.","files_changed":["src/csv.ts"]}`;
 
 describe('output extraction', () => {
   it('pulls the payload after the declared tool name', () => {
     expect(extractToolOutput(goodOutput, IMPLEMENT_SKILL)).toEqual({
-      filesChanged: ['src/csv.ts'],
+      work_item_id: 'TASK-001',
+      files_changed: ['src/csv.ts'],
       summary: 'Added export.',
     });
   });
@@ -43,7 +44,12 @@ describe('output extraction', () => {
   });
 
   it('refuses a non-object payload', () => {
-    expect(() => extractToolOutput('implement_output {"a":1}[1,2]', IMPLEMENT_SKILL)).not.toThrow();
+    expect(() =>
+      extractToolOutput(
+        `implement_output {"work_item_id":"TASK-001","summary":"Added export.","files_changed":["src/csv.ts"]}[1,2]`,
+        IMPLEMENT_SKILL,
+      ),
+    ).not.toThrow();
     expect(() => extractToolOutput('implement_output []', IMPLEMENT_SKILL)).toThrow(
       OutputContractError,
     );
@@ -53,13 +59,16 @@ describe('output extraction', () => {
 describe('the agent cannot self-report verification', () => {
   it.each(FORBIDDEN_OUTPUT_FIELDS)('rejects an output claiming %s', (field) => {
     // The whole product in one assertion: the daemon runs verify, not the agent.
-    const payload = `implement_output {"summary":"done","${field}":true}`;
+    const payload = `implement_output {"work_item_id":"TASK-001","summary":"done","files_changed":["a.ts"],"${field}":true}`;
     expect(() => extractToolOutput(payload, IMPLEMENT_SKILL)).toThrow(OutputContractError);
   });
 
   it('names the offending field so the skill author can fix it', () => {
     try {
-      extractToolOutput('implement_output {"verified":true}', IMPLEMENT_SKILL);
+      extractToolOutput(
+        'implement_output {"work_item_id":"TASK-001","summary":"d","files_changed":["a.ts"],"verified":true}',
+        IMPLEMENT_SKILL,
+      );
       expect.unreachable();
     } catch (error) {
       expect((error as OutputContractError).message).toContain('verified');
@@ -68,7 +77,7 @@ describe('the agent cannot self-report verification', () => {
   });
 
   it('accepts an honest report of what was changed', () => {
-    expect(extractToolOutput(goodOutput, IMPLEMENT_SKILL)).toHaveProperty('filesChanged');
+    expect(extractToolOutput(goodOutput, IMPLEMENT_SKILL)).toHaveProperty('files_changed');
   });
 });
 
