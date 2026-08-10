@@ -72,6 +72,15 @@ export interface GitManager {
    * "nothing" while several hundred files have in fact moved.
    */
   changedInCommit(ref?: string): Promise<string[]>;
+  /**
+   * The commit evidence is bound to.
+   *
+   * Returns 40 zeroes on a repo with no commits yet. A sentinel rather than a
+   * throw, because "no commits" is a normal state for a workspace someone just
+   * initialised, and evidence produced there is simply always stale — which is
+   * the correct outcome, not an error.
+   */
+  headSha(): Promise<string>;
   /** Changed paths split into tool-managed bookkeeping and product code. */
   classifyWorkingTree(): Promise<ClassifiedChanges>;
   diff(paths?: readonly string[]): Promise<string>;
@@ -163,9 +172,19 @@ export function createGitManager(options: GitManagerOptions): GitManager {
       .filter((line) => line.length > 0);
   }
 
+  async function headSha(): Promise<string> {
+    await assertRepo();
+    try {
+      return (await git.revparse(['HEAD'])).trim();
+    } catch {
+      return '0'.repeat(40);
+    }
+  }
+
   return {
     repoRoot,
     changedInCommit,
+    headSha,
 
     async isRepo(): Promise<boolean> {
       return git.checkIsRepo();

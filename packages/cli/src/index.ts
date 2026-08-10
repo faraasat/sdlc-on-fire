@@ -10,6 +10,8 @@ import {
   corePackage,
   formatWorkItemId,
   kanbanColumnForStage,
+  PRESETS,
+  PresetSchema,
   resolveRequiredStages,
   resolveWorkspaceLayout,
   WORK_ITEM_ID_PREFIX,
@@ -26,10 +28,14 @@ import {
   rebuild,
   syncBatch,
   hooksInstall,
+  listWorkItems,
+  claimWorkItem,
   showConfig,
   status,
   type InstructionsResult,
 } from './commands.js';
+import { advanceWorkItem } from './advance.js';
+import { verifyWorkItem } from './advance.js';
 
 export * from './commands.js';
 
@@ -126,7 +132,18 @@ export function buildProgram(): Command {
           );
         }
         const typedKind = kind as keyof typeof WORK_ITEM_ID_PREFIX;
-        const preset = (options.preset ?? 'standard') as Preset;
+
+        // Validate rather than cast. Casting an unrecognised preset let it reach
+        // the ladder resolver, which returned undefined and crashed with a raw
+        // TypeError several frames later — an error that named neither the flag
+        // nor the valid values.
+        const presetParsed = PresetSchema.safeParse(options.preset ?? 'standard');
+        if (!presetParsed.success) {
+          throw new Error(
+            `unknown preset "${String(options.preset)}" — expected one of ${PRESETS.join(', ')}`,
+          );
+        }
+        const preset: Preset = presetParsed.data;
         // An atomic task gets the task effort profile (ADR-0070); everything
         // else keeps the profile matching its kind.
         const workType = typedKind === 'bug' ? 'bug' : typedKind === 'task' ? 'task' : 'feature';
@@ -223,6 +240,9 @@ export function buildProgram(): Command {
           ...r.failed.map((f) => `    ! ${f.relativePath}: ${f.error}`),
         ].join('\n'),
       );
+      // A rebuild that silently exits 0 with failures reads as success in any
+      // script that checks the exit code, which is every script.
+      if (result.failed.length > 0) process.exitCode = 1;
     });
 
   program
@@ -255,6 +275,86 @@ export function buildProgram(): Command {
           ...r.installed.map((hook) => `  + ${hook}`),
           ...r.skipped.map((entry) => `  ~ ${entry.hook} skipped — ${entry.reason}`),
         ].join('\n'),
+      );
+    });
+
+  program
+    .command('claim')
+    .argument('<work-item-id>', 'the work item to claim')
+    .option('--as <actor>', 'who is claiming it', process.env['USER'] ?? 'local')
+    .option('--minutes <n>', 'lease length in minutes', '60')
+    .description('take a work item before starting on it, so two actors cannot both own it')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        options: { as?: string; minutes?: string; json?: boolean },
+      ): Promise<void> => {
+        const result = await claimWorkItem(
+          root(),
+          id,
+          options.as ?? 'local',
+          Number.parseInt(options.minutes ?? '60', 10),
+        );
+        emit(result, options.json === true, (r: Awaited<ReturnType<typeof claimWorkItem>>) =>
+          r.granted
+            ? `${r.workItemId} claimed by ${r.claimedBy} until ${r.leaseExpiresAt}`
+            : `${r.workItemId} is already held by ${r.heldBy ?? '(unknown)'}`,
+        );
+        if (!result.granted) process.exitCode = 1;
+      },
+    );
+
+  program
+    .command('verify')
+    .argument('<work-item-id>', 'the work item whose verify command to run')
+    .description("run the work item's own verify command and record the result as evidence")
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
+      const result = await verifyWorkItem(root(), id);
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof verifyWorkItem>>) =>
+        [
+          `${r.workItemId}: ${r.summary}`,
+          `  command:  ${r.command}`,
+          `  exit:     ${String(r.exitCode)}  (${String(r.durationMs)}ms)`,
+          `  evidence: #${String(r.evidenceId)} recorded by the daemon, not claimed by an agent`,
+        ].join('\n'),
+      );
+      if (!result.ok) process.exitCode = 1;
+    });
+
+  program
+    .command('advance')
+    .argument('<work-item-id>', 'the work item to move to its next stage')
+    .description('move a work item to its next lifecycle stage, if the guards and gate allow it')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
+      const result = await advanceWorkItem(root(), id);
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof advanceWorkItem>>) =>
+        r.moved
+          ? `${r.workItemId}: ${r.from} → ${r.to}`
+          : [
+              `${r.workItemId}: BLOCKED at "${r.from}"${r.to === null ? '' : ` (wanted "${r.to}")`}`,
+              ...r.refusals.map((reason) => `  ✗ ${reason}`),
+            ].join('\n'),
+      );
+      if (!result.moved) process.exitCode = 1;
+    });
+
+  program
+    .command('list')
+    .description('list work items in the mirror')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await listWorkItems(root());
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof listWorkItems>>) =>
+        r.items.length === 0
+          ? 'No work items yet. Create one with `sdlc new feature "..."`.'
+          : r.items
+              .map(
+                (item) => `${item.id.padEnd(12)} ${item.lifecycleState.padEnd(16)} ${item.title}`,
+              )
+              .join('\n'),
       );
     });
 

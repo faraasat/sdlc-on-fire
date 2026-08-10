@@ -76,6 +76,36 @@ export interface SyncEngineOptions {
   readonly usePolling?: boolean | undefined;
 }
 
+/**
+ * Turns a driver error into something a user can act on.
+ *
+ * A constraint violation surfaces as `violates check constraint
+ * "work_items_type_check"` — accurate, and useless to someone who has never
+ * seen our schema. They wrote a card; they need to know which field of that
+ * card is wrong, not which constraint object rejected it.
+ */
+function explainSyncFailure(cause: unknown): string {
+  const raw = cause instanceof Error ? cause.message : String(cause);
+
+  const constraint = /violates check constraint "([a-z_]+)"/.exec(raw);
+  if (constraint !== null) {
+    const name = constraint[1] ?? '';
+    if (name.includes('type')) {
+      return 'its `kind` is not one of epic, story, feature, bug, task';
+    }
+    if (name.includes('preset')) {
+      return 'its `preset` is not one of lite, standard, strict';
+    }
+    return `a field failed validation (${name})`;
+  }
+
+  if (/violates foreign key constraint/.test(raw) && /lifecycle_state/.test(raw)) {
+    return 'its `lifecycle_state` is not a known lifecycle stage';
+  }
+
+  return raw;
+}
+
 /** Work-item ID → the `work_items` row; anything else lands in `docs`. */
 function classify(relativePath: string): 'work_item' | 'doc' {
   return relativePath.replace(/\\/g, '/').startsWith('kanban/') ? 'work_item' : 'doc';
@@ -321,10 +351,11 @@ export class SyncEngine {
         try {
           outcomes.push(await this.syncFile(full));
         } catch (cause) {
+          const relative = path.relative(this.#root, full).replace(/\\/g, '/');
           outcomes.push({
-            relativePath: path.relative(this.#root, full).replace(/\\/g, '/'),
+            relativePath: relative,
             action: 'failed',
-            error: cause instanceof Error ? cause.message : String(cause),
+            error: explainSyncFailure(cause),
           });
         }
       }

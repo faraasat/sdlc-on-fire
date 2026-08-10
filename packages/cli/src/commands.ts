@@ -170,6 +170,29 @@ export async function status(root: string, store?: StatusStore): Promise<StatusR
 
   let workItems: number | null = null;
   let docs: number | null = null;
+
+  // Open the mirror ourselves when no store was injected. Previously this
+  // reported "(daemon not running)" on every single invocation — including
+  // immediately after `db:rebuild` printed real, non-zero counts — which told a
+  // user the tool was broken when it was merely not looking.
+  let opened: { close(): Promise<void> } | undefined;
+  if (store === undefined && config !== null) {
+    try {
+      const handle = await openWorkspaceDatabase(root);
+      opened = handle.db;
+      // A workspace can be initialised without ever having been synced, so the
+      // tables may not exist yet. `applySchema` is idempotent and cheap on an
+      // already-migrated database; without it, `status` on a fresh workspace
+      // fails with `relation "work_items" does not exist`.
+      await applySchema(handle.db);
+      store = handle.db;
+    } catch {
+      // Genuinely unreachable (locked by a running daemon, bad connection
+      // string). `null` counts below then mean "could not look", which is the
+      // honest answer and distinct from "there are none".
+    }
+  }
+
   if (store) {
     const wi = await store.query<{ count: number }>(
       'SELECT count(*)::int AS count FROM work_items;',
@@ -178,6 +201,8 @@ export async function status(root: string, store?: StatusStore): Promise<StatusR
     workItems = wi[0]?.count ?? 0;
     docs = d[0]?.count ?? 0;
   }
+
+  await opened?.close();
 
   return {
     root: layout.root,
@@ -501,6 +526,108 @@ export async function syncBatch(root: string, since = 'HEAD'): Promise<SyncBatch
 export async function hooksInstall(root: string): Promise<InstallHooksResult & { root: string }> {
   const layout = resolveWorkspaceLayout(root);
   return { root: layout.root, ...(await installGitHooks(layout.root)) };
+}
+
+export interface WorkItemListing {
+  readonly id: string;
+  readonly title: string;
+  readonly lifecycleState: string;
+  readonly status: string;
+  readonly filePath: string;
+}
+
+/**
+ * `sdlc list` — what is in the mirror.
+ *
+ * Syncs first. A list command that reported only what a previous sync happened
+ * to catch would be answering a different question from the one asked, and the
+ * first thing a user does after creating a work item is look for it.
+ */
+export async function listWorkItems(root: string): Promise<{ items: readonly WorkItemListing[] }> {
+  const layout = resolveWorkspaceLayout(root);
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const port = await PostgresStorageAdapter.create(db);
+    await rebuildMirror(layout.root, port);
+
+    const rows = await db.query<{
+      id: string;
+      title: string;
+      lifecycle_state: string;
+      status: string;
+      file_path: string;
+    }>('SELECT id, title, lifecycle_state, status, file_path FROM work_items ORDER BY id;');
+
+    return {
+      items: rows.map((row) => ({
+        id: row.id,
+        title: row.title,
+        lifecycleState: row.lifecycle_state,
+        status: row.status,
+        filePath: row.file_path,
+      })),
+    };
+  } finally {
+    await db.close();
+  }
+}
+
+export interface ClaimResult {
+  readonly workItemId: string;
+  readonly claimedBy: string;
+  readonly leaseExpiresAt: string;
+  readonly granted: boolean;
+  readonly heldBy?: string | undefined;
+}
+
+/**
+ * `sdlc claim` — take the work item before starting on it (ADR-0048).
+ *
+ * Exists because the invariant guard that requires a claim otherwise creates a
+ * dead end: the tool refuses to advance, names the claim as the reason, and
+ * offers no way to acquire one. A refusal a user cannot act on is worse than no
+ * refusal at all — it teaches them the tool is broken rather than strict.
+ */
+export async function claimWorkItem(
+  root: string,
+  id: string,
+  actor: string,
+  leaseMinutes = 60,
+): Promise<ClaimResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const port = await PostgresStorageAdapter.create(db);
+    await rebuildMirror(layout.root, port);
+
+    const state = await port.claim({
+      workItemId: id,
+      actor,
+      kind: 'human',
+      leaseMs: leaseMinutes * 60_000,
+    });
+
+    if (state === null) {
+      const held = await port.claimOf(id);
+      return {
+        workItemId: id,
+        claimedBy: actor,
+        leaseExpiresAt: '',
+        granted: false,
+        heldBy: held?.claimedBy ?? '(unknown — the work item may not exist)',
+      };
+    }
+    return {
+      workItemId: id,
+      claimedBy: state.claimedBy,
+      leaseExpiresAt: state.leaseExpiresAt,
+      granted: true,
+    };
+  } finally {
+    await db.close();
+  }
 }
 
 export interface ConfigResult {
