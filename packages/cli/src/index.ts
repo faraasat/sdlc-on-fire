@@ -2,7 +2,9 @@
 // in the source too produces a duplicate on line 2 of the bundle, which is a
 // syntax error — and one that no unit test can see, because tests import the
 // module rather than executing the built binary.
+import { existsSync } from 'node:fs';
 import { Command } from 'commander';
+import { createRequire } from 'node:module';
 import { agentManagerPackage } from '@sdlc-on-fire/agent-manager';
 import { daemonPackage } from '@sdlc-on-fire/daemon';
 import { dbPackage } from '@sdlc-on-fire/db';
@@ -71,15 +73,36 @@ function emit(value: unknown, json: boolean, human: (value: never) => string): v
   process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${human(value as never)}\n`);
 }
 
+/** Read from package.json so the flag cannot drift from what was published. */
+const CLI_VERSION: string = (
+  createRequire(import.meta.url)('../package.json') as { version: string }
+).version;
+
 export function buildProgram(): Command {
   const program = new Command();
 
   program
     .name('sdlc')
     .description('SDLC on Fire — a daemon that will not let the agent lie')
+    // `--version` is the first thing anyone types at an unfamiliar CLI, and its
+    // absence reads as an unfinished tool before a single real command is run.
+    .version(CLI_VERSION, '-v, --version', 'print the version and exit')
     .option('-C, --cwd <path>', 'run against a different workspace root', process.cwd());
 
-  const root = (): string => String(program.opts()['cwd'] ?? process.cwd());
+  /**
+   * The workspace root, verified to exist.
+   *
+   * A typo'd `-C` previously reported `initialised: no` for a path that was not
+   * there at all — indistinguishable from a real but empty directory, and the
+   * wrong answer to give someone who has just mistyped a path.
+   */
+  const root = (): string => {
+    const value = String(program.opts()['cwd'] ?? process.cwd());
+    if (!existsSync(value)) {
+      throw new Error(`no such directory: ${value} (from -C/--cwd)`);
+    }
+    return value;
+  };
 
   program
     .command('init')
