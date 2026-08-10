@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ResourceLimitsSchema } from './resource-limits.js';
 
 /**
  * Sandbox tiers for the daemon's shell-exec path (P1-SEC-02, ADR-0036).
@@ -57,13 +58,22 @@ export const SandboxConfigSchema = z
       .prefault({}),
     /** Declared, not yet enforced — P1-SEC-03. Reported as such. */
     network: z.object({ allowedDomains: z.array(z.string().min(1)).default([]) }).prefault({}),
-    /** Declared, not yet enforced — P1-SEC-03. Reported as such. */
+    /**
+     * Credentials the sandboxed process must not hold (P1-SEC-03).
+     *
+     * `envVars` are replaced with per-session sentinels — a command that
+     * exfiltrates its whole environment exfiltrates worthless strings. `files`
+     * is still declared-and-unenforced: masking a file needs the egress proxy
+     * that substitutes the real value back, and that proxy is not built.
+     */
     credentials: z
       .object({
         files: z.array(z.string().min(1)).default([]),
         envVars: z.array(z.string().min(1)).default([]),
       })
       .prefault({}),
+    /** Wall-clock, output and (Linux) memory bounds for a run (P1-SEC-04). */
+    limits: ResourceLimitsSchema,
   })
   .strict()
   .prefault({});
@@ -105,9 +115,11 @@ export function resolveSandbox(
 ): SandboxResolution {
   const unenforced: string[] = [];
   if (config.network.allowedDomains.length > 0) unenforced.push('network.allowedDomains');
-  if (config.credentials.files.length > 0 || config.credentials.envVars.length > 0) {
-    unenforced.push('credentials');
-  }
+  // `envVars` masking is enforced (P1-SEC-03); `files` masking still needs the
+  // egress proxy, so only that half is reported unenforced. Reporting both
+  // would have understated what is actually in force, which is its own kind of
+  // dishonesty.
+  if (config.credentials.files.length > 0) unenforced.push('credentials.files');
 
   if (config.tier === 'none') {
     return {

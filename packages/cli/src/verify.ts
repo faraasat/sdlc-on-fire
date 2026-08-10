@@ -7,11 +7,12 @@ import { promisify } from 'node:util';
 import { EvidenceEnvelopeSchema, type EvidenceEnvelope } from '@sdlc-on-fire/core';
 import { parseRunnerOutput, parseVitestJson, payloadHash } from '@sdlc-on-fire/evidence';
 import {
+  maskEnvironment,
   SandboxConfigSchema,
   type SandboxConfig,
   type SandboxResolution,
 } from '@sdlc-on-fire/core';
-import { sandboxCommand } from '@sdlc-on-fire/daemon';
+import { runGuarded, sandboxCommand, type GuardedRun } from '@sdlc-on-fire/daemon';
 
 /**
  * Running the work item's own `verify:` command (P1-GATE-01 wiring).
@@ -40,6 +41,8 @@ export interface VerifyOutcome {
   readonly envelope: EvidenceEnvelope;
   /** What confinement was actually applied, and why. Never inferred by a caller. */
   readonly sandbox: SandboxResolution;
+  /** Whether the watchdog cut the run short, and how. */
+  readonly limitOutcome: 'completed' | 'timeout' | 'output-exceeded';
 }
 
 /**
@@ -129,34 +132,54 @@ export async function runVerify(input: {
   readonly sandbox?: SandboxConfig | undefined;
 }): Promise<VerifyOutcome> {
   const startedAt = Date.now();
-  let stdout: string;
+  let stdout = '';
   let stderr: string;
-  let exitCode = 0;
+  let exitCode: number;
 
   // The sandbox is a backstop, not a replacement for judgement about what to
   // run: the boundary holds regardless of what command the card declared. It
   // never degrades silently — `resolution` records what was actually applied,
   // and the envelope carries it, so evidence cannot imply a confinement that
   // was not in force.
+  const sandboxConfig = input.sandbox ?? SandboxConfigSchema.parse({});
+  let guarded: GuardedRun | undefined;
   const sandboxed = await sandboxCommand({
     command: input.command,
     workspaceRoot: input.cwd,
-    config: input.sandbox ?? SandboxConfigSchema.parse({}),
+    config: sandboxConfig,
   });
 
+  // Credentials the command must not hold become per-session sentinels, so a
+  // run that exfiltrates its whole environment exfiltrates worthless strings
+  // (P1-SEC-03). This holds whatever the model decided to run, which is a
+  // different kind of protection from having told it not to.
+  const masked = maskEnvironment(
+    process.env,
+    sandboxConfig.credentials.envVars,
+    `${input.gitSha}:${String(startedAt)}`,
+  );
+
   try {
-    const result = await run(sandboxed.cmd, [...sandboxed.args], {
+    // The watchdog, not `execFile`'s timeout: it kills the whole process group,
+    // and a `pnpm test` that spawns workers otherwise leaves them running with
+    // their parent gone (P1-SEC-04, ADR-0036).
+    const result = await runGuarded(sandboxed.cmd, sandboxed.args, {
       cwd: input.cwd,
-      timeout: input.timeoutMs ?? 600_000,
-      maxBuffer: 32 * 1024 * 1024,
+      limits: {
+        ...sandboxConfig.limits,
+        ...(input.timeoutMs === undefined
+          ? {}
+          : { timeoutSeconds: Math.ceil(input.timeoutMs / 1000) }),
+      },
+      env: masked.env,
     });
     stdout = result.stdout;
     stderr = result.stderr;
+    exitCode = result.exitCode;
+    guarded = result;
   } catch (cause) {
-    const error = cause as { stdout?: string; stderr?: string; code?: number };
-    stdout = error.stdout ?? '';
-    stderr = error.stderr ?? String(cause);
-    exitCode = typeof error.code === 'number' ? error.code : 1;
+    stderr = String(cause);
+    exitCode = 1;
   } finally {
     await sandboxed.cleanup?.();
   }
@@ -230,5 +253,9 @@ export async function runVerify(input: {
     durationMs,
     envelope,
     sandbox: sandboxed.resolution,
+    // Reported, never inferred: a run cut short by the watchdog is not a failing
+    // test suite, and conflating them would send someone to debug code that was
+    // never given time to finish.
+    limitOutcome: guarded?.outcome ?? 'completed',
   };
 }

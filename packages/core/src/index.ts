@@ -21,6 +21,8 @@ export * from './workspace.js';
 export * from './storage-port.js';
 export * from './capabilities.js';
 export * from './idempotency.js';
+export * from './credential-mask.js';
+export * from './resource-limits.js';
 export * from './sandbox.js';
 export * from './skill.js';
 export * from './subagent-caps.js';
