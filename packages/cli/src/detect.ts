@@ -1,6 +1,7 @@
 import {
   detectAll,
   OpenSpecParser,
+  SpecKitParser,
   type DetectionResult,
   type ToolParser,
 } from '@sdlc-on-fire/importers';
@@ -22,7 +23,7 @@ import {
  */
 
 /** Every parser the build knows about. Grows one entry per P2-IMP-0{3..6}. */
-export const ALL_PARSERS: readonly ToolParser[] = [new OpenSpecParser()];
+export const ALL_PARSERS: readonly ToolParser[] = [new OpenSpecParser(), new SpecKitParser()];
 
 export interface DetectResult {
   readonly root: string;
