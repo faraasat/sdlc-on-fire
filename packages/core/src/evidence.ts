@@ -29,6 +29,14 @@ export const EVIDENCE_KINDS = [
   'typecheck',
   'build',
   'security-scan',
+  /**
+   * A review someone actually performed (P1-GATE-03 hardening, from v007).
+   *
+   * A review *is* evidence about a change, so it lives with the rest rather than
+   * in a parallel structure — which means it inherits per-item scoping, the
+   * staleness re-check, and the rule that `agent-claim` can never gate.
+   */
+  'review',
   'knowledge-claim',
   'mutation-score',
   'flakiness-repeat',

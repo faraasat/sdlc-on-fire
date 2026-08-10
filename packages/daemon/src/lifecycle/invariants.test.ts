@@ -48,6 +48,28 @@ const record = async (id: string, to: string) =>
     [id, to],
   );
 
+/** Records an actual human review artifact, the thing `review-before-done` wants. */
+const recordReview = async (id: string): Promise<void> => {
+  const rows = await db.query<{ id: number }>(
+    `INSERT INTO evidence (kind, producer, git_sha, env, content_hash, confidence, produced_at, payload)
+     VALUES ('review', 'human', $1, '{}'::jsonb, $2, 0.9, now(), $3::jsonb) RETURNING id;`,
+    [
+      'a'.repeat(40),
+      'c'.repeat(64),
+      JSON.stringify({ reviewer: 'bob', findings: ['x'], ok: true }),
+    ],
+  );
+  const gate = await db.query<{ id: number }>(
+    `INSERT INTO gates (work_item_id, gate_name, result, evaluated_at)
+     VALUES ($1, 'review', 'pass', now()) RETURNING id;`,
+    [id],
+  );
+  await db.query('INSERT INTO gate_evidence (gate_id, evidence_id) VALUES ($1,$2);', [
+    gate[0]?.id,
+    rows[0]?.id,
+  ]);
+};
+
 beforeAll(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'invariants-'));
   db = await provisionPglite({ workspaceRoot: root });
@@ -149,10 +171,22 @@ describe('review-before-done', () => {
     if (!decision.allowed) expect(decision.guard).toBe('review-before-done');
   });
 
-  it('allows done once the review transition is on record', async () => {
+  it('allows done once a review was actually recorded', async () => {
+    // A *transition* into review is not a review. A blind evaluator satisfied
+    // the old version of this guard by advancing through the stage and doing
+    // nothing else, so what is asserted now is the artifact, not the passage.
     await seed('FEAT-121', 'review');
     await record('FEAT-121', 'review');
+    await recordReview('FEAT-121');
     expect((await engine.canTransition('FEAT-121', 'done')).allowed).toBe(true);
+  });
+
+  it('is not satisfied by passing through the stage', async () => {
+    await seed('FEAT-122', 'review');
+    await record('FEAT-122', 'review');
+    const decision = await engine.canTransition('FEAT-122', 'done');
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) expect(decision.guard).toBe('review-before-done');
   });
 });
 
@@ -160,6 +194,7 @@ describe('human-approval-for-strict', () => {
   it('refuses done on a strict item with no human approval', async () => {
     await seed('FEAT-130', 'approval', 'strict');
     await record('FEAT-130', 'review');
+    await recordReview('FEAT-130');
 
     const decision = await engine.canTransition('FEAT-130', 'done');
     expect(decision.allowed).toBe(false);
@@ -169,6 +204,7 @@ describe('human-approval-for-strict', () => {
   it('does not apply to standard-preset items', async () => {
     await seed('FEAT-131', 'review');
     await record('FEAT-131', 'review');
+    await recordReview('FEAT-131');
     expect((await engine.canTransition('FEAT-131', 'done')).allowed).toBe(true);
   });
 });

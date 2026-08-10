@@ -112,14 +112,28 @@ function reviewBeforeDone(): TransitionGuard {
     const { resolveRequiredStages } = await import('@sdlc-on-fire/core');
     if (!resolveRequiredStages(preset, workType)?.includes('review')) return null;
 
-    const rows = await store.query<{ n: number }>(
-      `SELECT count(*)::int AS n FROM lifecycle_transitions
-        WHERE work_item_id = $1 AND to_state = 'review';`,
+    // A *transition* into review is not a review. This guard used to accept one,
+    // and a blind evaluator satisfied it by running `sdlc advance` and doing
+    // nothing else — passing through a stage and being reviewed are different
+    // facts, and a guard that cannot tell them apart guards nothing.
+    //
+    // `agent-claim` is excluded structurally: agents are actors, never approvers
+    // (architecture §5). An agent's review is recorded and readable, and it
+    // cannot satisfy this.
+    const reviews = await store.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+         FROM evidence e
+         JOIN gate_evidence ge ON ge.evidence_id = e.id
+         JOIN gates g ON g.id = ge.gate_id
+        WHERE g.work_item_id = $1 AND e.kind = 'review' AND e.producer <> 'agent-claim';`,
       [workItemId],
     );
-    return (rows[0]?.n ?? 0) > 0
+    return (reviews[0]?.n ?? 0) > 0
       ? null
-      : `${workItemId} has no recorded review transition; "done" without review is the claim this product exists to refuse`;
+      : `${workItemId} has no recorded review — passing through the review stage is not the same ` +
+          'as being reviewed. Record one with `sdlc review ' +
+          workItemId +
+          ' --finding "…"` (or --no-findings-because "…"); an agent\'s review is advisory and cannot satisfy this';
   };
 }
 

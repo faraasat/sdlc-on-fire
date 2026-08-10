@@ -46,6 +46,7 @@ import { reopenWorkItem, verifyWorkItem } from './advance.js';
 import { auditDependencies } from './audit.js';
 import { branchFor, type BranchResult } from './branch.js';
 import { prFor } from './pr.js';
+import { recordReview } from './review.js';
 import { queueFor } from './queue.js';
 import {
   listMemory,
@@ -82,6 +83,11 @@ export const cliDependencies: readonly PackageInfo[] = [
  * implementation, because two implementations of "what is the status" is how
  * they end up disagreeing.
  */
+
+/** Accumulates a repeatable option into an array. */
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
 
 /** Splits a comma-separated option into trimmed, non-empty entries. */
 function splitList(value: string | undefined): string[] {
@@ -606,6 +612,42 @@ export function buildProgram(): Command {
           .join('\n');
       });
     });
+
+  program
+    .command('review')
+    .argument('<work-item-id>', 'the work item being reviewed')
+    .description('record that a review happened, with what it found')
+    .option('--as <actor>', 'who reviewed it', process.env['USER'] ?? 'local')
+    .option('--agent', "record as an agent's review — advisory, cannot satisfy the gate")
+    .option('--finding <text>', 'a finding (repeatable)', collect, [])
+    .option('--no-findings-because <reason>', 'why a review with no findings is legitimate')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        options: {
+          as?: string;
+          agent?: boolean;
+          finding?: string[];
+          findingsBecause?: string;
+          json?: boolean;
+        },
+      ): Promise<void> => {
+        const result = await recordReview(root(), id, {
+          actor: options.as ?? 'local',
+          actorKind: options.agent === true ? 'agent' : 'human',
+          findings: options.finding,
+          noFindingsBecause: options.findingsBecause,
+        });
+        emit(result, options.json === true, (r: Awaited<ReturnType<typeof recordReview>>) =>
+          [
+            `${r.workItemId}: ${r.summary}`,
+            `  reviewer: ${r.reviewer} (${r.actorKind})`,
+            `  evidence: #${String(r.evidenceId)}`,
+          ].join('\n'),
+        );
+      },
+    );
 
   program
     .command('list')

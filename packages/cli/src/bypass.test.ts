@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claimWorkItem, init, instructions, listWorkItems } from './commands.js';
 import { advanceWorkItem, reopenWorkItem, verifyWorkItem } from './advance.js';
+import { recordReview, SelfReviewError } from './review.js';
 
 /**
  * The three routes a blind adversarial evaluation used to reach `done` with a
@@ -456,5 +457,100 @@ describe('bypass 5 — a check that never ran anything (v007)', () => {
     await verifyWorkItem(root, 'TASK-402');
     const result = await advanceWorkItem(root, 'TASK-402');
     expect(result.refusals.join('\n')).not.toMatch(/no readable test count/);
+  }, 180_000);
+});
+
+describe('a review must have happened, not merely been passed through (v007)', () => {
+  it('refuses done when nothing was ever reviewed', async () => {
+    // The evaluator satisfied the old guard by running `sdlc advance` and doing
+    // nothing else. Passing through a stage and being reviewed are different
+    // facts.
+    await writeCard('TASK-500', 'node --test real.test.js', 'review');
+    await fs.writeFile(
+      path.join(root, 'real.test.js'),
+      'import { test } from "node:test";\nimport assert from "node:assert";\ntest("a", () => assert.equal(1,1));\n',
+      'utf8',
+    );
+    await verifyWorkItem(root, 'TASK-500');
+
+    const result = await advanceWorkItem(root, 'TASK-500');
+    expect(result.moved).toBe(false);
+    expect(result.refusals.join('\n')).toMatch(/no recorded review/);
+  }, 180_000);
+
+  it('accepts done once a human review is on record', async () => {
+    await writeCard('TASK-501', 'node --test real.test.js', 'review');
+    await fs.writeFile(
+      path.join(root, 'real.test.js'),
+      'import { test } from "node:test";\nimport assert from "node:assert";\ntest("a", () => assert.equal(1,1));\n',
+      'utf8',
+    );
+    await verifyWorkItem(root, 'TASK-501');
+    await recordReview(root, 'TASK-501', { actor: 'bob', findings: ['naming in the parser'] });
+
+    const result = await advanceWorkItem(root, 'TASK-501');
+    expect(result.refusals.join('\n')).not.toMatch(/no recorded review/);
+  }, 180_000);
+
+  it("does not let an agent's review satisfy the gate", async () => {
+    // Agents are actors, never approvers. The review is recorded and readable;
+    // it just cannot decide.
+    await writeCard('TASK-502', 'node --test real.test.js', 'review');
+    await fs.writeFile(
+      path.join(root, 'real.test.js'),
+      'import { test } from "node:test";\nimport assert from "node:assert";\ntest("a", () => assert.equal(1,1));\n',
+      'utf8',
+    );
+    await verifyWorkItem(root, 'TASK-502');
+    const recorded = await recordReview(root, 'TASK-502', {
+      actor: 'reviewer-bot',
+      actorKind: 'agent',
+      findings: ['looks fine to me'],
+    });
+    expect(recorded.gating).toBe(false);
+
+    const result = await advanceWorkItem(root, 'TASK-502');
+    expect(result.refusals.join('\n')).toMatch(/no recorded review/);
+  }, 180_000);
+
+  it('refuses a self-review by the claim holder', async () => {
+    // "No single agent both implements and self-certifies", made mechanical —
+    // and it is the check most likely to catch a real problem, because
+    // self-review is what actually happens under time pressure.
+    await writeCard('TASK-503', 'node test.js', 'review');
+    await claimWorkItem(root, 'TASK-503', 'alice');
+
+    await expect(
+      recordReview(root, 'TASK-503', { actor: 'alice', findings: ['fine'] }),
+    ).rejects.toBeInstanceOf(SelfReviewError);
+  }, 180_000);
+
+  it('refuses a self-review even after the lease has lapsed', async () => {
+    // Checking the *live* lease would let an implementer wait an hour and then
+    // review their own work. Who last held the item is the fact that matters;
+    // whether their lease is still running is a different question.
+    await writeCard('TASK-505', 'node test.js', 'review');
+    await claimWorkItem(root, 'TASK-505', 'alice', 0);
+
+    await expect(
+      recordReview(root, 'TASK-505', { actor: 'alice', findings: ['fine'] }),
+    ).rejects.toBeInstanceOf(SelfReviewError);
+    // ...and somebody else still can.
+    await expect(
+      recordReview(root, 'TASK-505', { actor: 'bob', findings: ['fine'] }),
+    ).resolves.toBeDefined();
+  }, 180_000);
+
+  it('requires a reason when a review found nothing', async () => {
+    // A reviewer who approves every diff is indistinguishable from one who
+    // never ran (the review skill's own HALT-on-zero-findings rule).
+    await writeCard('TASK-504', 'node test.js', 'review');
+    await expect(recordReview(root, 'TASK-504', { actor: 'bob' })).rejects.toThrow(/must say why/);
+    await expect(
+      recordReview(root, 'TASK-504', {
+        actor: 'bob',
+        noFindingsBecause: 'three-line change, covered by an existing test',
+      }),
+    ).resolves.toBeDefined();
   }, 180_000);
 });
