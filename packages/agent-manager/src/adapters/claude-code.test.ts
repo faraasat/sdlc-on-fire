@@ -75,6 +75,21 @@ describe('compilation', () => {
     expect(content).toContain('disallowed-tools:');
   });
 
+  it('projects arguments to the list of names the target actually reads', () => {
+    // Claude Code's `arguments` is a list of *names* whose order defines the
+    // positions (`arguments: [issue, branch]` → `$issue`). The canonical IR
+    // carries `{name, required}` objects, and the capability table called the
+    // field a passthrough — so the compiled file declared arguments in a shape
+    // the target does not understand, the skill loaded anyway, and its
+    // arguments silently did nothing. Verified against the published
+    // frontmatter reference, not from memory (assumption A-05).
+    const content =
+      adapter.compileSkill(skill({ arguments: [{ name: 'work-item-id', required: true }] }))
+        .files[0]?.content ?? '';
+    expect(content).toContain('arguments:\n  - work-item-id');
+    expect(content).not.toContain('required: true');
+  });
+
   it('keeps slots unresolved in the compiled template', () => {
     // The compiled file is a template the surface fills at invocation.
     expect(adapter.compileSkill(skill()).files[0]?.content).toContain('{{task_id}}');

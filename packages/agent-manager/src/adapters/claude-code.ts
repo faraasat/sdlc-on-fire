@@ -59,7 +59,12 @@ export const CLAUDE_CAPABILITY_TABLE: readonly CapabilityRow[] = [
     support: 'dropped',
     note: 'daemon invokes verify; the compiled file only describes it (architecture §5)',
   },
-  { field: 'arguments', support: 'passthrough', nativeField: 'arguments' },
+  {
+    field: 'arguments',
+    support: 'mapped',
+    nativeField: 'arguments',
+    note: 'canonical {name, required} objects projected to the target’s list of names',
+  },
   { field: 'paths', support: 'passthrough', nativeField: 'paths' },
   { field: 'allowed_tools', support: 'passthrough', nativeField: 'allowed-tools' },
   { field: 'disallowed_tools', support: 'passthrough', nativeField: 'disallowed-tools' },
@@ -77,7 +82,15 @@ function skillFrontmatter(skill: CanonicalSkill): Record<string, unknown> {
 
   // `inline` is Claude Code's default, so emitting it would be noise.
   if (skill.context_mode === 'fork') frontmatter['context'] = 'fork';
-  if (skill.arguments !== undefined) frontmatter['arguments'] = skill.arguments;
+  if (skill.arguments !== undefined) {
+    // Not a passthrough, though the capability table used to call it one. The
+    // canonical IR carries `{name, required}` objects; Claude Code's
+    // `arguments` is a list of *names* whose order defines the positions
+    // (`arguments: [issue, branch]` → `$issue`). Emitting the objects produced
+    // frontmatter the target does not understand — the compiled skill loaded,
+    // and its arguments silently did nothing. Exactly the drift A-05 names.
+    frontmatter['arguments'] = skill.arguments.map((argument) => argument.name);
+  }
   if (skill.paths !== undefined) frontmatter['paths'] = skill.paths;
   if (skill.allowed_tools !== undefined) frontmatter['allowed-tools'] = skill.allowed_tools;
   if (skill.disallowed_tools !== undefined) {
