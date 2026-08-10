@@ -1,7 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { INITIATIVE_FILES, resolveWorkspaceLayout } from '@sdlc-on-fire/core';
-import { checkDocHealth, type HealthReport } from '@sdlc-on-fire/evidence';
+import {
+  checkDiagram,
+  checkDocHealth,
+  checkReadability,
+  type DiagramFinding,
+  type HealthReport,
+  type ReadabilityReport,
+} from '@sdlc-on-fire/evidence';
 import { readDocs } from './docs-check.js';
 
 /**
@@ -129,5 +136,59 @@ export function formatDocHealth(result: DocHealthResult): string {
     lines.push('All advisory. Redundancy detection is lexical and cannot tell a real');
     lines.push('duplicate from two docs quoting the same contract.');
   }
+  return lines.join('\n');
+}
+
+export interface GuideCheckResult {
+  readonly guide: string;
+  readonly readability: ReadabilityReport;
+  readonly diagrams: readonly {
+    readonly index: number;
+    readonly findings: readonly DiagramFinding[];
+  }[];
+  readonly ok: boolean;
+}
+
+/**
+ * Checks a user guide's prose and its diagrams (P1-DOC-03, ADR-0057).
+ *
+ * Both halves matter and only one gates. Jargon is decidable — the word is in
+ * the product's own vocabulary list or it is not — and a diagram missing its
+ * accessibility hooks is a fact about the source. Sentence length and reading
+ * ease are reported, because a score that failed builds would be met by
+ * splitting clauses until the number moved.
+ */
+export async function checkGuide(root: string, relative: string): Promise<GuideCheckResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const raw = await fs.readFile(path.join(layout.root, relative), 'utf8');
+  const readability = checkReadability(raw);
+
+  const diagrams = [...raw.matchAll(/```mermaid\n([\s\S]*?)```/g)].map((match, index) => ({
+    index,
+    findings: checkDiagram(match[1] ?? '', 'user'),
+  }));
+
+  return {
+    guide: relative,
+    readability,
+    diagrams,
+    ok: readability.ok && diagrams.every((entry) => entry.findings.length === 0),
+  };
+}
+
+/** Report. Says which half gates, since the two read alike otherwise. */
+export function formatGuideCheck(result: GuideCheckResult): string {
+  const lines = [`${result.guide} — reading ease ${String(result.readability.readingEase)}`, ''];
+  for (const finding of result.readability.findings) {
+    const mark = finding.kind === 'jargon' ? '❌' : '⚠️ ';
+    lines.push(`${mark} ${finding.kind}: ${finding.detail}`);
+  }
+  for (const diagram of result.diagrams) {
+    for (const finding of diagram.findings) {
+      lines.push(`❌ diagram ${String(diagram.index + 1)} [${finding.rule}]: ${finding.detail}`);
+    }
+  }
+  if (result.ok) lines.push('✅ Reads plainly, and the diagrams are accessible.');
+  else lines.push('', 'Jargon and diagram rules gate; sentence length is a nudge.');
   return lines.join('\n');
 }

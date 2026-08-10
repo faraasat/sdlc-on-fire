@@ -7,6 +7,7 @@ export * from './traceability.js';
 export * from './spec-quality.js';
 export * from './doc-freshness.js';
 export * from './doc-health.js';
+export * from './user-guide.js';
 export * from './dependency-audit.js';
 export * from './runner.js';
 export * from './evaluate-gate.js';

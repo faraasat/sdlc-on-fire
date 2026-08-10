@@ -54,9 +54,11 @@ import { approveEchoBack, readEchoBack, recordEchoBack } from './echo.js';
 import { directivesFor, postComment } from './comment.js';
 import { checkDocs, formatDocsCheck } from './docs-check.js';
 import {
+  checkGuide,
   createInitiative,
   docHealth,
   formatDocHealth,
+  formatGuideCheck,
   INITIATIVE_KINDS,
   type InitiativeKind,
 } from './initiative.js';
@@ -906,6 +908,17 @@ export function buildProgram(): Command {
         );
       },
     );
+
+  program
+    .command('guide')
+    .argument('<path>', 'the user guide to check, relative to the workspace root')
+    .description('check a user guide reads plainly and its diagrams are accessible (ADR-0057)')
+    .option('--json', 'emit JSON')
+    .action(async (file: string, options: { json?: boolean }): Promise<void> => {
+      const result = await checkGuide(root(), file);
+      emit(result, options.json === true, formatGuideCheck);
+      if (!result.ok) process.exitCode = 1;
+    });
 
   program
     .command('doc-health')

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createInitiative, docHealth } from './initiative.js';
+import { checkGuide, createInitiative, docHealth } from './initiative.js';
 import { init } from './commands.js';
 
 /** P1-DOC-02 end to end. */
@@ -106,5 +106,52 @@ describe('docHealth', () => {
     );
     const result = await docHealth(root);
     expect(result.report.findings.some((f) => f.doc === 'docs/stray.md')).toBe(true);
+  }, 60_000);
+});
+
+describe('checkGuide (P1-DOC-03)', () => {
+  const GOOD = [
+    '# Importing a spreadsheet',
+    '',
+    'You can bring your data in from a spreadsheet. The tool reads each row.',
+    'Rows it cannot read are listed for you.',
+    '',
+    '```mermaid',
+    'flowchart LR',
+    '  accTitle: How your spreadsheet becomes data',
+    '  accDescr: Three steps, left to right.',
+    '  A[You upload] --> B[We read it] --> C[You check]',
+    '  classDef step fill:#1B4965,stroke:#0B2A3D,stroke-width:2px',
+    '```',
+    '',
+  ].join('\n');
+
+  it('passes a plain guide with an accessible diagram', async () => {
+    await fs.writeFile(path.join(root, 'docs', 'guide.md'), GOOD, 'utf8');
+    const result = await checkGuide(root, 'docs/guide.md');
+    expect(result.ok).toBe(true);
+  }, 60_000);
+
+  it('fails on product jargon', async () => {
+    await fs.writeFile(
+      path.join(root, 'docs', 'guide.md'),
+      GOOD.replace('The tool reads each row.', 'Each work item gets a context pack.'),
+      'utf8',
+    );
+    const result = await checkGuide(root, 'docs/guide.md');
+    // The usual failure is the implementer writing the guide in the vocabulary
+    // they have been using all day, where it reads fine to them.
+    expect(result.ok).toBe(false);
+  }, 60_000);
+
+  it('fails a diagram missing its accessibility hooks', async () => {
+    await fs.writeFile(
+      path.join(root, 'docs', 'guide.md'),
+      GOOD.replace('  accDescr: Three steps, left to right.\n', ''),
+      'utf8',
+    );
+    const result = await checkGuide(root, 'docs/guide.md');
+    expect(result.ok).toBe(false);
+    expect(result.diagrams[0]?.findings.some((f) => f.rule === 'acc-descr')).toBe(true);
   }, 60_000);
 });
