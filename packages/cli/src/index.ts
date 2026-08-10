@@ -63,6 +63,7 @@ import {
   type InitiativeKind,
 } from './initiative.js';
 import { queueFor } from './queue.js';
+import { detectTools, formatDetect } from './detect.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
 import {
@@ -1000,6 +1001,17 @@ export function buildProgram(): Command {
                 ...(item.concern === undefined ? [] : [`    ↳ ${item.concern}`]),
               ])
               .join('\n'),
+      );
+    });
+
+  program
+    .command('detect')
+    .description('report every supported source format found in this repo (P2-IMP-02)')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await detectTools(root());
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof detectTools>>) =>
+        formatDetect(r),
       );
     });
 

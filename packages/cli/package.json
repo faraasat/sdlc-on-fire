@@ -46,6 +46,7 @@
     "@sdlc-on-fire/evidence": "workspace:*",
     "@sdlc-on-fire/storage": "workspace:*",
     "commander": "15.0.0",
-    "yaml": "2.9.0"
+    "yaml": "2.9.0",
+    "@sdlc-on-fire/importers": "workspace:*"
   }
 }
