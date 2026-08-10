@@ -258,6 +258,7 @@ export function buildProgram(): Command {
           `Rebuilt mirror from ${r.root}`,
           `  work items: ${String(r.workItems)}`,
           `  docs:       ${String(r.docs)}`,
+          `  changed:    ${String(r.changed)}`,
           `  failed:     ${String(r.failed.length)}`,
           `  took:       ${String(r.durationMs)}ms`,
           ...r.failed.map((f) => `    ! ${f.relativePath}: ${f.error}`),
@@ -374,9 +375,10 @@ export function buildProgram(): Command {
         r.items.length === 0
           ? 'No work items yet. Create one with `sdlc new feature "..."`.'
           : r.items
-              .map(
-                (item) => `${item.id.padEnd(12)} ${item.lifecycleState.padEnd(16)} ${item.title}`,
-              )
+              .flatMap((item) => [
+                `${item.attestation === 'unsupported' ? '⚠' : ' '} ${item.id.padEnd(12)} ${item.lifecycleState.padEnd(16)} ${item.title}`,
+                ...(item.concern === undefined ? [] : [`    ↳ ${item.concern}`]),
+              ])
               .join('\n'),
       );
     });

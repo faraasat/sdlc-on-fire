@@ -23,6 +23,7 @@ import {
 import { fillSlots, skillForStage } from '@sdlc-on-fire/agent-manager';
 import { estimateTokens } from '@sdlc-on-fire/context';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
+import { attestAll, type Attestation } from './attest.js';
 import {
   applySchema,
   connectToPostgres,
@@ -453,6 +454,8 @@ export interface RebuildCommandResult {
   readonly root: string;
   readonly workItems: number;
   readonly docs: number;
+  /** Files that actually needed rewriting. Zero is the healthy steady state. */
+  readonly changed: number;
   readonly failed: readonly { readonly relativePath: string; readonly error: string }[];
   readonly durationMs: number;
 }
@@ -534,6 +537,9 @@ export interface WorkItemListing {
   readonly lifecycleState: string;
   readonly status: string;
   readonly filePath: string;
+  /** Whether a terminal claim is backed by recorded evidence. */
+  readonly attestation: Attestation;
+  readonly concern?: string | undefined;
 }
 
 /**
@@ -559,14 +565,25 @@ export async function listWorkItems(root: string): Promise<{ items: readonly Wor
       file_path: string;
     }>('SELECT id, title, lifecycle_state, status, file_path FROM work_items ORDER BY id;');
 
+    const attestations = await attestAll(
+      db,
+      rows.map((row) => ({ id: row.id, lifecycleState: row.lifecycle_state })),
+    );
+    const byId = new Map(attestations.map((entry) => [entry.id, entry]));
+
     return {
-      items: rows.map((row) => ({
-        id: row.id,
-        title: row.title,
-        lifecycleState: row.lifecycle_state,
-        status: row.status,
-        filePath: row.file_path,
-      })),
+      items: rows.map((row) => {
+        const attested = byId.get(row.id);
+        return {
+          id: row.id,
+          title: row.title,
+          lifecycleState: row.lifecycle_state,
+          status: row.status,
+          filePath: row.file_path,
+          attestation: attested?.attestation ?? 'not-applicable',
+          ...(attested?.concern === undefined ? {} : { concern: attested.concern }),
+        };
+      }),
     };
   } finally {
     await db.close();

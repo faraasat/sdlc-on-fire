@@ -16,8 +16,11 @@ import { SyncEngine, type SyncOutcome } from './sync-engine.js';
  */
 
 export interface RebuildResult {
+  /** Work items present in the mirror afterwards — not only the ones that changed. */
   readonly workItems: number;
   readonly docs: number;
+  /** How many files actually needed rewriting. Zero is the healthy steady state. */
+  readonly changed: number;
   readonly failed: readonly { readonly relativePath: string; readonly error: string }[];
   readonly durationMs: number;
 }
@@ -35,15 +38,29 @@ export async function rebuildMirror(
 ): Promise<RebuildResult> {
   const startedAt = Date.now();
 
-  await store.resetMirror();
-
+  // Deliberately *not* `resetMirror()`. Truncating `work_items` destroys the
+  // rows that `lifecycle_transitions` references, and that history is not a
+  // mirror of anything on disk — it is the record of what actually happened,
+  // in the same category as evidence and the audit log. A rebuild that erased
+  // it would be laundering, not maintenance.
+  //
+  // `reconcile()` converges the mirror by upserting what exists and pruning
+  // what no longer does, which is the same end state without the collateral
+  // damage. Chunks are the one genuinely derived artefact, and `replaceChunks`
+  // already rewrites those per source.
   const engine = new SyncEngine({ workspaceRoot, store });
   const outcomes: readonly SyncOutcome[] = await engine.reconcile();
 
-  const upserted = outcomes.filter((outcome) => outcome.action === 'upserted');
+  // Count what is *mirrored*, not what changed. Reporting only upserts made a
+  // healthy no-op rebuild say "work items: 0" on a workspace full of them,
+  // which reads as data loss.
+  const mirrored = outcomes.filter(
+    (outcome) => outcome.action === 'upserted' || outcome.action === 'skipped-unchanged',
+  );
   return {
-    workItems: upserted.filter((outcome) => outcome.kind === 'work_item').length,
-    docs: upserted.filter((outcome) => outcome.kind === 'doc').length,
+    workItems: mirrored.filter((outcome) => outcome.kind === 'work_item').length,
+    docs: mirrored.filter((outcome) => outcome.kind === 'doc').length,
+    changed: outcomes.filter((outcome) => outcome.action === 'upserted').length,
     failed: outcomes
       .filter((outcome) => outcome.action === 'failed')
       .map((outcome) => ({

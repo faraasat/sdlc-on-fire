@@ -169,9 +169,26 @@ export async function advanceWorkItem(root: string, id: string): Promise<Advance
     const decision = await engine.canTransition(id, to);
     if (!decision.allowed) refusals.push(`${decision.guard}: ${decision.reason}`);
 
-    // 2. The evidence gate, wherever the card declares something checkable.
+    // 2. The evidence gate.
+    //
+    // A stage that exists to prove something cannot be entered on a card that
+    // declares nothing to prove. Previously this skipped the gate when `verify:`
+    // was absent, which fails **open**: the fastest way past the gate became
+    // deleting the field it reads. Refusing is the only safe default — the
+    // remedy is one line of frontmatter, and it is named in the refusal.
+    const EVIDENCE_STAGES = new Set(['test', 'done']);
     const verifyCommand = typeof data['verify'] === 'string' ? data['verify'] : null;
-    if (verifyCommand !== null && verifyCommand.trim() !== '') {
+    const declaresCheck = verifyCommand !== null && verifyCommand.trim() !== '';
+
+    if (!declaresCheck && EVIDENCE_STAGES.has(to)) {
+      refusals.push(
+        `gate: ${id} declares no \`verify:\` command, so entering "${to}" cannot be evidenced. ` +
+          'Add one to the card (e.g. `verify: pnpm test`) — a stage that exists to prove something ' +
+          'cannot be entered on a claim.',
+      );
+    }
+
+    if (declaresCheck) {
       const git = createGitManager({ repoRoot: layout.root });
       const headSha = (await git.isRepo()) ? await git.headSha() : '0'.repeat(40);
 
@@ -230,6 +247,17 @@ export async function advanceWorkItem(root: string, id: string): Promise<Advance
     if (refusals.length > 0) {
       return { workItemId: id, from, to, moved: false, refusals };
     }
+
+    // Record the transition. Without this the history the guards read is always
+    // empty, so `spec-before-implement` and `review-before-done` can never be
+    // satisfied — a work item could never legitimately reach implement at all,
+    // and hand-editing the card became the only way to make progress. A guard
+    // that reads a history nothing writes is a guard that blocks forever.
+    await db.query(
+      `INSERT INTO lifecycle_transitions (work_item_id, from_state, to_state, gate_result)
+       VALUES ($1,$2,$3,$4::jsonb);`,
+      [id, from, to, JSON.stringify({ pass: true, missing: [], failures: [] })],
+    );
 
     // Content is the source of truth: rewrite the card, let sync follow.
     const advanced = {
