@@ -93,12 +93,23 @@ export async function recordGate(store: GateStore, input: RecordGateInput): Prom
 
   for (const envelope of input.evidence) {
     const evidenceId = await persistEvidence(store, envelope);
-    // The DB trigger refuses agent-claim evidence on a non-knowledge-claim gate,
-    // so this link is also the second enforcement point for that invariant.
-    await store.query(
-      'INSERT INTO gate_evidence (gate_id, evidence_id) VALUES ($1, $2) ON CONFLICT DO NOTHING;',
-      [gateId, evidenceId],
-    );
+
+    // A DB trigger refuses agent-claim evidence on a non-knowledge-claim gate
+    // (contracts/01 §3.4). The envelope row is still written — a reviewer may
+    // want to *see* what the agent claimed — but the link that would let it back
+    // a gate is refused at the database, independently of this code.
+    //
+    // The refusal is caught rather than propagated: `evaluateGate` has already
+    // excluded that evidence from the verdict, so a link the database declines
+    // to make is the system working, not the recording failing.
+    try {
+      await store.query(
+        'INSERT INTO gate_evidence (gate_id, evidence_id) VALUES ($1, $2) ON CONFLICT DO NOTHING;',
+        [gateId, evidenceId],
+      );
+    } catch (cause) {
+      if (!/agent-claim/.test(String(cause))) throw cause;
+    }
   }
 
   return { gateId, verdict };

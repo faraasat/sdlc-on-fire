@@ -59,6 +59,43 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
   // Append-only audit log (ADR-0030). Never relaxed, not even for MVP —
   // architecture §5 lists it among the never-relaxed invariants.
   'REVOKE UPDATE, DELETE ON audit_log FROM PUBLIC;',
+
+  // ── The two invariant triggers (contracts/01 §3.3, §3.4) ──────────────────
+  //
+  // These ARE the deterministic disposers for two architecture §5 invariants,
+  // and they exist precisely because application-layer checks are not enough:
+  // a trigger fires regardless of what the daemon's own code does, so a bug in
+  // the daemon cannot let an agent approve its own work or gate on its own
+  // say-so. CHECK constraints cannot subquery, hence triggers.
+  `CREATE OR REPLACE FUNCTION approvals_agent_never_approves() RETURNS trigger AS $$
+     DECLARE actor_kind TEXT;
+     BEGIN
+       SELECT kind INTO actor_kind FROM actors WHERE id = NEW.actor_id;
+       IF actor_kind = 'agent' AND NEW.role_id IS NOT NULL THEN
+         RAISE EXCEPTION 'actors.kind = agent cannot satisfy a role-gated approval (architecture §5)';
+       END IF;
+       RETURN NEW;
+     END;
+   $$ LANGUAGE plpgsql;`,
+  'DROP TRIGGER IF EXISTS approvals_agent_never_approves_trg ON approvals;',
+  `CREATE TRIGGER approvals_agent_never_approves_trg
+     BEFORE INSERT ON approvals FOR EACH ROW
+     EXECUTE FUNCTION approvals_agent_never_approves();`,
+
+  `CREATE OR REPLACE FUNCTION gate_evidence_agent_claim_guard() RETURNS trigger AS $$
+     DECLARE ev_producer TEXT; ev_kind TEXT;
+     BEGIN
+       SELECT producer, kind INTO ev_producer, ev_kind FROM evidence WHERE id = NEW.evidence_id;
+       IF ev_producer = 'agent-claim' AND ev_kind <> 'knowledge-claim' THEN
+         RAISE EXCEPTION 'agent-claim evidence may only back a knowledge-claim gate (ADR-0030)';
+       END IF;
+       RETURN NEW;
+     END;
+   $$ LANGUAGE plpgsql;`,
+  'DROP TRIGGER IF EXISTS gate_evidence_agent_claim_guard_trg ON gate_evidence;',
+  `CREATE TRIGGER gate_evidence_agent_claim_guard_trg
+     BEFORE INSERT ON gate_evidence FOR EACH ROW
+     EXECUTE FUNCTION gate_evidence_agent_claim_guard();`,
 ];
 
 /**

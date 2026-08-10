@@ -59,6 +59,9 @@ importers:
       '@sdlc-on-fire/agent-manager':
         specifier: workspace:*
         version: link:../agent-manager
+      '@sdlc-on-fire/context':
+        specifier: workspace:*
+        version: link:../context
       '@sdlc-on-fire/core':
         specifier: workspace:*
         version: link:../core
@@ -68,6 +71,9 @@ importers:
       '@sdlc-on-fire/db':
         specifier: workspace:*
         version: link:../db
+      '@sdlc-on-fire/evidence':
+        specifier: workspace:*
+        version: link:../evidence
       '@sdlc-on-fire/storage':
         specifier: workspace:*
         version: link:../storage

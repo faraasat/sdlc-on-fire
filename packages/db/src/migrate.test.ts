@@ -204,3 +204,60 @@ afterAll(async () => {
     tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
   );
 });
+
+describe('invariant triggers', () => {
+  it('refuses a role-gated approval from an agent', async () => {
+    // The trigger IS the disposer: it fires regardless of what daemon code does,
+    // so a bug in the application layer cannot defeat the invariant.
+    const [role] = await db.query<{ id: number }>(
+      "INSERT INTO roles (key) VALUES ('maintainer') RETURNING id;",
+    );
+    const [agent] = await db.query<{ id: string }>(
+      "INSERT INTO actors (kind, display_name, agent_target) VALUES ('agent','Claude','claude-code') RETURNING id;",
+    );
+
+    await expect(
+      db.query(
+        "INSERT INTO approvals (gate_id, actor_id, role_id, decision) VALUES (1, $1, $2, 'approve');",
+        [agent?.id, role?.id],
+      ),
+    ).rejects.toThrow(/agent/);
+  });
+
+  it('allows a human role-gated approval', async () => {
+    const [role] = await db.query<{ id: number }>(
+      "INSERT INTO roles (key) VALUES ('reviewer') RETURNING id;",
+    );
+    const [human] = await db.query<{ id: string }>(
+      "INSERT INTO actors (kind, display_name) VALUES ('human','Dev') RETURNING id;",
+    );
+
+    await expect(
+      db.query(
+        "INSERT INTO approvals (gate_id, actor_id, role_id, decision) VALUES (2, $1, $2, 'approve');",
+        [human?.id, role?.id],
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('refuses to link agent-claim evidence to an ordinary gate', async () => {
+    await db.query(
+      `INSERT INTO work_items (id, type, title, status, lifecycle_state, file_path, content_hash)
+       VALUES ('TASK-800','task','t','In Progress','implement','kanban/t800.md','h');`,
+    );
+    const [gate] = await db.query<{ id: number }>(
+      "INSERT INTO gates (work_item_id, gate_name, result) VALUES ('TASK-800','implement','pending') RETURNING id;",
+    );
+    const [ev] = await db.query<{ id: number }>(
+      `INSERT INTO evidence (kind, producer, git_sha, env, content_hash, confidence, produced_at, payload)
+       VALUES ('test','agent-claim','a','{}'::jsonb,'h',0,now(),'{"ok":true}'::jsonb) RETURNING id;`,
+    );
+
+    await expect(
+      db.query('INSERT INTO gate_evidence (gate_id, evidence_id) VALUES ($1, $2);', [
+        gate?.id,
+        ev?.id,
+      ]),
+    ).rejects.toThrow(/agent-claim/);
+  });
+});
