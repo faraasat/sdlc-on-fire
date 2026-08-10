@@ -5,7 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { citableChunks, verifyWorkItemClaims } from './claims.js';
-import { init } from './commands.js';
+import { init, openWorkspaceDatabase } from './commands.js';
 
 /**
  * P1-GATE-04 end to end, against a real workspace and a real PGlite.
@@ -132,5 +132,100 @@ describe('verifyWorkItemClaims', () => {
     expect(result.gateResult).toBe('fail');
     expect(result.bundle.abstained).toHaveLength(1);
     expect(result.bundle.unsupported).toHaveLength(0);
+  }, 60_000);
+});
+
+describe('the traceability graph (P1-GATE-08, ADR-0032)', () => {
+  it('records an edge for a supported claim and none for one that abstained', async () => {
+    const chunks = await citableChunks(root, cardPath);
+    const specChunk = chunks.find((chunk) => chunk.text.includes('retries three times'));
+
+    await verifyWorkItemClaims(root, 'FEAT-001', [
+      {
+        claim: 'The importer retries three times with exponential backoff',
+        cited_chunk_ids: [specChunk?.id ?? ''],
+      },
+      { claim: 'The design is consistent with ADR-0009.', cited_chunk_ids: [] },
+    ]);
+
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      const rows = await db.query<{ ac_id: string; file_path: string; origin: string }>(
+        "SELECT ac_id, file_path, origin FROM traceability_edges WHERE origin = 'claim-verification';",
+      );
+      // Only the supported claim. Recording the abstention would let coverage
+      // be raised by asserting things nobody verified.
+      expect(rows.some((row) => row.ac_id.includes('retries three times'))).toBe(true);
+      expect(rows.some((row) => row.ac_id.includes('ADR-0009'))).toBe(false);
+      expect(rows.every((row) => row.file_path === 'docs/spec.md')).toBe(true);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it('does not multiply the graph when the same verification runs twice', async () => {
+    const chunks = await citableChunks(root, cardPath);
+    const specChunk = chunks.find((chunk) => chunk.text.includes('retries three times'));
+    const claims = [
+      {
+        claim: 'The importer retries three times with exponential backoff',
+        cited_chunk_ids: [specChunk?.id ?? ''],
+      },
+    ];
+
+    await verifyWorkItemClaims(root, 'FEAT-001', claims);
+    const before = await countEdges();
+    await verifyWorkItemClaims(root, 'FEAT-001', claims);
+    const after = await countEdges();
+
+    // A re-run records the same fact, and the same fact recorded twice is one
+    // fact. Without the uniqueness index, coverage climbs every time a suite
+    // is re-run.
+    // Exactly equal, not "at most one more": a weaker assertion here passes
+    // with the uniqueness index removed, which is the whole thing under test.
+    expect(after).toBe(before);
+  }, 60_000);
+});
+
+async function countEdges(): Promise<number> {
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    const rows = await db.query<{ n: string }>(
+      "SELECT count(*)::text AS n FROM traceability_edges WHERE origin = 'claim-verification';",
+    );
+    return Number(rows[0]?.n ?? 0);
+  } finally {
+    await db.close();
+  }
+}
+
+describe('coverage means current proof (ADR-0032)', () => {
+  it('replaces the evidence on a link rather than accumulating rows', async () => {
+    const chunks = await citableChunks(root, cardPath);
+    const specChunk = chunks.find((chunk) => chunk.text.includes('retries three times'));
+    const claims = [
+      {
+        claim: 'The importer retries three times with exponential backoff',
+        cited_chunk_ids: [specChunk?.id ?? ''],
+      },
+    ];
+
+    await verifyWorkItemClaims(root, 'FEAT-001', claims);
+    const second = await verifyWorkItemClaims(root, 'FEAT-001', claims);
+
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      const rows = await db.query<{ evidence_id: string | number }>(
+        `SELECT evidence_id FROM traceability_edges
+          WHERE origin = 'claim-verification' AND ac_id LIKE '%retries three times%';`,
+      );
+      expect(rows).toHaveLength(1);
+      // The link is the fact; the evidence is the *current* proof of it.
+      // "Covered" has to mean covered by current tests against the current
+      // implementation, not covered once by something.
+      expect(Number(rows[0]?.evidence_id)).toBe(second.evidenceId);
+    } finally {
+      await db.close();
+    }
   }, 60_000);
 });

@@ -7,7 +7,9 @@ import { chunkMarkdown } from '@sdlc-on-fire/context';
 import { applySchema, PostgresStorageAdapter } from '@sdlc-on-fire/db';
 import { createGitManager } from '@sdlc-on-fire/daemon';
 import {
+  edgesFromClaims,
   persistEvidence,
+  recordEdges,
   verifyClaims,
   type CitedChunk,
   type ClaimBundle,
@@ -158,6 +160,23 @@ export async function verifyWorkItemClaims(
         [gateId, evidenceId],
       );
     }
+
+    // A verified claim is exactly the requirement→artifact link ADR-0032 wants
+    // retained: the claim is the requirement end, the chunk it cited is the
+    // file end, and this run is the proof. Only *supported* claims become edges.
+    await recordEdges(
+      db,
+      edgesFromClaims({
+        workItemId: id,
+        evidenceId,
+        commitSha: gitSha,
+        results: bundle.results.map((result) => ({
+          claim: result.claim,
+          citedChunkId: result.citedChunkId,
+          verdict: result.verdict,
+        })),
+      }),
+    );
 
     return { workItemId: id, bundle, evidenceId, chunksAvailable: pack.length, gateResult };
   } finally {

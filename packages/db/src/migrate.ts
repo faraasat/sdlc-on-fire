@@ -132,6 +132,64 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
    );`,
   'CREATE INDEX IF NOT EXISTS already_happened_work_item_idx ON already_happened_ledger (work_item_id);',
 
+  // ── Traceability graph (P1-GATE-08, ADR-0032) ─────────────────────────────
+  //
+  // The Evidence Engine already produces every fact an edge needs — test
+  // results, claim/citation records, the commit under test. What it never did
+  // was *keep* them connected: after a gate verdict, the connective tissue was
+  // discarded, so "which requirement does this code satisfy, and what proves
+  // it" was answerable only by re-running the gate or reconstructing history by
+  // hand. This is a retention change, not a new pipeline.
+  //
+  // Nullable columns throughout, deliberately. A partial edge is the normal
+  // state: evidence usually arrives before anyone has linked it to a criterion,
+  // and refusing to record the half we have would mean recording nothing until
+  // the graph was already complete.
+  `CREATE TABLE IF NOT EXISTS traceability_edges (
+     id            BIGSERIAL PRIMARY KEY,
+     work_item_id  TEXT NOT NULL REFERENCES work_items(id),
+     -- The requirement end: an acceptance criterion, and the spec or change it
+     -- came from when one is known.
+     ac_id         TEXT,
+     spec_id       TEXT,
+     change_id     TEXT,
+     -- The implementation end.
+     commit_sha    TEXT,
+     file_path     TEXT,
+     -- The proof end.
+     test_id       TEXT,
+     evidence_id   BIGINT REFERENCES evidence(id),
+     -- How this edge came to exist. A hand-asserted link and one derived from a
+     -- gate run are different claims, and a graph that cannot tell them apart
+     -- cannot be audited.
+     origin        TEXT NOT NULL DEFAULT 'gate-evaluation',
+     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+     CONSTRAINT traceability_origin_check
+       CHECK (origin IN ('gate-evaluation','claim-verification','manual')),
+     -- An edge that connects nothing is a row, not a fact.
+     CONSTRAINT traceability_endpoints_check
+       CHECK (ac_id IS NOT NULL OR file_path IS NOT NULL OR evidence_id IS NOT NULL)
+   );`,
+  'CREATE INDEX IF NOT EXISTS traceability_work_item_idx ON traceability_edges (work_item_id);',
+  'CREATE INDEX IF NOT EXISTS traceability_ac_idx ON traceability_edges (ac_id);',
+  'CREATE INDEX IF NOT EXISTS traceability_evidence_idx ON traceability_edges (evidence_id);',
+  // One row per *link*, and `evidence_id` is deliberately not part of the key.
+  //
+  // Every re-run produces new evidence, so keying on it would give each run its
+  // own row and the coverage metric would climb every time a suite was re-run —
+  // exactly the number ADR-0032 warns about. The link is the fact; the evidence
+  // is the current proof of it, and the insert overwrites it so the graph
+  // answers "covered by current tests against the current implementation"
+  // rather than "was covered once, by something".
+  `CREATE UNIQUE INDEX IF NOT EXISTS traceability_edge_uniq
+     ON traceability_edges (
+       work_item_id,
+       COALESCE(ac_id,''),
+       COALESCE(file_path,''),
+       COALESCE(test_id,''),
+       origin
+     );`,
+
   // Append-only audit log (ADR-0030). Never relaxed, not even for MVP —
   // architecture §5 lists it among the never-relaxed invariants.
   'REVOKE UPDATE, DELETE ON audit_log FROM PUBLIC;',

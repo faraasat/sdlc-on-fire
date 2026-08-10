@@ -68,15 +68,16 @@ describe('generated migration', () => {
   it('does not create tables deferred past v0.1', async () => {
     // Building ahead of the slice is as much a defect as building short of it.
     //
-    // `memory_entries` left this list on 2026-08-10 by an explicit founder scope
-    // decision: the standing instruction is to complete Phase 1 in full, and
-    // P1-OBJ-04 is a Phase-1 task. The guard is loosened deliberately and the
+    // Two tables have left this list, both by the same explicit founder scope
+    // decision on 2026-08-10: the standing instruction is to complete Phase 1 in
+    // full, and both `memory_entries` (P1-OBJ-04) and `traceability_edges`
+    // (P1-GATE-08) are Phase-1 tasks. The guard is loosened deliberately and the
     // reason is recorded here rather than in a commit message nobody re-reads —
     // a guard quietly edited to make new code pass is worse than no guard.
     //
-    // The remaining three are still genuinely unbuilt.
+    // The remaining two are still genuinely unbuilt.
     const tables = await tableNames(db);
-    for (const table of ['traceability_edges', 'checkpoints', 'external_ref']) {
+    for (const table of ['checkpoints', 'external_ref']) {
       expect(tables, table).not.toContain(table);
     }
   });

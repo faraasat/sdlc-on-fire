@@ -11,10 +11,12 @@ import {
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import {
   defaultV01Policy,
+  edgesFromGateRun,
   evaluateGate,
   evaluateReadiness,
   isAdmissibleOverride,
   persistEvidence,
+  recordEdges,
 } from '@sdlc-on-fire/evidence';
 import { findWorkItem, openWorkspaceDatabase, readConfig, treeContext } from './commands.js';
 import { attestItem } from './attest.js';
@@ -183,6 +185,22 @@ export async function verifyWorkItem(
         [gateId, evidenceId],
       );
     }
+    // The traceability graph (P1-GATE-08, ADR-0032). Off the critical path and
+    // never able to fail this call: the verdict above is already decided, and a
+    // graph that can break a passing verify has stopped being an audit artifact
+    // and become a dependency. What it retains is what the run already proved.
+    await recordEdges(
+      db,
+      edgesFromGateRun({
+        workItemId: id,
+        commitSha: gitSha,
+        evidenceId,
+        acceptanceCriteria: Array.isArray(card['done'])
+          ? card['done'].filter((entry): entry is string => typeof entry === 'string')
+          : [],
+      }),
+    );
+
     const payload = outcome.envelope.payload as {
       passed?: number;
       failed?: number;
