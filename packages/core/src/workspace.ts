@@ -112,6 +112,19 @@ export const WorkspaceConfigSchema = z
       .prefault({}),
     /** Advanced capabilities, every one default-off (ADR-0067, P0-OBJ-04). */
     advanced: AdvancedConfigSchema,
+    /** Intake behaviour — the echo-back gate's right-sizing knob (ADR-0049). */
+    intake: z
+      .object({
+        /**
+         * Let an unambiguous restatement with no questions proceed unapproved.
+         *
+         * Off by default, and the default is the decision: turning it on is the
+         * user saying which asks are not worth their attention. On by default
+         * would be the agent deciding when it needs supervision.
+         */
+        autoApproveUnambiguous: z.boolean().default(false),
+      })
+      .prefault({}),
     /**
      * OS-level confinement of the shell-exec path (ADR-0036, P1-SEC-02).
      *

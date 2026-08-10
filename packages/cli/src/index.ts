@@ -21,6 +21,7 @@ import {
   WORK_ITEM_ID_PREFIX,
   type PackageInfo,
   type Preset,
+  AmbiguitySchema,
 } from '@sdlc-on-fire/core';
 import { renderWorkItem } from '@sdlc-on-fire/storage';
 import fs from 'node:fs/promises';
@@ -49,6 +50,7 @@ import { prFor } from './pr.js';
 import { recordReview } from './review.js';
 import { formatClaims, verifyWorkItemClaims } from './claims.js';
 import { scoreWorkItem } from './spec-score.js';
+import { approveEchoBack, readEchoBack, recordEchoBack } from './echo.js';
 import { queueFor } from './queue.js';
 import { scanQuality } from './quality.js';
 import {
@@ -704,6 +706,102 @@ export function buildProgram(): Command {
       // A gate that reports a problem and exits 0 is a gate nothing downstream
       // can act on.
       if (!result.bundle.ok) process.exitCode = 1;
+    });
+
+  const echo = program
+    .command('echo')
+    .description('restate a requirement and get it approved before planning (ADR-0049)');
+
+  echo
+    .command('record')
+    .argument('<work-item-id>', 'the work item being restated')
+    .requiredOption(
+      '--understanding <text>',
+      'the restatement, tight — not a re-dump of the prompt',
+    )
+    .option('--scope <text>', 'something in scope (repeatable)', collect, [])
+    .option(
+      '--out-of-scope <text>',
+      'something deliberately not in scope (repeatable)',
+      collect,
+      [],
+    )
+    .option('--question <text>', 'something the agent cannot resolve (repeatable)', collect, [])
+    .option('--ambiguity <level>', 'low | medium | high', 'medium')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        options: {
+          understanding: string;
+          scope?: string[];
+          outOfScope?: string[];
+          question?: string[];
+          ambiguity?: string;
+          json?: boolean;
+        },
+      ): Promise<void> => {
+        const ambiguity = AmbiguitySchema.safeParse(options.ambiguity ?? 'medium');
+        if (!ambiguity.success) {
+          throw new Error(
+            `unknown ambiguity "${String(options.ambiguity)}" — expected low, medium or high`,
+          );
+        }
+        const file = await recordEchoBack(root(), {
+          workItemId: id,
+          understanding: options.understanding,
+          scope: options.scope ?? [],
+          outOfScope: options.outOfScope ?? [],
+          assumptions: [],
+          questions: options.question ?? [],
+          ambiguity: ambiguity.data,
+        });
+        emit(
+          { workItemId: id, file },
+          options.json === true,
+          (r: { workItemId: string; file: string }) =>
+            `${r.workItemId}: understanding recorded — a human has to approve it before planning.\n  ${r.file}`,
+        );
+      },
+    );
+
+  echo
+    .command('approve')
+    .argument('<work-item-id>', 'the work item whose understanding is being approved')
+    .option('--as <actor>', 'who is approving', process.env['USER'] ?? 'local')
+    .option('--answer <text>', 'an answer, in question order (repeatable)', collect, [])
+    .option('--correction <text>', 'what the agent got wrong (repeatable)', collect, [])
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        options: { as?: string; answer?: string[]; correction?: string[]; json?: boolean },
+      ): Promise<void> => {
+        const result = await approveEchoBack(root(), id, {
+          actor: options.as ?? 'local',
+          decision: (options.correction ?? []).length > 0 ? 'corrected' : 'approved',
+          answers: options.answer,
+          corrections: options.correction,
+        });
+        emit(result, options.json === true, (r: Awaited<ReturnType<typeof approveEchoBack>>) =>
+          [
+            `${r.workItemId}: understanding ${r.verdict.ok ? r.verdict.reason : 'refused'}`,
+            `  ${r.qnaPath}`,
+            `  ${r.humanLoopPath}`,
+          ].join('\n'),
+        );
+      },
+    );
+
+  echo
+    .command('show')
+    .argument('<work-item-id>', 'the work item to show the restatement for')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
+      const record = await readEchoBack(root(), id);
+      if (record === null) throw new Error(`${id} has no recorded echo-back`);
+      const { renderQna } = await import('@sdlc-on-fire/core');
+      emit(record, options.json === true, (r: NonNullable<typeof record>) => renderQna(r));
     });
 
   program

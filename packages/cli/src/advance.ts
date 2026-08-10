@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
+  checkEchoBack,
   isLifecycleStage,
   isTerminalStage,
   kanbanColumnForStage,
@@ -19,6 +20,7 @@ import {
   recordEdges,
 } from '@sdlc-on-fire/evidence';
 import { findWorkItem, openWorkspaceDatabase, readConfig, treeContext } from './commands.js';
+import { readEchoApproval, readEchoBack } from './echo.js';
 import { attestItem } from './attest.js';
 import { versionOf, writeCardIfUnchanged } from './lifecycle-write.js';
 import { currentDirtyTreeHash, runVerify } from './verify.js';
@@ -358,7 +360,35 @@ export async function advanceWorkItem(
     const decision = await engine.canTransition(id, to);
     if (!decision.allowed) refusals.push(`${decision.guard}: ${decision.reason}`);
 
-    // 1a. Definition of Ready (ADR-0031) — entry criteria, evaluated on the way
+    // 1a. The echo-back gate (ADR-0049). Evaluated on the way *out* of intake
+    // and discovery: the point is to catch a misread requirement before anyone
+    // spends a planning stage on it, and after planning the misreading has
+    // already been paid for.
+    //
+    // The human approval is the deterministic disposer here — the agent's own
+    // confidence in its understanding authorizes nothing.
+    if (from === 'intake' || from === 'discovery') {
+      const echo = await readEchoBack(layout.root, id);
+      if (echo === null) {
+        refusals.push(
+          `echo-back: ${id} has not restated what it understood. Building the wrong thing is the ` +
+            'most common way this goes wrong, and it is cheapest to catch here — record the ' +
+            'restatement, then `sdlc echo approve`.',
+        );
+      } else {
+        const echoConfig = await readConfig(layout.root);
+        const verdict = checkEchoBack(
+          echo,
+          (await readEchoApproval(layout.root, id)) ?? undefined,
+          {
+            autoApproveUnambiguous: echoConfig?.intake?.autoApproveUnambiguous ?? false,
+          },
+        );
+        if (!verdict.ok) refusals.push(`echo-back: ${verdict.reason}`);
+      }
+    }
+
+    // 1b. Definition of Ready (ADR-0031) — entry criteria, evaluated on the way
     // *into* planning and implementation. Checking readiness at `done` would be
     // asking whether work that is finished was well-specified, which is a
     // retrospective, not a gate.
