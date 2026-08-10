@@ -17,6 +17,7 @@ export * from './run.js';
 export * from './context.js';
 export * from './handoff.js';
 export * from './echo-back.js';
+export * from './comment-effect.js';
 export * from './memory.js';
 export * from './memory-entry.js';
 export * from './workspace.js';

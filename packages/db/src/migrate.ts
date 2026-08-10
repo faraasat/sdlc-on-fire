@@ -132,6 +132,47 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
    );`,
   'CREATE INDEX IF NOT EXISTS already_happened_work_item_idx ON already_happened_ledger (work_item_id);',
 
+  // ── Typed comments (P1-CMT-02, ADR-0012/0016) ─────────────────────────────
+  //
+  // Admitted into v0.1 with the contract note recorded in contracts/01: the
+  // table and the dispatch ship now because the live-steering wiring is what
+  // makes the injection defence real rather than declared. `author_role_id`
+  // stays NULL until roles land, and the dispatch is total over the null-role
+  // case, so an unroled comment resolves rather than falling through.
+  `CREATE TABLE IF NOT EXISTS comments (
+     id               BIGSERIAL PRIMARY KEY,
+     work_item_id     TEXT NOT NULL REFERENCES work_items(id),
+     author_actor_id  UUID REFERENCES actors(id),
+     author_role_id   INT REFERENCES roles(id),
+     type             TEXT NOT NULL CHECK (type IN
+                        ('normal','agent-instruction','decision','blocker','bug-report','review','context-reference')),
+     body             TEXT NOT NULL,
+     -- Computed server-side at insert from (type × role) and never re-derived
+     -- downstream (ADR-0012). This column, not the body, is what consumers read.
+     role_effect      TEXT NOT NULL CHECK (role_effect IN
+                        ('NONE','GATE_BLOCK','REQUIRED_CHANGE','DECISION_TO_MEMORY','RESCOPE',
+                         'UX_ACCEPTANCE_UPDATE','CONTEXT_INJECTION','BUG_CREATION')),
+     target_gate_key  TEXT,
+     addressed_to     TEXT,
+     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+   );`,
+  'CREATE INDEX IF NOT EXISTS comments_work_item_idx ON comments (work_item_id, created_at);',
+  // Immutable once written. A settable effect would let an edit convert an
+  // ordinary comment into an instruction after the fact, which is the injection
+  // vector re-opened through the back door.
+  `CREATE OR REPLACE FUNCTION comments_role_effect_immutable() RETURNS trigger AS $$
+     BEGIN
+       IF NEW.role_effect IS DISTINCT FROM OLD.role_effect THEN
+         RAISE EXCEPTION 'comments.role_effect is immutable once written (ADR-0012)';
+       END IF;
+       RETURN NEW;
+     END;
+   $$ LANGUAGE plpgsql;`,
+  'DROP TRIGGER IF EXISTS comments_role_effect_immutable_trg ON comments;',
+  `CREATE TRIGGER comments_role_effect_immutable_trg
+     BEFORE UPDATE ON comments FOR EACH ROW
+     EXECUTE FUNCTION comments_role_effect_immutable();`,
+
   // ── Traceability graph (P1-GATE-08, ADR-0032) ─────────────────────────────
   //
   // The Evidence Engine already produces every fact an edge needs — test

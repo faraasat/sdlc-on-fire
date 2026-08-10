@@ -51,6 +51,7 @@ import { recordReview } from './review.js';
 import { formatClaims, verifyWorkItemClaims } from './claims.js';
 import { scoreWorkItem } from './spec-score.js';
 import { approveEchoBack, readEchoBack, recordEchoBack } from './echo.js';
+import { directivesFor, postComment } from './comment.js';
 import { queueFor } from './queue.js';
 import { scanQuality } from './quality.js';
 import {
@@ -802,6 +803,57 @@ export function buildProgram(): Command {
       if (record === null) throw new Error(`${id} has no recorded echo-back`);
       const { renderQna } = await import('@sdlc-on-fire/core');
       emit(record, options.json === true, (r: NonNullable<typeof record>) => renderQna(r));
+    });
+
+  program
+    .command('comment')
+    .argument('<work-item-id>', 'the work item to comment on')
+    .argument('<body>', 'the comment text')
+    .description('post a typed comment; its effect is computed from type × role, never from text')
+    .option(
+      '--type <type>',
+      'normal | agent-instruction | decision | blocker | bug-report | review | context-reference',
+      'normal',
+    )
+    .option('--role <role>', "the author's role, when the workspace has roles")
+    .option('--to <agent>', 'narrow an instruction to one agent or role')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        body: string,
+        options: { type?: string; role?: string; to?: string; json?: boolean },
+      ): Promise<void> => {
+        const result = await postComment(root(), id, {
+          type: options.type ?? 'normal',
+          body,
+          role: options.role,
+          addressedTo: options.to,
+        });
+        emit(result, options.json === true, (r: typeof result) =>
+          [
+            `${r.workItemId}: #${String(r.id)} recorded as ${r.type} → ${r.roleEffect}`,
+            r.steers
+              ? '  This will reach the next context pack — not the run in flight (ADR-0016).'
+              : '  This changes nothing about what agents see; the effect says so, not the wording.',
+          ].join('\n'),
+        );
+      },
+    );
+
+  program
+    .command('directives')
+    .argument('<work-item-id>', 'the work item to show pending directives for')
+    .description("what typed comments will carry into this item's next context pack")
+    .option('--agent <agent>', 'the agent about to run, for addressed_to filtering')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { agent?: string; json?: boolean }): Promise<void> => {
+      const text = await directivesFor(root(), id, { agent: options.agent });
+      emit(
+        { workItemId: id, directives: text ?? null },
+        options.json === true,
+        () => text ?? `${id}: no comment carries into the next pack.`,
+      );
     });
 
   program

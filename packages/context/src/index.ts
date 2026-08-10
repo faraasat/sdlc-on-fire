@@ -3,6 +3,7 @@ export * from './metrics.js';
 export * from './retrieval.js';
 export * from './chunking.js';
 export * from './rehydrate.js';
+export * from './comment-directives.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
