@@ -1,5 +1,6 @@
 import { exceedsCeiling, type CanonicalSkill, type SkillTier } from '@sdlc-on-fire/core';
 import type { TierPolicyConfig } from '@sdlc-on-fire/core';
+import { outputJsonSchema } from './skills/output-schemas.js';
 
 /**
  * Tier → model routing (P0-AGENT-04, ADR-0028).
@@ -66,6 +67,27 @@ export class TierCeilingError extends Error {
   }
 }
 
+/**
+ * A skill routed to the cheap tier whose output nothing could check
+ * (P1-GATE-05, ADR-0028 §4).
+ *
+ * The tier's justification is that its output is verifiable, so a skill with no
+ * resolvable output schema has no business running there. Refusing at
+ * *resolution* rather than after dispatch matters: by the time an unverifiable
+ * cheap answer exists, the cheapest thing to do with it is believe it.
+ */
+export class UnverifiableLowTierError extends Error {
+  override readonly name = 'UnverifiableLowTierError';
+  constructor(skill: string, ref: string, source: TierSource) {
+    super(
+      `skill "${skill}" resolves to tier "low" (${source}) but its output contract ` +
+        `"${ref}" resolves to no schema, so nothing could verify what it produced. ` +
+        'Cheap-tier output is trusted only when it is actually checked (ADR-0028 §4) — ' +
+        'give the skill a resolvable schema, or route it at medium.',
+    );
+  }
+}
+
 export class UnroutableTierError extends Error {
   override readonly name = 'UnroutableTierError';
   constructor(tier: SkillTier, skill: string) {
@@ -101,6 +123,13 @@ export function resolveTier(skill: CanonicalSkill, policy: TierPolicy): TierReso
   // review, which is the failure this whole tier system exists to prevent.
   if (policy.maxTier !== undefined && exceedsCeiling(tier, policy.maxTier)) {
     throw new TierCeilingError(skill.name, tier, policy.maxTier, source);
+  }
+
+  // The second half of ADR-0028 §4, which nothing enforced: cheap output is
+  // trusted only when it can actually be verified. The router already decided
+  // this runs cheap; this decides whether it is allowed to.
+  if (tier === 'low' && outputJsonSchema(skill.output_contract.json_schema_ref) === undefined) {
+    throw new UnverifiableLowTierError(skill.name, skill.output_contract.json_schema_ref, source);
   }
 
   const model = policy.models[tier];

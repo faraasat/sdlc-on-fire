@@ -7,6 +7,7 @@ import {
   resolveTier,
   routeForDispatch,
   UnroutableTierError,
+  UnverifiableLowTierError,
   type TierPolicy,
 } from './tier-router.js';
 import { CANONICAL_SKILLS, SPEC_SKILL, IMPLEMENT_SKILL } from './skills/canonical.js';
@@ -199,5 +200,33 @@ describe('the tier ceiling (P1-AGENT-08)', () => {
     expect(policy.maxTier).toBe('medium');
     expect(policy.stageOverrides).toEqual({ review: 'medium' });
     expect(policy.models.low).toBe('claude-haiku-4-5-20251001');
+  });
+});
+
+describe('cheap-tier eligibility (P1-GATE-05, ADR-0028 §4)', () => {
+  it('refuses to route a skill to low when nothing could verify its output', () => {
+    const unverifiable = {
+      ...SPEC_SKILL,
+      output_contract: { ...SPEC_SKILL.output_contract, json_schema_ref: 'schemas/nowhere.json' },
+    };
+    // The tier's justification is that its output is checkable. Refusing at
+    // resolution matters: once an unverifiable cheap answer exists, the
+    // cheapest thing to do with it is believe it.
+    expect(() => resolveTier(unverifiable, { ...policy, skillOverrides: { spec: 'low' } })).toThrow(
+      UnverifiableLowTierError,
+    );
+  });
+
+  it('allows low when the output contract resolves to a real schema', () => {
+    const resolved = resolveTier(SPEC_SKILL, { ...policy, skillOverrides: { spec: 'low' } });
+    expect(resolved.tier).toBe('low');
+  });
+
+  it('does not apply the rule to medium, which has its own gates', () => {
+    const unverifiable = {
+      ...SPEC_SKILL,
+      output_contract: { ...SPEC_SKILL.output_contract, json_schema_ref: 'schemas/nowhere.json' },
+    };
+    expect(() => resolveTier(unverifiable, policy)).not.toThrow();
   });
 });
