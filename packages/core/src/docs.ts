@@ -36,6 +36,20 @@ export const SPEC_STATUSES = ['draft', 'active', 'archived'] as const;
  * handles errors" and "the system MUST reject a malformed payload" are different
  * commitments, and only the second can be checked.
  */
+/**
+ * How acceptance criteria in this spec are written (P1-OBJ-05, FEAT-OBJ-019).
+ *
+ * Declared rather than inferred, because the three styles are not
+ * interchangeable and a reader who guesses wrong misreads the criteria: `bdd`
+ * is GIVEN/WHEN/THEN prose, `tdd` names the failing test to write first, and
+ * `contract-first` fixes an interface before either. Downstream skills render
+ * differently per style, so the tag is what stops a spec being restyled by
+ * whoever picks it up next.
+ */
+export const AC_STYLES = ['bdd', 'tdd', 'contract-first'] as const;
+export const AcStyleSchema = z.enum(AC_STYLES);
+export type AcStyle = z.infer<typeof AcStyleSchema>;
+
 export const SpecSchema = z.object({
   $schema: z.url(),
   title: z.string().min(1),
@@ -43,6 +57,17 @@ export const SpecSchema = z.object({
   status: z.enum(SPEC_STATUSES),
   owner: z.string().min(1).nullable().optional(),
   requirements: z.array(z.string().min(1)).min(1),
+  /** Additive; defaults to `bdd`, the style the shipped spec skill emits. */
+  ac_style: AcStyleSchema.default('bdd'),
+  /**
+   * What this spec deliberately does **not** cover (P1-OBJ-06, FEAT-OBJ-021).
+   *
+   * Required, and required to be non-empty. Scope creep is rarely a decision
+   * anyone makes; it is the absence of a decision, and an empty non-goals list
+   * is what that absence looks like on disk. Forcing one sentence here is the
+   * cheapest scope control available.
+   */
+  non_goals: z.array(z.string().min(1)).min(1, 'a spec must state at least one non-goal'),
 });
 export type Spec = z.infer<typeof SpecSchema>;
 
@@ -70,6 +95,12 @@ export const SpecDeltaSchema = z.object({
   kind: DeltaKindSchema,
   requirement_id: z.string().min(1),
   text: z.string().min(1),
+  /**
+   * Style of the amended criterion (P1-OBJ-05). Optional here, unlike on a
+   * spec: a delta that does not say inherits the spec's style, and forcing a
+   * restatement per delta would invite drift between them.
+   */
+  ac_style: AcStyleSchema.optional(),
 });
 export type SpecDelta = z.infer<typeof SpecDeltaSchema>;
 

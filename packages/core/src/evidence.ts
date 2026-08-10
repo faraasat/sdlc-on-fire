@@ -113,6 +113,32 @@ export const EvidenceEnvSchema = z.object({
  * coverage report is two envelopes, never one merged blob — that keeps per-kind
  * lookup simple and each kind independently expirable (contract §2).
  */
+/**
+ * How a model was invoked, recorded on any verdict a model authored
+ * (P1-GATE-09, FEAT-EVID-014).
+ *
+ * Without this, two contradictory verdicts on the same diff are
+ * indistinguishable — same prompt, same code, different answer, and no way to
+ * tell whether the model changed, the temperature changed, or the model is
+ * simply non-deterministic. A verdict you cannot attribute is a verdict you
+ * cannot re-examine.
+ *
+ * `model` carries a version, not a family name: "the reviewer" is not
+ * reproducible six months later, and a provider silently re-pointing an alias
+ * is exactly the change this is meant to make visible.
+ */
+export const ModelInvocationSchema = z.object({
+  /** Fully qualified, version-pinned identifier. */
+  model: z.string().min(1),
+  provider: z.string().min(1),
+  temperature: z.number().min(0).max(2).optional(),
+  top_p: z.number().min(0).max(1).optional(),
+  max_output_tokens: z.number().int().positive().optional(),
+  /** Set when the provider reports a seed; makes a run replayable where supported. */
+  seed: z.number().int().optional(),
+});
+export type ModelInvocation = z.infer<typeof ModelInvocationSchema>;
+
 export const EvidenceEnvelopeSchema = z.object({
   kind: EvidenceKindSchema,
   producer: EvidenceProducerSchema,
@@ -128,10 +154,42 @@ export const EvidenceEnvelopeSchema = z.object({
   confidence: z.number().min(0).max(1),
   produced_at: z.iso.datetime(),
   expires_at: z.iso.datetime().optional(),
+  /**
+   * Required when a model authored this evidence, absent otherwise.
+   *
+   * Enforced below rather than left to convention: a model-authored verdict
+   * with no invocation record is unattributable, and the whole point of the
+   * envelope is that evidence carries its own provenance.
+   */
+  model_invocation: ModelInvocationSchema.optional(),
   payload: z.unknown(),
 });
 
 export type EvidenceEnvelope = z.infer<typeof EvidenceEnvelopeSchema>;
+
+/** Producers whose output a model wrote, and which therefore must be attributable. */
+const MODEL_AUTHORED: ReadonlySet<string> = new Set(['agent-claim']);
+
+/**
+ * The envelope, with the model-attribution rule applied.
+ *
+ * Kept as a separate schema rather than folded into the base so existing
+ * non-model evidence keeps parsing unchanged — the rule only bites where a
+ * model was involved.
+ */
+export const AttributedEvidenceEnvelopeSchema = EvidenceEnvelopeSchema.superRefine(
+  (envelope, ctx) => {
+    if (MODEL_AUTHORED.has(envelope.producer) && envelope.model_invocation === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['model_invocation'],
+        message:
+          `producer "${envelope.producer}" is model-authored, so model_invocation is required — ` +
+          'an unattributable verdict cannot be re-examined (P1-GATE-09)',
+      });
+    }
+  },
+);
 
 /** Producer-tier base confidence (contract §2). `agent-claim` is floored at 0. */
 export const PRODUCER_BASE_CONFIDENCE: Record<EvidenceProducer, number> = {

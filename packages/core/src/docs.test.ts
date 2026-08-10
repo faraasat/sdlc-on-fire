@@ -6,6 +6,7 @@ import {
   hasDocSchema,
   orderDeltas,
   ResearchSchema,
+  SpecDeltaSchema,
   SpecSchema,
   type SpecDelta,
 } from './docs.js';
@@ -19,10 +20,34 @@ describe('spec', () => {
     slug: 'csv-export',
     status: 'draft',
     requirements: ['The system MUST reject a malformed payload.'],
+    non_goals: ['Streaming very large files is out of scope for this spec.'],
   };
 
   it('accepts a well-formed spec', () => {
     expect(SpecSchema.safeParse(base).success).toBe(true);
+  });
+
+  it('requires non-goals, and requires them to say something (P1-OBJ-06)', () => {
+    // Scope creep is rarely a decision anyone makes; it is the absence of one,
+    // and an empty non-goals list is what that absence looks like on disk.
+    const { non_goals: _dropped, ...without } = base;
+    expect(SpecSchema.safeParse(without).success).toBe(false);
+    expect(SpecSchema.safeParse({ ...base, non_goals: [] }).success).toBe(false);
+    expect(SpecSchema.safeParse({ ...base, non_goals: [''] }).success).toBe(false);
+  });
+
+  it('defaults ac_style to bdd, the style the shipped spec skill emits (P1-OBJ-05)', () => {
+    const parsed = SpecSchema.parse(base);
+    expect(parsed.ac_style).toBe('bdd');
+  });
+
+  it('accepts the three declared ac styles and nothing else', () => {
+    for (const style of ['bdd', 'tdd', 'contract-first']) {
+      expect(SpecSchema.safeParse({ ...base, ac_style: style }).success, style).toBe(true);
+    }
+    // An unrecognised style would be silently carried into a skill that renders
+    // per style, which is how a spec gets restyled by whoever picks it up.
+    expect(SpecSchema.safeParse({ ...base, ac_style: 'gherkin' }).success).toBe(false);
   });
 
   it('requires a kebab-case slug', () => {
@@ -148,5 +173,24 @@ describe('registry', () => {
   it('reports which doc types have a schema', () => {
     expect(hasDocSchema('spec')).toBe(true);
     expect(hasDocSchema('risk')).toBe(false);
+  });
+});
+
+describe('ac_style on a delta (P1-OBJ-05)', () => {
+  const delta = { kind: 'MODIFIED', requirement_id: 'R-1', text: 'The system MUST retry once.' };
+
+  it('is optional, so a delta inherits the spec style', () => {
+    // Restating it per delta would invite drift between the delta and the spec
+    // it amends.
+    expect(SpecDeltaSchema.safeParse(delta).success).toBe(true);
+    expect(SpecDeltaSchema.parse(delta).ac_style).toBeUndefined();
+  });
+
+  it('can override, for a criterion written in a different style', () => {
+    expect(SpecDeltaSchema.parse({ ...delta, ac_style: 'tdd' }).ac_style).toBe('tdd');
+  });
+
+  it('rejects an unknown style rather than passing it through', () => {
+    expect(SpecDeltaSchema.safeParse({ ...delta, ac_style: 'nonsense' }).success).toBe(false);
   });
 });

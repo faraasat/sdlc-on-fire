@@ -7,6 +7,8 @@ import {
   isGatingEvidence,
   isStale,
   V0_1_EVIDENCE_KINDS,
+  AttributedEvidenceEnvelopeSchema,
+  ModelInvocationSchema,
 } from './evidence.js';
 
 const GIT_SHA = 'a'.repeat(40);
@@ -164,5 +166,66 @@ describe('staleness against HEAD', () => {
         { git_sha: GIT_SHA, dirty_tree_hash: DIRTY_HASH },
       ),
     ).toBe(false);
+  });
+});
+
+describe('model attribution on model-authored verdicts (P1-GATE-09)', () => {
+  const base = {
+    kind: 'test' as const,
+    git_sha: 'a'.repeat(40),
+    env: { tool_versions: { vitest: '4.1.10' }, os: 'darwin' },
+    content_hash: 'b'.repeat(64),
+    confidence: 0.5,
+    produced_at: new Date().toISOString(),
+    payload: {},
+  };
+
+  const invocation = { model: 'claude-sonnet-4-5-20250929', provider: 'anthropic', temperature: 0 };
+
+  it('requires an invocation record on model-authored evidence', () => {
+    // Two contradictory verdicts on the same diff are otherwise
+    // indistinguishable: same prompt, same code, different answer, no way to
+    // tell what changed.
+    const result = AttributedEvidenceEnvelopeSchema.safeParse({
+      ...base,
+      producer: 'agent-claim',
+      confidence: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts it once the invocation is recorded', () => {
+    expect(
+      AttributedEvidenceEnvelopeSchema.safeParse({
+        ...base,
+        producer: 'agent-claim',
+        confidence: 0,
+        model_invocation: invocation,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('does not demand attribution from the daemon or CI', () => {
+    // A `vitest` exit code has no model behind it, and demanding one would be
+    // ceremony rather than provenance.
+    for (const producer of ['daemon', 'ci', 'human'] as const) {
+      expect(
+        AttributedEvidenceEnvelopeSchema.safeParse({ ...base, producer }).success,
+        producer,
+      ).toBe(true);
+    }
+  });
+
+  it('requires a version-pinned model id, not a family name', () => {
+    // "the reviewer" is not reproducible six months later, and a provider
+    // re-pointing an alias is exactly what this makes visible.
+    expect(ModelInvocationSchema.safeParse({ ...invocation, model: '' }).success).toBe(false);
+    expect(ModelInvocationSchema.safeParse(invocation).success).toBe(true);
+  });
+
+  it('bounds the decoding params it records', () => {
+    expect(ModelInvocationSchema.safeParse({ ...invocation, temperature: 5 }).success).toBe(false);
+    expect(ModelInvocationSchema.safeParse({ ...invocation, top_p: 1.5 }).success).toBe(false);
+    expect(ModelInvocationSchema.safeParse({ ...invocation, top_p: 0.9 }).success).toBe(true);
   });
 });
