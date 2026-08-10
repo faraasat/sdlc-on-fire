@@ -12,6 +12,7 @@ export * from './fixtures.js';
 export * from './isolation.js';
 export * from './handoff.js';
 export * from './low-tier-verify.js';
+export * from './reconcile.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
