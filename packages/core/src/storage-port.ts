@@ -128,6 +128,32 @@ export interface AuditChainVerification {
   readonly reason?: string | undefined;
 }
 
+/** What a token budget is scoped to. */
+export type BudgetScope = 'agent' | 'work_item' | 'workspace';
+
+export interface BudgetWindow {
+  readonly scope: BudgetScope;
+  readonly scopeId: string;
+  readonly windowStart: Date;
+  readonly windowEnd: Date;
+  readonly limitTokens: number;
+}
+
+export interface BudgetState {
+  readonly scope: BudgetScope;
+  readonly scopeId: string;
+  readonly limitTokens: number;
+  readonly usedTokens: number;
+  readonly remainingTokens: number;
+}
+
+export interface TokenCharge {
+  readonly scope: BudgetScope;
+  readonly scopeId: string;
+  readonly tokens: number;
+  readonly at: Date;
+}
+
 /** The stage a work item is recorded at. */
 export interface MirrorStage {
   readonly lifecycleState: string;
@@ -226,6 +252,24 @@ export interface StoragePort {
    * here so "hash-chained" is not read as "tamper-proof against deletion".
    */
   verifyAuditChain(): Promise<AuditChainVerification>;
+
+  /* ---- scheduler budgets (P0-DB-05) ---- */
+
+  /**
+   * Charges tokens against a budget window, atomically.
+   *
+   * Returns the state after charging, or `null` when the charge would exceed
+   * the limit — in which case **nothing is recorded**. Read-then-write here
+   * would let two agents both see room and both spend it, which is how a budget
+   * becomes an estimate.
+   */
+  chargeTokens(charge: TokenCharge): Promise<BudgetState | null>;
+
+  /** The current window's state, or `null` when no budget is configured. */
+  budgetFor(scope: BudgetScope, scopeId: string, at: Date): Promise<BudgetState | null>;
+
+  /** Declares (or replaces) a budget window. */
+  setBudget(budget: BudgetWindow): Promise<void>;
 
   /* ---- rebuild ---- */
 

@@ -1,0 +1,43 @@
+# CI (P0-META-02) — lint, typecheck, test, build on every PR.
+#
+# `--frozen-lockfile` is the point of this file as much as the checks are
+# (P0-META-03, ADR-0033): a CI run that silently resolves a different dependency
+# tree than the lockfile records is not verifying the code anyone reviewed.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Lockfile-enforced install. Fails rather than updating the lockfile.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run format:check
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run test
+      - run: pnpm run build
+
+      # The built CLI must actually execute. A duplicate shebang once made
+      # dist/index.js a syntax error while 320 unit tests stayed green, because
+      # every one of them imported the module instead of running the artifact.
+      - run: node packages/cli/dist/index.js --version

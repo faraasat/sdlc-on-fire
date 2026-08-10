@@ -76,6 +76,43 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      GENERATED ALWAYS AS (to_tsvector('english', chunk_text)) STORED;`,
   'CREATE INDEX IF NOT EXISTS embeddings_chunk_tsv_idx ON embeddings USING GIN (chunk_tsv);',
 
+  // ── Scheduler state (P0-DB-05, FEAT-SCHED-001, ADR-0020) ──────────────────
+  //
+  // Budgets and rate-limit state live in the DB rather than in daemon memory
+  // for one reason: a daemon restart must not reset them. An in-memory counter
+  // that forgets on crash is not a budget, it is a suggestion — and the failure
+  // shows up as a surprise bill or a provider ban, never as an error.
+  `CREATE TABLE IF NOT EXISTS token_budgets (
+     id            BIGSERIAL PRIMARY KEY,
+     scope         TEXT NOT NULL,
+     scope_id      TEXT NOT NULL,
+     window_start  TIMESTAMPTZ NOT NULL,
+     window_end    TIMESTAMPTZ NOT NULL,
+     limit_tokens  BIGINT NOT NULL CHECK (limit_tokens > 0),
+     used_tokens   BIGINT NOT NULL DEFAULT 0 CHECK (used_tokens >= 0),
+     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+     CONSTRAINT token_budgets_scope_check CHECK (scope IN ('agent','work_item','workspace')),
+     CONSTRAINT token_budgets_window_check CHECK (window_end > window_start)
+   );`,
+  // One live window per scope: without this, two windows overlap and "how much
+  // is left" has two answers.
+  `CREATE UNIQUE INDEX IF NOT EXISTS token_budgets_window_idx
+     ON token_budgets (scope, scope_id, window_start);`,
+
+  `CREATE TABLE IF NOT EXISTS provider_rate_limits (
+     provider          TEXT PRIMARY KEY,
+     requests_limit    INT,
+     requests_remaining INT,
+     tokens_limit      BIGINT,
+     tokens_remaining  BIGINT,
+     -- When the provider says the window resets. Stored as the provider
+     -- reported it, never recomputed from a local clock: clock skew against a
+     -- rate limiter is how a scheduler backs off for the wrong duration.
+     resets_at         TIMESTAMPTZ,
+     retry_after_ms    INT,
+     observed_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+   );`,
+
   // Append-only audit log (ADR-0030). Never relaxed, not even for MVP —
   // architecture §5 lists it among the never-relaxed invariants.
   'REVOKE UPDATE, DELETE ON audit_log FROM PUBLIC;',

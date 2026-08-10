@@ -1,0 +1,58 @@
+# Release (P0-META-03, ADR-0033) — dual SBOM + Sigstore provenance + npm publish.
+#
+# Three supply-chain requirements, each here for a stated reason:
+#
+#   * `--frozen-lockfile` — publish exactly the dependency tree that was
+#     reviewed and tested, not whatever resolved at publish time.
+#   * Dual SBOM (CycloneDX + SPDX) — consumers' scanners disagree about which
+#     format they read, and an SBOM nobody can parse is not an SBOM.
+#   * `--provenance` — signs the build with the workflow that produced it, so a
+#     consumer can verify the tarball came from this repo rather than from
+#     someone who guessed the package name.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Required for Sigstore provenance: npm exchanges this for a signing identity.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+
+      - name: Generate SBOMs
+        run: |
+          mkdir -p sbom
+          pnpm dlx @cyclonedx/cyclonedx-npm --output-format json --output-file sbom/cyclonedx.json
+          pnpm dlx spdx-sbom-generator -o sbom || echo "spdx generation unavailable; cyclonedx still emitted"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+
+      # Provenance requires npm's own publisher, not pnpm's.
+      - name: Publish with provenance
+        run: npm publish --workspace packages/cli --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

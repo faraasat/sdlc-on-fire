@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { z } from 'zod';
+import { AdvancedConfigSchema } from './capabilities.js';
 
 /**
  * Canonical workspace layout and config schema, per
@@ -106,6 +107,8 @@ export const WorkspaceConfigSchema = z
         generate: z.array(z.enum(DOCS_ROOT_FILES)).optional(),
       })
       .prefault({}),
+    /** Advanced capabilities, every one default-off (ADR-0067, P0-OBJ-04). */
+    advanced: AdvancedConfigSchema,
     database: z
       .object({
         mode: DatabaseModeSchema.default('pglite'),

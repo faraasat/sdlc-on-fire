@@ -1,6 +1,10 @@
 import { canonicalJsonHash } from '@sdlc-on-fire/core';
 import type {
   AuditChainVerification,
+  BudgetScope,
+  BudgetState,
+  BudgetWindow,
+  TokenCharge,
   AuditEntry,
   AuditRecord,
   ChunkHit,
@@ -381,6 +385,50 @@ export class PostgresStorageAdapter implements StoragePort {
     };
   }
 
+  async setBudget(budget: BudgetWindow): Promise<void> {
+    await this.#executor.query(
+      `INSERT INTO token_budgets (scope, scope_id, window_start, window_end, limit_tokens)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (scope, scope_id, window_start) DO UPDATE SET
+         window_end = EXCLUDED.window_end, limit_tokens = EXCLUDED.limit_tokens, updated_at = now();`,
+      [
+        budget.scope,
+        budget.scopeId,
+        budget.windowStart.toISOString(),
+        budget.windowEnd.toISOString(),
+        budget.limitTokens,
+      ],
+    );
+  }
+
+  async budgetFor(scope: BudgetScope, scopeId: string, at: Date): Promise<BudgetState | null> {
+    const rows = await this.#executor.query<BudgetRow>(
+      `SELECT scope, scope_id, limit_tokens, used_tokens FROM token_budgets
+        WHERE scope = $1 AND scope_id = $2 AND window_start <= $3 AND window_end > $3;`,
+      [scope, scopeId, at.toISOString()],
+    );
+    const row = rows[0];
+    return row === undefined ? null : toBudgetState(row);
+  }
+
+  async chargeTokens(charge: TokenCharge): Promise<BudgetState | null> {
+    // One conditional UPDATE, for the same reason the claim is: read-then-write
+    // lets two agents both see room and both spend it, and a budget that can be
+    // overspent by concurrency is an estimate wearing a limit's name. The
+    // `used_tokens + $4 <= limit_tokens` predicate is the enforcement.
+    const rows = await this.#executor.query<BudgetRow>(
+      `UPDATE token_budgets
+          SET used_tokens = used_tokens + $4, updated_at = now()
+        WHERE scope = $1 AND scope_id = $2
+          AND window_start <= $3 AND window_end > $3
+          AND used_tokens + $4 <= limit_tokens
+        RETURNING scope, scope_id, limit_tokens, used_tokens;`,
+      [charge.scope, charge.scopeId, charge.at.toISOString(), charge.tokens],
+    );
+    const row = rows[0];
+    return row === undefined ? null : toBudgetState(row);
+  }
+
   async resetMirror(): Promise<void> {
     // Order matters only for readability — `embeddings` has no FK to the mirror
     // tables (contract 01 §2 keeps `source_id` polymorphic and unconstrained),
@@ -445,4 +493,31 @@ interface AuditRow {
   detail: Record<string, unknown> | null;
   prev_hash: string | null;
   record_hash: string;
+}
+
+interface BudgetRow {
+  scope: string;
+  scope_id: string;
+  limit_tokens: string | number;
+  used_tokens: string | number;
+}
+
+/**
+ * Normalises a budget row.
+ *
+ * `BIGINT` comes back as a string from node-postgres (a bigint can exceed
+ * `Number.MAX_SAFE_INTEGER`, so the driver refuses to guess). Token counts are
+ * nowhere near that, but the *types* differ between drivers, and arithmetic on
+ * a string silently concatenates.
+ */
+function toBudgetState(row: BudgetRow): BudgetState {
+  const limit = Number(row.limit_tokens);
+  const used = Number(row.used_tokens);
+  return {
+    scope: row.scope as BudgetScope,
+    scopeId: row.scope_id,
+    limitTokens: limit,
+    usedTokens: used,
+    remainingTokens: Math.max(0, limit - used),
+  };
 }

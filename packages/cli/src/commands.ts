@@ -8,12 +8,15 @@ import {
   GITIGNORE_ENTRIES,
   ROOT_FILES,
   WorkspaceConfigSchema,
+  AdvancedConfigSchema,
+  describeCapabilities,
   docsToGenerate,
   isLifecycleStage,
   isTerminalStage,
   nextStage,
   resolveRequiredStages,
   resolveWorkspaceLayout,
+  type CapabilityDiscoveryRow,
   type Preset,
   type WorkspaceConfig,
 } from '@sdlc-on-fire/core';
@@ -503,9 +506,20 @@ export async function hooksInstall(root: string): Promise<InstallHooksResult & {
 export interface ConfigResult {
   readonly configPath: string;
   readonly config: WorkspaceConfig | null;
+  /**
+   * Every advanced capability with its default, current value, ADR and cost
+   * class — on or off (ADR-0067). Listing only the enabled ones would make
+   * "advanced" mean hidden; the point is that it means deliberate.
+   */
+  readonly capabilities: readonly CapabilityDiscoveryRow[];
 }
 
 export async function showConfig(root: string): Promise<ConfigResult> {
   const layout = resolveWorkspaceLayout(root);
-  return { configPath: layout.configPath, config: await readConfig(root) };
+  const config = await readConfig(root);
+  return {
+    configPath: layout.configPath,
+    config,
+    capabilities: describeCapabilities(config?.advanced ?? AdvancedConfigSchema.parse({})),
+  };
 }

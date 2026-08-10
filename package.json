@@ -1,6 +1,6 @@
 {
   "name": "sdlc-on-fire-monorepo",
-  "version": "0.0.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
   "description": "Monorepo root for SDLC on Fire. Not published — the published surface is packages/cli (`sdlc-on-fire`).",

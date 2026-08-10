@@ -6,6 +6,7 @@ export * from './skills/canonical.js';
 export * from './skills/review.js';
 export * from './dispatch.js';
 export * from './tier-router.js';
+export * from './fixtures.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';

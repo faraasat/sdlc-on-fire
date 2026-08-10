@@ -389,3 +389,89 @@ describe('hash-chained audit log (P0-DB-06, ADR-0030)', () => {
     expect(after.checked).toBe(2);
   });
 });
+
+describe('token budgets (P0-DB-05, ADR-0020)', () => {
+  const now = new Date('2026-08-10T12:00:00.000Z');
+  const later = new Date('2026-08-10T12:30:00.000Z');
+
+  beforeAll(async () => {
+    await port.setBudget({
+      scope: 'agent',
+      scopeId: 'agent-a',
+      windowStart: new Date('2026-08-10T11:00:00.000Z'),
+      windowEnd: new Date('2026-08-10T13:00:00.000Z'),
+      limitTokens: 1_000,
+    });
+  });
+
+  it('reports a configured window', async () => {
+    const state = await port.budgetFor('agent', 'agent-a', now);
+    expect(state?.limitTokens).toBe(1_000);
+    expect(state?.remainingTokens).toBe(1_000);
+  });
+
+  it('returns null outside the window rather than silently reusing it', async () => {
+    // A budget that leaks past its window is not a window.
+    expect(
+      await port.budgetFor('agent', 'agent-a', new Date('2026-08-10T14:00:00.000Z')),
+    ).toBeNull();
+  });
+
+  it('charges and decrements', async () => {
+    const state = await port.chargeTokens({
+      scope: 'agent',
+      scopeId: 'agent-a',
+      tokens: 400,
+      at: now,
+    });
+    expect(state?.usedTokens).toBe(400);
+    expect(state?.remainingTokens).toBe(600);
+  });
+
+  it('refuses a charge that would exceed the limit, and records nothing', async () => {
+    const before = await port.budgetFor('agent', 'agent-a', now);
+    const denied = await port.chargeTokens({
+      scope: 'agent',
+      scopeId: 'agent-a',
+      tokens: 5_000,
+      at: now,
+    });
+    expect(denied).toBeNull();
+
+    // Partial spend on a refused charge would be the worst of both outcomes.
+    const after = await port.budgetFor('agent', 'agent-a', now);
+    expect(after?.usedTokens).toBe(before?.usedTokens);
+  });
+
+  it('cannot be overspent by concurrent charges', async () => {
+    // Read-then-write lets two agents both see room and both spend it — a
+    // budget that concurrency can overrun is an estimate wearing a limit's name.
+    await port.setBudget({
+      scope: 'agent',
+      scopeId: 'racer',
+      windowStart: new Date('2026-08-10T11:00:00.000Z'),
+      windowEnd: new Date('2026-08-10T13:00:00.000Z'),
+      limitTokens: 1_000,
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        port.chargeTokens({ scope: 'agent', scopeId: 'racer', tokens: 100, at: later }),
+      ),
+    );
+
+    expect(results.filter((r) => r !== null)).toHaveLength(10);
+    const final = await port.budgetFor('agent', 'racer', later);
+    expect(final?.usedTokens).toBe(1_000);
+    expect(final?.remainingTokens).toBe(0);
+  });
+
+  it('returns null when no budget is configured, distinguishable from an exhausted one', async () => {
+    // "No budget" and "budget spent" are different answers; collapsing them
+    // would either block unbudgeted work or wave through exhausted work.
+    expect(await port.budgetFor('agent', 'nobody', now)).toBeNull();
+    expect(
+      await port.chargeTokens({ scope: 'agent', scopeId: 'nobody', tokens: 1, at: now }),
+    ).toBeNull();
+  });
+});

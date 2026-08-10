@@ -110,11 +110,18 @@ describe('suspending during a git operation', () => {
   }, 60_000);
 
   it('goes back to live syncing after resume', async () => {
-    const before = seen.length;
     await fs.writeFile(path.join(root, 'kanban', '_inbox', 'TASK-92.md'), card('TASK-92'), 'utf8');
-    for (let i = 0; i < 60 && seen.length === before; i += 1) {
+
+    // Poll for this card specifically. Waiting on the observer's length instead
+    // makes the test pass on *any* file's sync, and the delivery deadline is
+    // the operating system's to choose — under full-suite parallel load it is
+    // not prompt. The claim under test is "a live write still lands", not
+    // "it lands within N milliseconds".
+    let stage = await port.stageOf('TASK-92');
+    for (let i = 0; i < 150 && stage === null; i += 1) {
       await new Promise((r) => setTimeout(r, 100));
+      stage = await port.stageOf('TASK-92');
     }
-    expect(await port.stageOf('TASK-92')).not.toBeNull();
+    expect(stage).not.toBeNull();
   }, 60_000);
 });

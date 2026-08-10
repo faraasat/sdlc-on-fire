@@ -19,7 +19,12 @@ import { PostgresStorageAdapter } from './postgres-adapter.js';
  * mocked one would claim a verification it did not perform.
  */
 
-const LIVE_URL = process.env['SDLCOF_TEST_POSTGRES_URL'];
+// Trim and test for emptiness, not just `undefined`. CI declares the variable
+// and leaves it blank when the secret is unset, so an `undefined` check alone
+// runs the live suite against an empty connection string and fails for a reason
+// that has nothing to do with the code.
+const RAW_URL = process.env['SDLCOF_TEST_POSTGRES_URL']?.trim();
+const LIVE_URL = RAW_URL === undefined || RAW_URL === '' ? undefined : RAW_URL;
 const live = LIVE_URL === undefined ? describe.skip : describe;
 
 describe('connection-string validation', () => {
