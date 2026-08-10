@@ -11,6 +11,7 @@ import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import { defaultV01Policy, evaluateGate, persistEvidence } from '@sdlc-on-fire/evidence';
 import { findWorkItem, openWorkspaceDatabase, treeContext } from './commands.js';
 import { attestItem } from './attest.js';
+import { versionOf, writeCardIfUnchanged } from './lifecycle-write.js';
 import { currentDirtyTreeHash, runVerify } from './verify.js';
 import { applySchema, PostgresStorageAdapter } from '@sdlc-on-fire/db';
 import {
@@ -395,17 +396,21 @@ export async function advanceWorkItem(
       [id, from, to, JSON.stringify({ pass: true, missing: [], failures: [] })],
     );
 
-    // Content is the source of truth: rewrite the card, let sync follow.
+    // Content is the source of truth: rewrite the card, let sync follow — but
+    // only if it still holds what the guards and the gate were evaluated
+    // against. A blind write here discards whatever arrived in between, and the
+    // discarded write is the one nobody notices.
     const advanced = {
       ...data,
       lifecycle_state: to,
       status: kanbanColumnForStage(to),
       updated_at: new Date().toISOString(),
     };
-    await fs.writeFile(
+    await writeCardIfUnchanged(
       found.filePath,
+      versionOf(found.raw),
       renderWorkItem(advanced as never, parsed.body.trim() + '\n'),
-      'utf8',
+      id,
     );
 
     return { workItemId: id, from, to, moved: true, refusals: [] };
@@ -504,7 +509,7 @@ export async function reopenWorkItem(
       } as never,
       parsed.body.trim() + '\n',
     );
-    await fs.writeFile(found.filePath, rewritten, 'utf8');
+    await writeCardIfUnchanged(found.filePath, versionOf(found.raw), rewritten, id);
 
     return {
       workItemId: id,

@@ -45,6 +45,7 @@ import { advanceWorkItem } from './advance.js';
 import { reopenWorkItem, verifyWorkItem } from './advance.js';
 import { auditDependencies } from './audit.js';
 import { branchFor, type BranchResult } from './branch.js';
+import { prFor } from './pr.js';
 
 export * from './commands.js';
 
@@ -495,6 +496,29 @@ export function buildProgram(): Command {
           : `${r.workItemId}: not reopened\n  ✗ ${r.reason}`,
       );
       if (!result.reopened) process.exitCode = 1;
+    });
+
+  program
+    .command('pr')
+    .argument('<work-item-id>', 'the work item to open a pull request for')
+    .description("render a PR title and body with this item's recorded evidence bundle")
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
+      const result = await prFor(root(), id);
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof prFor>>) =>
+        [
+          `# ${r.title}`,
+          `branch: ${r.branch}`,
+          '',
+          r.body,
+          '',
+          // Stated rather than left for the reader to infer from the table: a
+          // body can be perfectly well-formed and describe a gate that fails.
+          r.gatePasses
+            ? `gate: passes on ${String(r.evidenceCount)} recorded run(s)`
+            : `gate: DOES NOT PASS — ${String(r.evidenceCount)} recorded run(s), ${String(r.staleCount)} stale`,
+        ].join('\n'),
+      );
     });
 
   program
