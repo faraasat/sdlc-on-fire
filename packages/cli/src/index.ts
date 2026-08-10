@@ -512,7 +512,17 @@ export function buildProgram(): Command {
           `  command:  ${r.command}`,
           `  exit:     ${String(r.exitCode)}  (${String(r.durationMs)}ms)`,
           `  evidence: #${String(r.evidenceId)} recorded by the daemon, not claimed by an agent`,
-        ].join('\n'),
+          // A fallback that only shows up as a lower confidence score in the DB
+          // is a fallback nobody acts on. Naming the remedy is the difference
+          // between 0.6-confidence evidence forever and a one-word fix.
+          r.report === 'exit-code-only'
+            ? '  ⚠ no test count could be read — this is exit-code-only evidence (confidence 0.6).\n' +
+              '    Add a machine-readable reporter to the verify command (e.g. `--reporter=json`\n' +
+              '    for Vitest/Jest, or `--test-reporter=tap` for node:test) to record real counts.'
+            : '',
+        ]
+          .filter((line) => line !== '')
+          .join('\n'),
       );
       if (!result.ok) process.exitCode = 1;
     });
