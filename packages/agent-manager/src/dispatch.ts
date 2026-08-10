@@ -16,6 +16,14 @@ import { fillSlots } from './prompt.js';
  * whole product.
  */
 
+/**
+ * A dispatch that did not produce a usable result.
+ *
+ * The target's own last words go in the message, not only on the `stderr`
+ * property. "target exited 1" tells an operator nothing; "Not logged in ·
+ * Please run /login" tells them exactly what to do, and that string was already
+ * in hand — it was just parked somewhere nobody prints.
+ */
 export class DispatchError extends Error {
   override readonly name = 'DispatchError';
   constructor(
@@ -23,7 +31,8 @@ export class DispatchError extends Error {
     message: string,
     readonly stderr?: string | undefined,
   ) {
-    super(`dispatch of "${skill}" failed: ${message}`);
+    const detail = (stderr ?? '').trim().split('\n').filter(Boolean).slice(-2).join(' — ');
+    super(`dispatch of "${skill}" failed: ${message}${detail.length > 0 ? ` (${detail})` : ''}`);
   }
 }
 
@@ -205,8 +214,21 @@ function unwrapCliEnvelope(stdout: string): { text: string; failed: boolean; rea
   if (typeof envelope.result !== 'string') return { text: stdout, failed: false };
 
   if (envelope.is_error === true) {
+    // Report the message, not the subtype. Verified against the real CLI
+    // (v2.1.226): a not-logged-in failure comes back as `is_error: true` with
+    // `subtype: "success"`, so keying the reason on subtype produced the
+    // useless line "target reported is_error (success)" and threw away the one
+    // string a human needed — "Not logged in · Please run /login".
+    const detail = envelope.result.trim();
     const subtype = typeof envelope.subtype === 'string' ? envelope.subtype : 'unknown';
-    return { text: envelope.result, failed: true, reason: `target reported is_error (${subtype})` };
+    return {
+      text: envelope.result,
+      failed: true,
+      reason:
+        detail.length > 0
+          ? `target reported is_error: ${detail}`
+          : `target reported is_error (subtype ${subtype}, no message)`,
+    };
   }
   return { text: envelope.result, failed: false };
 }
@@ -218,12 +240,13 @@ function unwrapCliEnvelope(stdout: string): { text: string; failed: boolean; rea
  * CLI is involved — and so tests never need a model.
  *
  * Invocation is `-p <prompt> --output-format json`, verified against the CLI
- * reference (code.claude.com/docs/en/cli-reference, checked 2026-08-10).
+ * reference (code.claude.com/docs/en/cli-reference) and against the real binary
+ * (v2.1.226) on 2026-08-10.
  */
 export function claudeCodeTransport(binary = 'claude'): AgentTransport {
   return ({ prompt, cwd, timeoutMs }) =>
     new Promise((resolve) => {
-      execFile(
+      const child = execFile(
         binary,
         ['-p', prompt, '--output-format', 'json'],
         { cwd, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
@@ -239,5 +262,12 @@ export function claudeCodeTransport(binary = 'claude'): AgentTransport {
           });
         },
       );
+
+      // Close stdin immediately. The real CLI blocks for 3 seconds waiting for
+      // piped input before giving up ("no stdin data received in 3s"), and
+      // `execFile` leaves the pipe open — so every dispatch paid three seconds
+      // for input that is never coming. We pass the prompt in argv; there is no
+      // stdin leg to this protocol.
+      child.stdin?.end();
     });
 }

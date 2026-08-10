@@ -125,6 +125,44 @@ describe('claudeCodeTransport over a real process', () => {
     );
   });
 
+  it('closes stdin so the target never waits for input that is not coming', async () => {
+    // Found against the real CLI (v2.1.226): it blocks 3 seconds waiting for
+    // piped stdin before proceeding, and execFile leaves the pipe open. This
+    // shim only answers once stdin reaches EOF, so if the pipe were left open
+    // the dispatch would hang until the timeout instead of returning.
+    const bin = await writeFakeCli(
+      'needs-eof.mjs',
+      `let seen = '';
+       process.stdin.on('data', (d) => { seen += d; });
+       process.stdin.on('end', () => {
+         process.stdout.write(JSON.stringify({
+           type: 'result', subtype: 'success', is_error: false,
+           result: 'emit_spec ' + JSON.stringify({ stdinBytes: seen.length }),
+           session_id: 'x', total_cost_usd: 0,
+         }));
+       });`,
+    );
+
+    const result = await dispatchSkill({ ...request, timeoutMs: 10_000 }, claudeCodeTransport(bin));
+    expect(result.output).toEqual({ stdinBytes: 0 });
+  });
+
+  it('reports the target own message rather than its subtype', async () => {
+    // The real CLI returns is_error: true with subtype: "success" when not
+    // logged in, so keying the reason on subtype yielded the useless line
+    // "target reported is_error (success)" and dropped the actionable text.
+    const bin = await writeFakeCli(
+      'not-logged-in.mjs',
+      `process.stdout.write(JSON.stringify({
+         type: 'result', subtype: 'success', is_error: true,
+         result: 'Not logged in \u00b7 Please run /login',
+         session_id: 'x', total_cost_usd: 0,
+       }));`,
+    );
+
+    await expect(dispatchSkill(request, claudeCodeTransport(bin))).rejects.toThrow(/Not logged in/);
+  });
+
   it('surfaces raw output when the CLI never emitted an envelope', async () => {
     // A crash before JSON must show what actually happened, not a parse error.
     const bin = await writeFakeCli('prose.mjs', `process.stdout.write('Segmentation fault');`);
