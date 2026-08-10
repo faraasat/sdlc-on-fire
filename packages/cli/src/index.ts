@@ -46,6 +46,7 @@ import { reopenWorkItem, verifyWorkItem } from './advance.js';
 import { auditDependencies } from './audit.js';
 import { branchFor, type BranchResult } from './branch.js';
 import { prFor } from './pr.js';
+import { queueFor } from './queue.js';
 
 export * from './commands.js';
 
@@ -519,6 +520,35 @@ export function buildProgram(): Command {
             : `gate: DOES NOT PASS — ${String(r.evidenceCount)} recorded run(s), ${String(r.staleCount)} stale`,
         ].join('\n'),
       );
+    });
+
+  program
+    .command('queue')
+    .description('what can be worked on now, and what is waiting on what')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await queueFor(root());
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof queueFor>>) => {
+        if (r.cycle !== undefined) {
+          return [
+            `✗ dependency cycle — no wave can be scheduled: ${r.cycle.join(', ')}`,
+            '  Break the cycle by removing a `blocked_by` entry on one of these cards.',
+          ].join('\n');
+        }
+        if (r.waves.length === 0) {
+          return `Nothing open.${r.completed.length === 0 ? '' : ` ${String(r.completed.length)} item(s) done.`}`;
+        }
+        return r.waves
+          .flatMap((wave) => [
+            `wave ${String(wave.index)}${wave.index === 0 ? '  (ready now)' : '  (waiting on wave ' + String(wave.index - 1) + ')'}`,
+            ...wave.items.map(
+              (item) =>
+                `  ${item.id.padEnd(12)} ${item.riskLevel.padEnd(7)} ${item.lifecycleState.padEnd(16)} ${item.title}` +
+                (item.claimedBy === null ? '' : `  [claimed by ${item.claimedBy}]`),
+            ),
+          ])
+          .join('\n');
+      });
     });
 
   program

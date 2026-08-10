@@ -20,12 +20,30 @@ export interface WaveTask {
   readonly blockedBy: readonly string[];
   /** Author-pinned wave, when the task declares one. */
   readonly wave?: number | null | undefined;
+  /**
+   * Ordering weight *within* a wave — higher runs first (P1-SCHED-02).
+   *
+   * Deliberately not a way to jump a wave. Priority answers "which of the things
+   * that can run now should run first"; a dependency answers "can this run at
+   * all", and letting priority override that would schedule work against code
+   * that does not exist yet. So it reorders inside a wave and nothing else.
+   */
+  readonly priority?: number | undefined;
 }
 
 export interface Wave {
   readonly index: number;
   readonly taskIds: readonly string[];
 }
+
+/**
+ * Risk level as an ordering weight.
+ *
+ * Not a new field on the card. An author already states `risk_level`, and asking
+ * them to *also* state a priority would mean two answers to one question that
+ * drift apart — the second one being the stale one.
+ */
+const PRIORITY_BY_RISK: Readonly<Record<string, number>> = { high: 2, medium: 1, low: 0 };
 
 /** Extracts the wave-relevant fields from a task work item. */
 export function toWaveTask(task: Task): WaveTask {
@@ -34,6 +52,9 @@ export function toWaveTask(task: Task): WaveTask {
     fileOwnership: task.file_ownership ?? [],
     blockedBy: task.blocked_by ?? [],
     wave: task.wave,
+    // Risk becomes priority: high-risk work goes first among the things that can
+    // run now, because it is the work most likely to invalidate what follows it.
+    priority: PRIORITY_BY_RISK[task.risk_level] ?? 0,
   };
 }
 
@@ -146,9 +167,18 @@ export function resolveWaves(tasks: readonly WaveTask[]): Wave[] {
       throw new WaveCycleError([...remaining.keys()]);
     }
 
-    // Greedy packing in declaration order, so the grouping is deterministic.
+    // Highest priority first, then declaration order. The tiebreak matters:
+    // sorting on priority alone would make the grouping depend on the sort's
+    // stability, and a wave plan that differs between runs is not a plan.
+    const ordered = [...eligible].sort((a, b) => {
+      const byPriority = (b.priority ?? 0) - (a.priority ?? 0);
+      if (byPriority !== 0) return byPriority;
+      return tasks.indexOf(a) - tasks.indexOf(b);
+    });
+
+    // Greedy packing, so the grouping is deterministic.
     const chosen: WaveTask[] = [];
-    for (const task of eligible) {
+    for (const task of ordered) {
       if (chosen.every((other) => !tasksConflict(task, other))) chosen.push(task);
     }
 
