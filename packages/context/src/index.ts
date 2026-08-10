@@ -1,3 +1,6 @@
+export * from './assemble.js';
+export * from './retrieval.js';
+
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
 

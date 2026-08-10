@@ -19,6 +19,7 @@ export * from './workspace.js';
 export * from './skill.js';
 export * from './hash.js';
 export * from './task-spec.js';
+export * from './preset.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report
