@@ -188,3 +188,118 @@ describe('the seam itself', () => {
     );
   });
 });
+
+describe('claim / lease (P0-DB-08, ADR-0048)', () => {
+  beforeAll(async () => {
+    await port.upsertWorkItem({
+      id: 'TASK-CLAIM',
+      type: 'task',
+      title: 'Claimable',
+      status: 'To Do',
+      lifecycleState: 'implement',
+      filePath: 'kanban/_inbox/TASK-CLAIM.md',
+      contentHash: 'hc',
+    });
+  });
+
+  it('grants a claim on an unclaimed item', async () => {
+    const state = await port.claim({
+      workItemId: 'TASK-CLAIM',
+      actor: 'agent-a',
+      kind: 'agent',
+      leaseMs: 60_000,
+    });
+    expect(state?.claimedBy).toBe('agent-a');
+    expect(state?.claimKind).toBe('agent');
+  });
+
+  it('refuses a second actor while the lease is live', async () => {
+    // The race ADR-0048 exists to close: an advisory status field would let
+    // both actors read "todo" and both write "in progress".
+    const state = await port.claim({
+      workItemId: 'TASK-CLAIM',
+      actor: 'agent-b',
+      kind: 'agent',
+      leaseMs: 60_000,
+    });
+    expect(state).toBeNull();
+    expect((await port.claimOf('TASK-CLAIM'))?.claimedBy).toBe('agent-a');
+  });
+
+  it('lets exactly one of many concurrent claimants win', async () => {
+    await port.releaseClaim('TASK-CLAIM', 'agent-a');
+
+    const attempts = await Promise.all(
+      Array.from({ length: 16 }, (_, i) =>
+        port.claim({
+          workItemId: 'TASK-CLAIM',
+          actor: `racer-${String(i)}`,
+          kind: 'agent',
+          leaseMs: 60_000,
+        }),
+      ),
+    );
+    const winners = attempts.filter((state) => state !== null);
+    expect(winners).toHaveLength(1);
+  });
+
+  it('renews rather than fails when the holder re-claims', async () => {
+    const holder = (await port.claimOf('TASK-CLAIM'))?.claimedBy;
+    expect(holder).toBeDefined();
+
+    const before = (await port.claimOf('TASK-CLAIM'))?.leaseExpiresAt;
+    const renewed = await port.claim({
+      workItemId: 'TASK-CLAIM',
+      actor: holder as string,
+      kind: 'agent',
+      leaseMs: 600_000,
+    });
+    expect(renewed?.claimedBy).toBe(holder);
+    expect(new Date(renewed?.leaseExpiresAt ?? 0).getTime()).toBeGreaterThan(
+      new Date(before ?? 0).getTime(),
+    );
+  });
+
+  it('frees the item once the lease expires, without anyone releasing it', async () => {
+    // A crashed actor must not hold work forever.
+    const holder = (await port.claimOf('TASK-CLAIM'))?.claimedBy as string;
+    await port.releaseClaim('TASK-CLAIM', holder);
+
+    await port.claim({
+      workItemId: 'TASK-CLAIM',
+      actor: 'crashed-actor',
+      kind: 'agent',
+      leaseMs: -1_000, // already expired
+    });
+
+    expect(await port.claimOf('TASK-CLAIM')).toBeNull();
+    const taken = await port.claim({
+      workItemId: 'TASK-CLAIM',
+      actor: 'next-actor',
+      kind: 'human',
+      leaseMs: 60_000,
+    });
+    expect(taken?.claimedBy).toBe('next-actor');
+  });
+
+  it('refuses to release a claim the caller does not hold', async () => {
+    // Releasing someone else's claim is a break-claim, which ADR-0048 requires
+    // to be an audited path rather than a side effect of calling release.
+    expect(await port.releaseClaim('TASK-CLAIM', 'not-the-holder')).toBe(false);
+    expect(await port.claimOf('TASK-CLAIM')).not.toBeNull();
+
+    expect(await port.releaseClaim('TASK-CLAIM', 'next-actor')).toBe(true);
+    expect(await port.claimOf('TASK-CLAIM')).toBeNull();
+  });
+
+  it('returns null for an unknown work item rather than granting a claim', async () => {
+    expect(
+      await port.claim({
+        workItemId: 'TASK-404',
+        actor: 'agent-a',
+        kind: 'agent',
+        leaseMs: 60_000,
+      }),
+    ).toBeNull();
+  });
+});

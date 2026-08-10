@@ -64,6 +64,14 @@ export interface GitManager {
   createBranch(name: string, startPoint?: string): Promise<void>;
   /** Paths changed relative to HEAD, including untracked files. */
   changedPaths(): Promise<string[]>;
+  /**
+   * Paths a single commit touched — what a post-commit/post-merge hook needs.
+   *
+   * Distinct from {@link changedPaths}, which reports the *working tree*. After
+   * a merge the working tree is clean, so asking it what changed answers
+   * "nothing" while several hundred files have in fact moved.
+   */
+  changedInCommit(ref?: string): Promise<string[]>;
   /** Changed paths split into tool-managed bookkeeping and product code. */
   classifyWorkingTree(): Promise<ClassifiedChanges>;
   diff(paths?: readonly string[]): Promise<string>;
@@ -137,8 +145,27 @@ export function createGitManager(options: GitManagerOptions): GitManager {
     return [...new Set(status.files.map((file) => file.path))].sort();
   }
 
+  async function changedInCommit(ref = 'HEAD'): Promise<string[]> {
+    await assertRepo();
+    // `--root` is load-bearing: without it a commit with no parent reports no
+    // paths at all, so the very first commit in a fresh repo would sync nothing.
+    const output = await git.raw([
+      'diff-tree',
+      '--no-commit-id',
+      '--name-only',
+      '-r',
+      '--root',
+      ref,
+    ]);
+    return output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
   return {
     repoRoot,
+    changedInCommit,
 
     async isRepo(): Promise<boolean> {
       return git.checkIsRepo();

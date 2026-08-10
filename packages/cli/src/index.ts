@@ -24,6 +24,8 @@ import {
   instructions,
   nextSequence,
   rebuild,
+  syncBatch,
+  hooksInstall,
   showConfig,
   status,
   type InstructionsResult,
@@ -219,6 +221,39 @@ export function buildProgram(): Command {
           `  failed:     ${String(r.failed.length)}`,
           `  took:       ${String(r.durationMs)}ms`,
           ...r.failed.map((f) => `    ! ${f.relativePath}: ${f.error}`),
+        ].join('\n'),
+      );
+    });
+
+  program
+    .command('sync:batch')
+    .description('re-sync the paths a git operation just changed (used by the installed hooks)')
+    .option('--since <ref>', 'commit whose changed paths to sync', 'HEAD')
+    .option('--json', 'emit JSON')
+    .action(async (options: { since?: string; json?: boolean }): Promise<void> => {
+      const result = await syncBatch(root(), options.since ?? 'HEAD');
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof syncBatch>>) =>
+        [
+          `Synced ${String(r.considered)} managed path(s)`,
+          `  upserted: ${String(r.upserted)}`,
+          `  deleted:  ${String(r.deleted)}`,
+          `  failed:   ${String(r.failed.length)}`,
+          ...r.failed.map((f) => `    ! ${f.relativePath}: ${f.error}`),
+        ].join('\n'),
+      );
+    });
+
+  program
+    .command('hooks:install')
+    .description('install the git hooks that keep the mirror current across merges and checkouts')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await hooksInstall(root());
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof hooksInstall>>) =>
+        [
+          `Installed ${String(r.installed.length)} hook(s) in ${r.root}`,
+          ...r.installed.map((hook) => `  + ${hook}`),
+          ...r.skipped.map((entry) => `  ~ ${entry.hook} skipped — ${entry.reason}`),
         ].join('\n'),
       );
     });

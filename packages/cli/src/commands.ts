@@ -21,7 +21,13 @@ import { fillSlots, skillForStage } from '@sdlc-on-fire/agent-manager';
 import { estimateTokens } from '@sdlc-on-fire/context';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import { applySchema, provisionPglite, PostgresStorageAdapter } from '@sdlc-on-fire/db';
-import { rebuildMirror } from '@sdlc-on-fire/daemon';
+import {
+  createGitManager,
+  installGitHooks,
+  rebuildMirror,
+  syncChangedPaths,
+  type InstallHooksResult,
+} from '@sdlc-on-fire/daemon';
 
 /**
  * Command implementations, kept separate from the Commander wiring.
@@ -394,6 +400,56 @@ export async function rebuild(root: string): Promise<RebuildCommandResult> {
   } finally {
     await db.close();
   }
+}
+
+export interface SyncBatchResult {
+  readonly root: string;
+  readonly considered: number;
+  readonly upserted: number;
+  readonly deleted: number;
+  readonly failed: readonly { readonly relativePath: string; readonly error: string }[];
+}
+
+/**
+ * `sdlc sync:batch` — re-sync the paths git just changed (P0-SYNC-02).
+ *
+ * Invoked by the installed hooks after a commit, merge, checkout or rewrite.
+ * Asks git which paths moved rather than re-walking the tree: a branch switch
+ * touches what it touches, and re-reading a large repo on every checkout would
+ * make the hook the slowest thing about using git.
+ */
+export async function syncBatch(root: string, since = 'HEAD'): Promise<SyncBatchResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const git = createGitManager({ repoRoot: layout.root });
+  if (!(await git.isRepo())) {
+    throw new Error(`${layout.root} is not a git repository`);
+  }
+
+  const changed = await git.changedInCommit(since);
+  const db = await provisionPglite({ workspaceRoot: layout.root });
+  try {
+    await applySchema(db);
+    const port = await PostgresStorageAdapter.create(db);
+    const result = await syncChangedPaths(layout.root, port, changed);
+
+    return {
+      root: layout.root,
+      considered: result.considered,
+      upserted: result.outcomes.filter((o) => o.action === 'upserted').length,
+      deleted: result.outcomes.filter((o) => o.action === 'deleted').length,
+      failed: result.outcomes
+        .filter((o) => o.action === 'failed')
+        .map((o) => ({ relativePath: o.relativePath, error: o.error ?? 'unknown' })),
+    };
+  } finally {
+    await db.close();
+  }
+}
+
+/** `sdlc hooks:install` — install the git hooks that drive `sync:batch`. */
+export async function hooksInstall(root: string): Promise<InstallHooksResult & { root: string }> {
+  const layout = resolveWorkspaceLayout(root);
+  return { root: layout.root, ...(await installGitHooks(layout.root)) };
 }
 
 export interface ConfigResult {

@@ -1,5 +1,8 @@
 import type {
   ChunkHit,
+  ClaimKind,
+  ClaimRequest,
+  ClaimState,
   ChunkRecord,
   DocMirror,
   MirrorStage,
@@ -214,6 +217,55 @@ export class PostgresStorageAdapter implements StoragePort {
     }));
   }
 
+  async claim(request: ClaimRequest): Promise<ClaimState | null> {
+    // One statement. The WHERE clause is the entire concurrency control: a row
+    // is claimable only if nobody holds it, the previous lease has lapsed, or
+    // the caller already holds it (in which case this renews). Splitting this
+    // into a SELECT then an UPDATE would reintroduce the race the claim exists
+    // to close, and the window is exactly wide enough to lose a work item to
+    // two actors on a fast machine.
+    const rows = await this.#executor.query<ClaimRow>(
+      `UPDATE work_items
+          SET claimed_by = $2,
+              claim_kind = $3,
+              claimed_at = now(),
+              lease_expires_at = now() + make_interval(secs => $4)
+        WHERE id = $1
+          AND (claimed_by IS NULL OR lease_expires_at <= now() OR claimed_by = $2)
+        RETURNING id, claimed_by, claim_kind, claimed_at, lease_expires_at;`,
+      [request.workItemId, request.actor, request.kind, request.leaseMs / 1000],
+    );
+    const row = rows[0];
+    return row === undefined ? null : toClaimState(row);
+  }
+
+  async releaseClaim(workItemId: string, actor: string): Promise<boolean> {
+    // Scoped to the holder: releasing someone else's claim is not a release,
+    // it is a break-claim, which ADR-0048 requires to be an audited path.
+    const rows = await this.#executor.query<{ id: string }>(
+      `UPDATE work_items
+          SET claimed_by = NULL, claim_kind = NULL, claimed_at = NULL, lease_expires_at = NULL
+        WHERE id = $1 AND claimed_by = $2
+        RETURNING id;`,
+      [workItemId, actor],
+    );
+    return rows.length > 0;
+  }
+
+  async claimOf(workItemId: string): Promise<ClaimState | null> {
+    // An expired lease is reported as no claim. Leaving it visible would let a
+    // crashed actor appear to still hold work forever, which is the failure
+    // leases exist to prevent.
+    const rows = await this.#executor.query<ClaimRow>(
+      `SELECT id, claimed_by, claim_kind, claimed_at, lease_expires_at
+         FROM work_items
+        WHERE id = $1 AND claimed_by IS NOT NULL AND lease_expires_at > now();`,
+      [workItemId],
+    );
+    const row = rows[0];
+    return row === undefined ? null : toClaimState(row);
+  }
+
   async resetMirror(): Promise<void> {
     // Order matters only for readability — `embeddings` has no FK to the mirror
     // tables (contract 01 §2 keeps `source_id` polymorphic and unconstrained),
@@ -246,4 +298,25 @@ function assertTable(table: MirrorTable): 'work_items' | 'docs' {
     throw new Error(`unknown mirror table: ${String(table)}`);
   }
   return table;
+}
+
+interface ClaimRow {
+  id: string;
+  claimed_by: string | null;
+  claim_kind: string | null;
+  claimed_at: Date | string | null;
+  lease_expires_at: Date | string | null;
+}
+
+/** Normalises a claim row, with timestamps as ISO strings so the port stays driver-agnostic. */
+function toClaimState(row: ClaimRow): ClaimState {
+  const iso = (value: Date | string | null): string =>
+    value === null ? '' : value instanceof Date ? value.toISOString() : value;
+  return {
+    workItemId: row.id,
+    claimedBy: row.claimed_by ?? '',
+    claimKind: (row.claim_kind ?? 'agent') as ClaimKind,
+    claimedAt: iso(row.claimed_at),
+    leaseExpiresAt: iso(row.lease_expires_at),
+  };
 }

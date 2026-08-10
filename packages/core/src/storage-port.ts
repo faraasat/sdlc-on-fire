@@ -83,6 +83,26 @@ export interface ChunkHit {
   readonly breadcrumb?: string | undefined;
 }
 
+/** Who may hold a claim (ADR-0048). */
+export type ClaimKind = 'agent' | 'human';
+
+/** A live claim on a work item. */
+export interface ClaimState {
+  readonly workItemId: string;
+  readonly claimedBy: string;
+  readonly claimKind: ClaimKind;
+  readonly claimedAt: string;
+  readonly leaseExpiresAt: string;
+}
+
+export interface ClaimRequest {
+  readonly workItemId: string;
+  readonly actor: string;
+  readonly kind: ClaimKind;
+  /** How long the claim survives without renewal. */
+  readonly leaseMs: number;
+}
+
 /** The stage a work item is recorded at. */
 export interface MirrorStage {
   readonly lifecycleState: string;
@@ -132,6 +152,28 @@ export interface StoragePort {
   /* ---- lifecycle ---- */
 
   stageOf(workItemId: string): Promise<MirrorStage | null>;
+
+  /* ---- claim / lease (ADR-0048) ---- */
+
+  /**
+   * Acquires or renews a claim, atomically.
+   *
+   * Returns `null` when another actor holds a live claim. This **must** be a
+   * single conditional write, not read-then-write: two actors who both read
+   * "unclaimed" and then both write their own name is precisely the race
+   * ADR-0048 exists to prevent, and it is the reason an advisory status field
+   * was rejected as the mechanism.
+   *
+   * Re-claiming as the current holder renews the lease rather than failing —
+   * an actor should not have to release and race for its own work.
+   */
+  claim(request: ClaimRequest): Promise<ClaimState | null>;
+
+  /** Releases a claim. `false` when the caller does not hold it. */
+  releaseClaim(workItemId: string, actor: string): Promise<boolean>;
+
+  /** The live claim, or `null` when unclaimed **or** the lease has expired. */
+  claimOf(workItemId: string): Promise<ClaimState | null>;
 
   /* ---- rebuild ---- */
 
