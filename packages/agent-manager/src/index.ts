@@ -4,6 +4,7 @@ export * from './adapters/claude-code.js';
 export * from './doctor.js';
 export * from './skills/canonical.js';
 export * from './skills/review.js';
+export * from './skills/retrospective.js';
 export * from './dispatch.js';
 export * from './tier-router.js';
 export * from './fixtures.js';

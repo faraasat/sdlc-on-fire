@@ -10,14 +10,21 @@ import {
   IMPLEMENT_SKILL,
   SPEC_SKILL,
 } from './canonical.js';
+import { RETROSPECTIVE_SKILL } from './retrospective.js';
 
 const skills = Object.values(CANONICAL_SKILLS);
 
 describe('canonical skills', () => {
-  it('ships exactly the three v0.1 skills', () => {
-    // spec + implement (P1-SKILL-01) and review (P1-SKILL-02). `review` was
-    // built but never registered, which made it invisible to stage resolution.
-    expect(Object.keys(CANONICAL_SKILLS).sort()).toEqual(['implement', 'review', 'spec']);
+  it('ships exactly the four v0.1 skills', () => {
+    // spec + implement (P1-SKILL-01), review (P1-SKILL-02), retrospective
+    // (P1-SKILL-03). `review` was once built but never registered, which made
+    // it invisible to stage resolution — hence this census.
+    expect(Object.keys(CANONICAL_SKILLS).sort()).toEqual([
+      'implement',
+      'retrospective',
+      'review',
+      'spec',
+    ]);
   });
 
   it('maps each skill to a distinct stage', () => {
@@ -153,5 +160,31 @@ describe('deprecation surfaced by doctor (P0-AGENT-05, ADR-0034)', () => {
       adapters: [new ClaudeCodeAdapter(), new ClaudeCodeAdapter()],
     });
     expect(report.findings.filter((f) => f.field === 'deprecation')).toHaveLength(1);
+  });
+});
+
+describe('the retrospective skill (P1-SKILL-03)', () => {
+  it('is registered and owns the retrospective stage', () => {
+    expect(skillForStage('retrospective')?.name).toBe('retrospective');
+  });
+
+  it('caps the output at one entry, and permits zero', () => {
+    // The failure mode of a memory store is accumulation, not scarcity: a wrong
+    // remembered fact is retrieved with the same confidence as a right one.
+    expect(RETROSPECTIVE_SKILL.task).toMatch(/at most one/i);
+    expect(RETROSPECTIVE_SKILL.task).toMatch(/emit an empty entry/i);
+    expect(RETROSPECTIVE_SKILL.stop_condition).toMatch(/one memory entry/i);
+  });
+
+  it('forces a durability test before emitting', () => {
+    expect(RETROSPECTIVE_SKILL.self_verification).toMatch(/six months/i);
+    expect(RETROSPECTIVE_SKILL.self_verification).toMatch(/from the diff alone/i);
+  });
+
+  it('does not let itself open follow-up work or advance the lifecycle', () => {
+    // A retrospective that files tasks is a planning stage wearing a
+    // retrospective's name.
+    expect(RETROSPECTIVE_SKILL.stop_condition).toMatch(/not open follow-up/i);
+    expect(RETROSPECTIVE_SKILL.role).toMatch(/do not advance the lifecycle/i);
   });
 });

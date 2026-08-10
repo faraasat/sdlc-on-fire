@@ -1,11 +1,12 @@
 import { CanonicalSkillSchema, type CanonicalSkill } from '@sdlc-on-fire/core';
 import { REVIEW_SKILL } from './review.js';
+import { RETROSPECTIVE_SKILL } from './retrospective.js';
 
 /**
  * The canonical stage skills (P1-SKILL-01).
  *
- * v0.1 ships `spec` and `implement` (P1-SKILL-01) plus `review` (P1-SKILL-02)
- * per mvp-slice; discovery, decompose, plan-story and retrospective are
+ * v0.1 ships `spec` and `implement` (P1-SKILL-01), `review` (P1-SKILL-02) and
+ * `retrospective` (P1-SKILL-03); discovery, decompose and plan-story remain
  * deferred. These are the source every agent surface compiles from (ADR-0007):
  * editing a compiled `.claude/skills/**` file is editing build output.
  *
@@ -99,6 +100,7 @@ export const CANONICAL_SKILLS: Readonly<Record<string, CanonicalSkill>> = {
   spec: SPEC_SKILL,
   implement: IMPLEMENT_SKILL,
   review: REVIEW_SKILL,
+  retrospective: RETROSPECTIVE_SKILL,
 };
 
 export function getSkill(name: string): CanonicalSkill | undefined {
