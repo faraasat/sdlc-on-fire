@@ -484,19 +484,38 @@ export function buildProgram(): Command {
       'who is advancing it — must hold the claim',
       process.env['USER'] ?? 'local',
     )
+    .option(
+      '--override <reason>',
+      'proceed despite Definition-of-Ready findings, saying why (ADR-0031)',
+    )
     .option('--json', 'emit JSON')
-    .action(async (id: string, options: { as?: string; json?: boolean }): Promise<void> => {
-      const result = await advanceWorkItem(root(), id, { actor: options.as });
-      emit(result, options.json === true, (r: Awaited<ReturnType<typeof advanceWorkItem>>) =>
-        r.moved
-          ? `${r.workItemId}: ${r.from} → ${r.to}`
-          : [
-              `${r.workItemId}: BLOCKED at "${r.from}"${r.to === null ? '' : ` (wanted "${r.to}")`}`,
-              ...r.refusals.map((reason) => `  ✗ ${reason}`),
-            ].join('\n'),
-      );
-      if (!result.moved) process.exitCode = 1;
-    });
+    .action(
+      async (
+        id: string,
+        options: { as?: string; override?: string; json?: boolean },
+      ): Promise<void> => {
+        const result = await advanceWorkItem(root(), id, {
+          actor: options.as,
+          readinessOverride: options.override,
+        });
+        emit(result, options.json === true, (r: Awaited<ReturnType<typeof advanceWorkItem>>) =>
+          [
+            r.moved
+              ? `${r.workItemId}: ${r.from} → ${r.to}`
+              : [
+                  `${r.workItemId}: BLOCKED at "${r.from}"${r.to === null ? '' : ` (wanted "${r.to}")`}`,
+                  ...r.refusals.map((reason) => `  ✗ ${reason}`),
+                ].join('\n'),
+            // Printed on a *successful* move too. A soft gate whose findings only
+            // appear when it blocks is a gate that never says anything.
+            ...(r.readiness === undefined
+              ? []
+              : ['  not ready, proceeding anyway:', ...r.readiness.map((line) => `  ⚠ ${line}`)]),
+          ].join('\n'),
+        );
+        if (!result.moved) process.exitCode = 1;
+      },
+    );
 
   program
     .command('branch')

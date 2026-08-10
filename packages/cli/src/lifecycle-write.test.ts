@@ -128,3 +128,81 @@ describe('through the command', () => {
     expect(after.match(/^lifecycle_state: /gm)).toHaveLength(1);
   }, 180_000);
 });
+
+describe('Definition of Ready at the boundary (P1-GATE-07, ADR-0031)', () => {
+  // Each preset's ladder differs, so the card starts wherever a readiness stage
+  // is actually next — the gate fires on the way *into* planning and
+  // implementation, not at an arbitrary stage.
+  const VAGUE = (preset: string, stage: string): string =>
+    [
+      '---',
+      '$schema: https://sdlc-on-fire.dev/schema/work-item.json',
+      'id: TASK-001',
+      'kind: feature',
+      'title: Vague',
+      'status: In Progress',
+      `lifecycle_state: ${stage}`,
+      'work_type: feature',
+      `preset: ${preset}`,
+      'risk_level: low',
+      'verify: node test.js',
+      'done:',
+      '  - it should probably work',
+      'created_at: 2026-08-10T00:00:00.000Z',
+      'updated_at: 2026-08-10T00:00:00.000Z',
+      '---',
+      '',
+      'body',
+      '',
+    ].join('\n');
+
+  it('reports findings without adding a refusal under standard', async () => {
+    await fs.writeFile(cardPath(), VAGUE('standard', 'plan'), 'utf8');
+    const result = await advanceWorkItem(root, 'TASK-001', { actor: 'ana' });
+
+    // Soft: the reader is told what was under-specified, and readiness itself
+    // adds nothing to the refusal list. Other guards may still refuse — that is
+    // their business, not this gate's.
+    expect(result.readiness?.join(' ')).toContain('non-goals-present');
+    expect(result.readiness?.join(' ')).toContain('acceptance-criteria-scored');
+    expect(result.refusals.filter((reason) => reason.startsWith('ready:'))).toEqual([]);
+  }, 60_000);
+
+  it('adds a refusal under strict, where the workspace asked for it', async () => {
+    await fs.writeFile(cardPath(), VAGUE('strict', 'plan'), 'utf8');
+    const result = await advanceWorkItem(root, 'TASK-001', { actor: 'ana' });
+
+    expect(result.moved).toBe(false);
+    expect(result.refusals.some((reason) => reason.startsWith('ready:'))).toBe(true);
+  }, 60_000);
+
+  it('lets a real reason lift the strict refusal', async () => {
+    await fs.writeFile(cardPath(), VAGUE('strict', 'plan'), 'utf8');
+    const result = await advanceWorkItem(root, 'TASK-001', {
+      actor: 'ana',
+      readinessOverride: 'the scope is fixed by a contract we already signed',
+    });
+
+    expect(result.refusals.filter((reason) => reason.startsWith('ready:'))).toEqual([]);
+    // Overridden, not erased — the findings still travel with the result.
+    expect(result.readiness?.length ?? 0).toBeGreaterThan(0);
+  }, 60_000);
+
+  it('does not accept a gesture as an override', async () => {
+    await fs.writeFile(cardPath(), VAGUE('strict', 'plan'), 'utf8');
+    const result = await advanceWorkItem(root, 'TASK-001', {
+      actor: 'ana',
+      readinessOverride: 'ok',
+    });
+
+    expect(result.refusals.join(' ')).toContain('not a gesture');
+  }, 60_000);
+
+  it('does not evaluate readiness at stages that are not entry points', async () => {
+    await fs.writeFile(cardPath(), VAGUE('standard', 'implement'), 'utf8');
+    const result = await advanceWorkItem(root, 'TASK-001', { actor: 'ana' });
+    // Asking at `test` whether the spec was well-formed is a retrospective,
+    // not a gate.
+    expect(result.readiness).toBeUndefined();
+  }, 60_000);
+});

@@ -160,12 +160,14 @@ export const ADVANCED_CAPABILITIES: readonly CapabilityDefinition[] = [
   // reads the flag now exists — which is the only thing that ever moves a
   // capability off `declared`.
   capability('knowledge_claim_gate', 'The knowledge-claim evidence gate.', ['b'], 'ADR-0019'),
+  // Wired (P1-GATE-07): the gate runs soft on every workspace; this flag makes
+  // its findings *block*, which is a different statement from choosing the
+  // strict preset. Both reach the same place; neither implies the other.
   capability(
     'definition_of_ready_gate',
-    'The Definition-of-Ready gate.',
+    'Enforce the Definition-of-Ready gate — findings block instead of warning.',
     ['b'],
     'ADR-0031',
-    'P1-GATE-07',
   ),
   capability(
     'connected_database',

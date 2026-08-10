@@ -9,7 +9,13 @@ import {
   type Preset,
 } from '@sdlc-on-fire/core';
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
-import { defaultV01Policy, evaluateGate, persistEvidence } from '@sdlc-on-fire/evidence';
+import {
+  defaultV01Policy,
+  evaluateGate,
+  evaluateReadiness,
+  isAdmissibleOverride,
+  persistEvidence,
+} from '@sdlc-on-fire/evidence';
 import { findWorkItem, openWorkspaceDatabase, readConfig, treeContext } from './commands.js';
 import { attestItem } from './attest.js';
 import { versionOf, writeCardIfUnchanged } from './lifecycle-write.js';
@@ -208,6 +214,37 @@ export async function verifyWorkItem(
   }
 }
 
+/** Frontmatter list fields arrive as unknown; a non-list is an absent list, not a crash. */
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value))
+    return value.filter((entry): entry is string => typeof entry === 'string');
+  if (typeof value === 'string' && value.trim() !== '') {
+    return value
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+/**
+ * Which of the given ids have actually finished.
+ *
+ * Read from the mirror rather than trusted from the card: "blocked by TASK-9"
+ * is the author's statement, and whether TASK-9 is done is a fact.
+ */
+async function finishedAmong(
+  db: { query: <T>(sql: string, params?: unknown[]) => Promise<T[]> },
+  ids: readonly string[],
+): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const rows = await db.query<{ id: string }>(
+    "SELECT id FROM work_items WHERE id = ANY($1) AND lifecycle_state = 'done';",
+    [[...ids]],
+  );
+  return rows.map((row) => row.id);
+}
+
 export interface AdvanceResult {
   readonly workItemId: string;
   readonly from: string;
@@ -215,6 +252,14 @@ export interface AdvanceResult {
   readonly moved: boolean;
   /** Why it was refused. Empty when it moved. */
   readonly refusals: readonly string[];
+  /**
+   * Definition-of-Ready findings (P1-GATE-07, ADR-0031).
+   *
+   * Reported alongside a *successful* move under lite/standard, because that is
+   * what a soft gate is: the work proceeds and the reader is told what was
+   * under-specified. Under `strict` they arrive in `refusals` instead.
+   */
+  readonly readiness?: readonly string[] | undefined;
 }
 
 /**
@@ -228,7 +273,7 @@ export interface AdvanceResult {
 export async function advanceWorkItem(
   root: string,
   id: string,
-  options: { actor?: string | undefined } = {},
+  options: { actor?: string | undefined; readinessOverride?: string | undefined } = {},
 ): Promise<AdvanceResult> {
   const { resolveWorkspaceLayout } = await import('@sdlc-on-fire/core');
   const layout = resolveWorkspaceLayout(root);
@@ -294,6 +339,54 @@ export async function advanceWorkItem(
     // 1. Structural + invariant guards.
     const decision = await engine.canTransition(id, to);
     if (!decision.allowed) refusals.push(`${decision.guard}: ${decision.reason}`);
+
+    // 1a. Definition of Ready (ADR-0031) — entry criteria, evaluated on the way
+    // *into* planning and implementation. Checking readiness at `done` would be
+    // asking whether work that is finished was well-specified, which is a
+    // retrospective, not a gate.
+    const READINESS_STAGES = new Set(['plan', 'implement']);
+    let readiness: readonly string[] | undefined;
+    if (READINESS_STAGES.has(to)) {
+      // The workspace can enforce entry criteria without choosing the strict
+      // preset (ADR-0067). Reading the flag is what keeps it from being a switch
+      // that reports `enabled: true` and changes nothing.
+      const dorConfig = await readConfig(layout.root);
+      const verdict = evaluateReadiness({
+        id,
+        preset,
+        enforce: dorConfig?.advanced?.definition_of_ready_gate === true,
+        acceptanceCriteria: asStringArray(data['done']),
+        nonGoals: asStringArray(data['non_goals']),
+        blockedBy: asStringArray(data['blocked_by']),
+        resolvedBlockers: await finishedAmong(db, asStringArray(data['blocked_by'])),
+      });
+
+      if (!verdict.ready) {
+        readiness = verdict.findings.map((finding) => `${finding.check}: ${finding.detail}`);
+        const override = options.readinessOverride;
+        const admissible =
+          override !== undefined &&
+          isAdmissibleOverride({
+            workItemId: id,
+            actor: options.actor ?? 'local',
+            reason: override,
+            findings: verdict.findings.map((finding) => finding.check),
+          });
+
+        if (verdict.blocked && !admissible) {
+          // Only reachable under `strict`, where the workspace asked for it.
+          refusals.push(
+            ...verdict.findings.map((finding) => `ready: ${finding.detail} — ${finding.remedy}`),
+          );
+          if (override !== undefined) {
+            refusals.push(
+              'ready: the override needs a reason, not a gesture — one sentence saying why ' +
+                'starting under-specified work is the right call here',
+            );
+          }
+        }
+      }
+    }
 
     // 2. The evidence gate.
     //
@@ -457,7 +550,14 @@ export async function advanceWorkItem(
     }
 
     if (refusals.length > 0) {
-      return { workItemId: id, from, to, moved: false, refusals };
+      return {
+        workItemId: id,
+        from,
+        to,
+        moved: false,
+        refusals,
+        ...(readiness === undefined ? {} : { readiness }),
+      };
     }
 
     // Record the transition. Without this the history the guards read is always
@@ -488,7 +588,17 @@ export async function advanceWorkItem(
       id,
     );
 
-    return { workItemId: id, from, to, moved: true, refusals: [] };
+    // A soft gate reports on a *successful* move: the work proceeds and the
+    // reader is told what was under-specified. Silently dropping the findings
+    // here is exactly how a soft gate becomes no gate.
+    return {
+      workItemId: id,
+      from,
+      to,
+      moved: true,
+      refusals: [],
+      ...(readiness === undefined ? {} : { readiness }),
+    };
   } finally {
     await db.close();
   }
