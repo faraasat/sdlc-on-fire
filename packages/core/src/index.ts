@@ -49,6 +49,7 @@ export * from './dangerous-command.js';
 export * from './command-normalize.js';
 export * from './pii-redact.js';
 export * from './threat-model.js';
+export * from './agent-scope.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report
