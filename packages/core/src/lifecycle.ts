@@ -114,6 +114,11 @@ export function kanbanColumnForStage(stage: LifecycleStage): KanbanColumn {
  * item: "not every story needs every stage" is row-subset absence, never an
  * always-present-but-skippable state.
  *
+ * `dependency-upgrade` (P2-LIFE-01) keeps `implement` in every preset even
+ * though a bot usually writes the whole diff: a major bump often needs the
+ * calling code adapted, and a stage you pass straight through costs less than a
+ * stage you cannot enter when you turn out to need it.
+ *
  * RESOLVED (ADR-0070, closing contract §8 #3): the table stays keyed on
  * `work_type`, and `task` is a work type — not a second axis. Epics take
  * `new-project`/`existing-codebase` and stories take `feature`/`bug`; only an
@@ -123,6 +128,14 @@ export function kanbanColumnForStage(stage: LifecycleStage): KanbanColumn {
 export const REQUIRED_STAGES: Record<Preset, Record<string, readonly LifecycleStage[]>> = {
   lite: {
     task: ['implement', 'done'],
+    // `test` is present in *every* preset row for this work type, including
+    // lite — where even a plain `task` skips it. That is the whole point of the
+    // work type: for a dependency upgrade the diff was written by a bot and
+    // nobody is reviewing the library's internals, so the regression evidence
+    // *is* the deliverable. What gets dropped instead is discovery/spec/
+    // decompose/plan, which is the ceremony that made teams route bot PRs
+    // around the process entirely (FEAT-LIFE-001).
+    'dependency-upgrade': ['triage', 'implement', 'test', 'done'],
     bug: ['triage', 'implement', 'done'],
     feature: ['spec', 'implement', 'review', 'done'],
     'new-project': ['discovery', 'spec', 'decompose', 'done'],
@@ -130,6 +143,7 @@ export const REQUIRED_STAGES: Record<Preset, Record<string, readonly LifecycleSt
   },
   standard: {
     task: ['implement', 'test', 'review', 'done'],
+    'dependency-upgrade': ['triage', 'implement', 'test', 'review', 'done'],
     bug: ['triage', 'plan', 'implement', 'test', 'review', 'done'],
     feature: ['discovery', 'spec', 'decompose', 'plan', 'implement', 'test', 'review', 'done'],
     'new-project': ['intake', 'discovery', 'spec', 'decompose', 'plan', 'review', 'done'],
@@ -137,6 +151,19 @@ export const REQUIRED_STAGES: Record<Preset, Record<string, readonly LifecycleSt
   },
   strict: {
     task: ['plan', 'implement', 'test', 'security_review', 'review', 'approval', 'done'],
+    // `security_review` is not optional here even though the change is "just a
+    // version bump": a dependency upgrade is a supply-chain event, and the
+    // 2026 incident record (ADR-0033) is entirely composed of version bumps
+    // that looked routine.
+    'dependency-upgrade': [
+      'triage',
+      'implement',
+      'test',
+      'security_review',
+      'review',
+      'approval',
+      'done',
+    ],
     bug: ['triage', 'plan', 'implement', 'test', 'security_review', 'review', 'approval', 'done'],
     feature: [
       'discovery',
