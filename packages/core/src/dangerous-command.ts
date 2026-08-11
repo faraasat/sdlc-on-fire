@@ -22,14 +22,17 @@
  * that refuses `rm -rf ./dist` in a build script gets switched off within a
  * week, taking the rules that mattered with it.
  *
- * **Scope, stated rather than implied.** This matcher is deliberately literal.
- * It reads command text, and text can be obfuscated — base64 piped to a shell,
- * variable indirection, `$IFS` tricks. Defeating that needs a
- * deobfuscation-normalising, argument-aware classifier, which is P2-SEC-07 and
- * a different piece of work. What ships here catches the unobfuscated cases,
- * which is what an agent following a plan actually emits, and it does not claim
- * to catch an adversary who knows this file exists.
+ * **Obfuscation (P2-SEC-07).** Rules are matched against the *normalised* text,
+ * so `r""m -rf /` and `$IFS` padding no longer walk past a literal pattern. The
+ * normaliser cannot be complete — deciding what an arbitrary shell program runs
+ * is the halting problem wearing a `$` — so obfuscation is *also* a finding in
+ * its own right: a command that base64-decodes into a shell needs a human
+ * because it does that, whatever the payload turns out to be. An adversary who
+ * defeats the unwrapping still trips that rule; an agent following an ordinary
+ * plan trips neither.
  */
+
+import { isDeliberatelyObfuscated, normalizeCommand } from './command-normalize.js';
 
 export type CommandVerdict = 'refuse' | 'approve' | 'allow';
 
@@ -43,6 +46,10 @@ export interface CommandAssessment {
   readonly command: string;
   readonly verdict: CommandVerdict;
   readonly findings: readonly CommandFinding[];
+  /** The text the rules were actually matched against. */
+  readonly normalized: string;
+  /** Obfuscation techniques observed, whether or not they were undone. */
+  readonly techniques: readonly string[];
 }
 
 interface CommandRule {
@@ -163,13 +170,27 @@ const RULES: readonly CommandRule[] = [
  * description is not informed consent.
  */
 export function classifyCommand(command: string): CommandAssessment {
-  const findings = RULES.filter(
-    (rule) => rule.pattern.test(command) && (rule.guard?.test(command) ?? true),
+  const normalized = normalizeCommand(command);
+  // Matched against the normalised text *and* the original: normalisation can
+  // only remove noise, so a rule keyed on something the normaliser rewrote
+  // would otherwise stop firing on the plain command it was written for.
+  const subject = `${command}\n${normalized.text}`;
+
+  const findings: CommandFinding[] = RULES.filter(
+    (rule) => rule.pattern.test(subject) && (rule.guard?.test(subject) ?? true),
   ).map((rule) => ({
     rule: rule.id,
     verdict: rule.verdict,
     reason: rule.reason,
   }));
+
+  if (isDeliberatelyObfuscated(normalized)) {
+    findings.push({
+      rule: 'obfuscated-command',
+      verdict: 'approve',
+      reason: `written to be hard to read (${normalized.techniques.join(', ')}) — nobody does this by accident`,
+    });
+  }
 
   const verdict: CommandVerdict = findings.some((f) => f.verdict === 'refuse')
     ? 'refuse'
@@ -177,7 +198,13 @@ export function classifyCommand(command: string): CommandAssessment {
       ? 'approve'
       : 'allow';
 
-  return { command, verdict, findings };
+  return {
+    command,
+    verdict,
+    findings,
+    normalized: normalized.text,
+    techniques: normalized.techniques,
+  };
 }
 
 /**

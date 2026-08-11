@@ -46,6 +46,7 @@ export * from './compromise-watch.js';
 export * from './secret-paths.js';
 export * from './injection-scan.js';
 export * from './dangerous-command.js';
+export * from './command-normalize.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report
