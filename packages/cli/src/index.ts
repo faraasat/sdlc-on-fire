@@ -67,6 +67,7 @@ import { detectTools, formatDetect } from './detect.js';
 import { checkDependencies, formatDepsCheck } from './deps.js';
 import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
+import { checkGuard, formatGuardCheck } from './guard.js';
 import { checkLicenses, formatLicenses } from './licenses.js';
 import { watchDependencies, formatWatch } from './watch.js';
 import {
@@ -1071,6 +1072,22 @@ export function buildProgram(): Command {
       // A blocked install must fail the process, or a script treats "refused"
       // as "fine" and installs anyway.
       if (result.gate.decision === 'blocked') process.exitCode = 1;
+    });
+
+  program
+    .command('guard')
+    .description('flag changes that re-add something a past revert removed (P2-GIT-01)')
+    .option('--base <ref>', 'compare against this ref', 'HEAD')
+    .option('--json', 'emit JSON')
+    .action(async (options: { base?: string; json?: boolean }): Promise<void> => {
+      const result = await checkGuard(root(), {
+        ...(options.base === undefined ? {} : { base: options.base }),
+      });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof checkGuard>>) =>
+        formatGuardCheck(r),
+      );
+      // Warns loudly; does not block. A guard that blocks on a name collision
+      // gets bypassed by habit within a fortnight.
     });
 
   program
