@@ -3,6 +3,7 @@ export * from './port.js';
 export * from './writer.js';
 export * from './openspec.js';
 export * from './speckit.js';
+export * from './gsd.js';
 import type { PackageInfo } from '@sdlc-on-fire/core';
 
 /** Identity of the `@sdlc-on-fire/importers` package (P2-IMP-01). */

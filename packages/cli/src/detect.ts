@@ -1,5 +1,7 @@
 import {
   detectAll,
+  Gsd2Parser,
+  GsdPlanningParser,
   OpenSpecParser,
   SpecKitParser,
   type DetectionResult,
@@ -23,7 +25,12 @@ import {
  */
 
 /** Every parser the build knows about. Grows one entry per P2-IMP-0{3..6}. */
-export const ALL_PARSERS: readonly ToolParser[] = [new OpenSpecParser(), new SpecKitParser()];
+export const ALL_PARSERS: readonly ToolParser[] = [
+  new OpenSpecParser(),
+  new SpecKitParser(),
+  new GsdPlanningParser(),
+  new Gsd2Parser(),
+];
 
 export interface DetectResult {
   readonly root: string;
