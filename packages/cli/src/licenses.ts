@@ -32,6 +32,7 @@ export interface LicenseCheckResult {
 
 interface PackageManifest {
   name?: string;
+  version?: string;
   license?: string | { type?: string };
   licenses?: { type?: string }[];
 }
@@ -98,14 +99,14 @@ export async function installedPackages(
   root: string,
   depth = 0,
   visited: Set<string> = new Set(),
-): Promise<readonly { name: string; license: string | undefined }[]> {
+): Promise<readonly { name: string; version: string | undefined; license: string | undefined }[]> {
   // Bounded so a pathological tree cannot walk forever; nesting this deep is
   // already unusual under a modern package manager.
   if (depth > 4) return [];
 
   const modules = path.join(root, 'node_modules');
   const entries = await fs.readdir(modules, { withFileTypes: true }).catch(() => []);
-  const found: { name: string; license: string | undefined }[] = [];
+  const found: { name: string; version: string | undefined; license: string | undefined }[] = [];
 
   for (const entry of entries) {
     if (entry.name === '.bin') continue;
@@ -153,7 +154,11 @@ export async function installedPackages(
 
       const manifest = await readManifest(path.join(packageDir, 'package.json'));
       if (manifest !== null) {
-        found.push({ name: manifest.name ?? relative, license: licenseOf(manifest) });
+        found.push({
+          name: manifest.name ?? relative,
+          version: manifest.version,
+          license: licenseOf(manifest),
+        });
       }
       found.push(...(await installedPackages(packageDir, depth + 1, visited)));
     }

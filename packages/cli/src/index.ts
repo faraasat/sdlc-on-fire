@@ -68,6 +68,7 @@ import { checkDependencies, formatDepsCheck } from './deps.js';
 import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
 import { checkLicenses, formatLicenses } from './licenses.js';
+import { watchDependencies, formatWatch } from './watch.js';
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
@@ -1017,6 +1018,23 @@ export function buildProgram(): Command {
   const deps = program
     .command('deps')
     .description('supply-chain checks on this project’s dependencies (P2-SEC-01)');
+
+  deps
+    .command('watch')
+    .description('poll advisories against installed versions; report what changed (P2-SEC-09)')
+    .option('--dry-run', 'report the delta without updating the stored record')
+    .option('--json', 'emit JSON')
+    .action(async (options: { dryRun?: boolean; json?: boolean }): Promise<void> => {
+      const result = await watchDependencies(root(), {
+        ...(options.dryRun === true ? { dryRun: true } : {}),
+      });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof watchDependencies>>) =>
+        formatWatch(r),
+      );
+      // A package that gained an advisory since the last poll fails the
+      // process, so a scheduled run is noticed rather than logged.
+      if (result.delta.findings.length > 0) process.exitCode = 1;
+    });
 
   deps
     .command('licenses')

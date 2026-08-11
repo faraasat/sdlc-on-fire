@@ -42,6 +42,7 @@ export * from './secret-scan.js';
 export * from './secret-allowlist.js';
 export * from './risk-surface.js';
 export * from './license-policy.js';
+export * from './compromise-watch.js';
 export * from './secret-paths.js';
 export * from './injection-scan.js';
 export * from './dangerous-command.js';
