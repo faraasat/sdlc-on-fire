@@ -66,6 +66,7 @@ import { queueFor } from './queue.js';
 import { detectTools, formatDetect } from './detect.js';
 import { checkDependencies, formatDepsCheck } from './deps.js';
 import { scanWorkspace, formatScan } from './scan.js';
+import { checkRisk, formatRisk } from './risk.js';
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
@@ -1048,6 +1049,20 @@ export function buildProgram(): Command {
       // A blocked scan must fail the process, or CI treats a committed
       // credential as a passing build.
       if (result.gate.decision === 'blocked') process.exitCode = 1;
+    });
+
+  program
+    .command('risk')
+    .description('detect high-risk surfaces in a diff and the review they require (P2-SEC-03)')
+    .option('--base <ref>', 'compare against this ref', 'HEAD')
+    .option('--json', 'emit JSON')
+    .action(async (options: { base?: string; json?: boolean }): Promise<void> => {
+      const result = await checkRisk(root(), {
+        ...(options.base === undefined ? {} : { base: options.base }),
+      });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof checkRisk>>) =>
+        formatRisk(r),
+      );
     });
 
   program

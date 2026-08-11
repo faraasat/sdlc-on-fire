@@ -40,6 +40,7 @@ export * from './docs.js';
 export * from './package-risk.js';
 export * from './secret-scan.js';
 export * from './secret-allowlist.js';
+export * from './risk-surface.js';
 export * from './secret-paths.js';
 export * from './injection-scan.js';
 export * from './dangerous-command.js';

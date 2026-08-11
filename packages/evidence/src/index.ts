@@ -15,6 +15,7 @@ export * from './gate-record.js';
 export * from './constitution-compile.js';
 export * from './install-gate.js';
 export * from './security-gate.js';
+export * from './security-review.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
