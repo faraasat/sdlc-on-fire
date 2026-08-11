@@ -67,6 +67,7 @@ import { detectTools, formatDetect } from './detect.js';
 import { checkDependencies, formatDepsCheck } from './deps.js';
 import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
+import { checkLicenses, formatLicenses } from './licenses.js';
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
@@ -1016,6 +1017,20 @@ export function buildProgram(): Command {
   const deps = program
     .command('deps')
     .description('supply-chain checks on this project’s dependencies (P2-SEC-01)');
+
+  deps
+    .command('licenses')
+    .description('flag dependency licenses incompatible with this project’s (P2-SEC-08)')
+    .option('--project-license <spdx>', 'override the project’s own license')
+    .option('--json', 'emit JSON')
+    .action(async (options: { projectLicense?: string; json?: boolean }): Promise<void> => {
+      const result = await checkLicenses(root(), {
+        ...(options.projectLicense === undefined ? {} : { projectLicense: options.projectLicense }),
+      });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof checkLicenses>>) =>
+        formatLicenses(r),
+      );
+    });
 
   deps
     .command('check')
