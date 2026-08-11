@@ -64,6 +64,7 @@ import {
 } from './initiative.js';
 import { queueFor } from './queue.js';
 import { detectTools, formatDetect } from './detect.js';
+import { checkDependencies, formatDepsCheck } from './deps.js';
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
@@ -1008,6 +1009,27 @@ export function buildProgram(): Command {
               ])
               .join('\n'),
       );
+    });
+
+  const deps = program
+    .command('deps')
+    .description('supply-chain checks on this project’s dependencies (P2-SEC-01)');
+
+  deps
+    .command('check')
+    .description('classify every declared dependency and evaluate the install gate')
+    .option('--allow-cleared', 'skip approval when every package clears (not the default)')
+    .option('--json', 'emit JSON')
+    .action(async (options: { allowCleared?: boolean; json?: boolean }): Promise<void> => {
+      const result = await checkDependencies(root(), {
+        ...(options.allowCleared === true ? { approveEveryInstall: false } : {}),
+      });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof checkDependencies>>) =>
+        formatDepsCheck(r),
+      );
+      // A blocked install must fail the process, or a script treats "refused"
+      // as "fine" and installs anyway.
+      if (result.gate.decision === 'blocked') process.exitCode = 1;
     });
 
   program

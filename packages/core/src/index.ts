@@ -37,6 +37,7 @@ export * from './hash.js';
 export * from './task-spec.js';
 export * from './preset.js';
 export * from './docs.js';
+export * from './package-risk.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report
