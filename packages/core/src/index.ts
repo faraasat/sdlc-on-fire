@@ -38,6 +38,11 @@ export * from './task-spec.js';
 export * from './preset.js';
 export * from './docs.js';
 export * from './package-risk.js';
+export * from './secret-scan.js';
+export * from './secret-allowlist.js';
+export * from './secret-paths.js';
+export * from './injection-scan.js';
+export * from './dangerous-command.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report

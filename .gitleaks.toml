@@ -11,8 +11,32 @@ paths = [
   # listed explicitly rather than by a broad pattern, so a real credential
   # pasted into a test file is still caught.
   '''packages/db/src/connected\.test\.ts''',
+
+  # The secret scanner's own tests (P2-SEC-02). A scanner cannot be tested
+  # without secret-shaped strings in its fixtures, so these three files are
+  # exempt by path. Named individually, and only these: the point of an
+  # allowlist is that adding to it is a visible, reviewable act, and a pattern
+  # like `.*\.test\.ts` would silently exempt every test file this repo ever
+  # gains.
+  '''packages/core/src/secret-scan\.test\.ts''',
+  '''packages/core/src/secret-allowlist\.test\.ts''',
+  '''packages/cli/src/scan\.test\.ts''',
+  '''packages/daemon/src/security/gitleaks\.test\.ts''',
 ]
 regexes = [
   # The documented placeholder in error messages and docblocks.
   '''postgres://user:password@host:port/database''',
+
+  # `postgres://user:password@` on its own: the DSN detector captures only the
+  # credential-bearing prefix, so the full placeholder above never matches the
+  # finding it was written for.
+  '''postgres://user:password@''',
+
+  # Vendor-published example credentials (P2-SEC-02). These appear verbatim in
+  # AWS's and Stripe's own public documentation — they authenticate nothing,
+  # anywhere, and they are the canonical strings to test a detector against.
+  # Listed as exact values, so a *real* key of the same shape still blocks.
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''',
+  '''sk_live_4eC39HqLyjWDarjtT1zdp7dc''',
 ]

@@ -76,7 +76,7 @@ export function redactConnectionString(url: string): string {
     return parsed.toString();
   } catch {
     // Not parseable as a URL: return a shape, never the contents. A malformed
-    // string could still be `postgres://user:hunter2@…` with one bad character.
+    // string could still be `postgres://user:hunter2@…` with one bad character. gitleaks:allow
     return '(unparseable connection string)';
   }
 }

@@ -65,6 +65,7 @@ import {
 import { queueFor } from './queue.js';
 import { detectTools, formatDetect } from './detect.js';
 import { checkDependencies, formatDepsCheck } from './deps.js';
+import { scanWorkspace, formatScan } from './scan.js';
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
@@ -1029,6 +1030,23 @@ export function buildProgram(): Command {
       );
       // A blocked install must fail the process, or a script treats "refused"
       // as "fine" and installs anyway.
+      if (result.gate.decision === 'blocked') process.exitCode = 1;
+    });
+
+  program
+    .command('scan')
+    .description('scan the workspace for secrets and prompt-injection patterns (P2-SEC-02)')
+    .option('--skip-gitleaks', 'run only the built-in scanner')
+    .option('--json', 'emit JSON')
+    .action(async (options: { skipGitleaks?: boolean; json?: boolean }): Promise<void> => {
+      const result = await scanWorkspace(root(), {
+        ...(options.skipGitleaks === true ? { skipGitleaks: true } : {}),
+      });
+      emit(result, options.json === true, (r: Awaited<ReturnType<typeof scanWorkspace>>) =>
+        formatScan(r),
+      );
+      // A blocked scan must fail the process, or CI treats a committed
+      // credential as a passing build.
       if (result.gate.decision === 'blocked') process.exitCode = 1;
     });
 
