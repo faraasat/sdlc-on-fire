@@ -69,6 +69,12 @@ import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
 import { checkLicenses, formatLicenses } from './licenses.js';
 import { watchDependencies, formatWatch } from './watch.js';
+import {
+  checkThreatModels,
+  formatThreatCheck,
+  scaffoldThreatModel,
+  THREAT_MODEL_DIR,
+} from './threat.js';
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { scanQuality } from './quality.js';
@@ -1066,6 +1072,41 @@ export function buildProgram(): Command {
       // as "fine" and installs anyway.
       if (result.gate.decision === 'blocked') process.exitCode = 1;
     });
+
+  program
+    .command('threat-model')
+    .description('check per-tool-surface threat models for coverage (P2-SEC-06)')
+    .option('--scaffold <name>', 'write a blank grid for a new surface')
+    .option('--components <list>', 'comma-separated components, with --scaffold')
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: {
+        scaffold?: string;
+        components?: string;
+        json?: boolean;
+      }): Promise<void> => {
+        if (options.scaffold !== undefined) {
+          const components = (options.components ?? '')
+            .split(',')
+            .map((c) => c.trim())
+            .filter((c) => c !== '');
+          const dir = path.join(root(), THREAT_MODEL_DIR);
+          await fs.mkdir(dir, { recursive: true });
+          const file = path.join(dir, `${options.scaffold}.json`);
+          await fs.writeFile(file, scaffoldThreatModel(options.scaffold, components), 'utf8');
+          process.stdout.write(
+            `wrote ${path.relative(root(), file)} — ${String(components.length * 6)} cell(s) to disposition\n`,
+          );
+          return;
+        }
+
+        const result = await checkThreatModels(root());
+        emit(result, options.json === true, (r: Awaited<ReturnType<typeof checkThreatModels>>) =>
+          formatThreatCheck(r),
+        );
+        if (!result.complete) process.exitCode = 1;
+      },
+    );
 
   program
     .command('scan')
