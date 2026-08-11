@@ -52,6 +52,7 @@ export * from './threat-model.js';
 export * from './agent-scope.js';
 export * from './revert-guard.js';
 export * from './upgrade-triage.js';
+export * from './regression-scope.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report

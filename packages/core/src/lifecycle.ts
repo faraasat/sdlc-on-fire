@@ -136,6 +136,8 @@ export const REQUIRED_STAGES: Record<Preset, Record<string, readonly LifecycleSt
     // decompose/plan, which is the ceremony that made teams route bot PRs
     // around the process entirely (FEAT-LIFE-001).
     'dependency-upgrade': ['triage', 'implement', 'test', 'done'],
+    refactor: ['implement', 'test', 'done'],
+    migrate: ['plan', 'implement', 'test', 'review', 'done'],
     bug: ['triage', 'implement', 'done'],
     feature: ['spec', 'implement', 'review', 'done'],
     'new-project': ['discovery', 'spec', 'decompose', 'done'],
@@ -144,6 +146,12 @@ export const REQUIRED_STAGES: Record<Preset, Record<string, readonly LifecycleSt
   standard: {
     task: ['implement', 'test', 'review', 'done'],
     'dependency-upgrade': ['triage', 'implement', 'test', 'review', 'done'],
+    refactor: ['implement', 'test', 'review', 'done'],
+    // `migrate` keeps `plan` where `refactor` does not: a refactor can be
+    // undone with a revert, and a migration that has already run against real
+    // data cannot. The plan stage is where the rollback path gets written down
+    // while it is still cheap to write.
+    migrate: ['plan', 'implement', 'test', 'review', 'done'],
     bug: ['triage', 'plan', 'implement', 'test', 'review', 'done'],
     feature: ['discovery', 'spec', 'decompose', 'plan', 'implement', 'test', 'review', 'done'],
     'new-project': ['intake', 'discovery', 'spec', 'decompose', 'plan', 'review', 'done'],
@@ -164,6 +172,8 @@ export const REQUIRED_STAGES: Record<Preset, Record<string, readonly LifecycleSt
       'approval',
       'done',
     ],
+    refactor: ['implement', 'test', 'review', 'approval', 'done'],
+    migrate: ['plan', 'implement', 'test', 'security_review', 'review', 'approval', 'done'],
     bug: ['triage', 'plan', 'implement', 'test', 'security_review', 'review', 'approval', 'done'],
     feature: [
       'discovery',
