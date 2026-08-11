@@ -1,4 +1,6 @@
 import {
+  BmadV4Parser,
+  BmadV6Parser,
   detectAll,
   Gsd2Parser,
   GsdPlanningParser,
@@ -30,6 +32,8 @@ export const ALL_PARSERS: readonly ToolParser[] = [
   new SpecKitParser(),
   new GsdPlanningParser(),
   new Gsd2Parser(),
+  new BmadV6Parser(),
+  new BmadV4Parser(),
 ];
 
 export interface DetectResult {
