@@ -17,6 +17,7 @@ export * from './install-gate.js';
 export * from './security-gate.js';
 export * from './security-review.js';
 export * from './ci-repair.js';
+export * from './taxonomy-policy.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
