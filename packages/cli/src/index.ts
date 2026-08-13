@@ -68,6 +68,7 @@ import { checkDependencies, formatDepsCheck } from './deps.js';
 import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
+import { addIntoContainer, formatAdd } from './add.js';
 import { checkLicenses, formatLicenses } from './licenses.js';
 import { watchDependencies, formatWatch } from './watch.js';
 import {
@@ -462,6 +463,43 @@ export function buildProgram(): Command {
           `${r.id} captured → ${r.filePath}\n  Triage it later with \`sdlc triage ${r.id} --as <kind>\`.`,
       );
     });
+
+  program
+    .command('add')
+    .argument('<kind>', 'epic | story | feature | bug | task')
+    .argument('<title...>', 'what the new item is')
+    .requiredOption('--into <container-id>', 'the epic or sprint to insert into')
+    .option('--after <id>', 'place after this sibling (an ordering hint; nothing is renumbered)')
+    .option('--why <reason>', 'why this could not wait for the next planning pass')
+    .option('--work-type <type>', 'feature | bug | task | migrate | refactor | …', 'feature')
+    .option('--owns <path...>', 'files the new item expects to own')
+    .description('hard insertion — propose new work into live scope, pending rescope approval')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        kind: string,
+        title: string[],
+        options: {
+          into: string;
+          after?: string;
+          why?: string;
+          workType?: string;
+          owns?: string[];
+          json?: boolean;
+        },
+      ): Promise<void> => {
+        const result = await addIntoContainer(root(), {
+          kind,
+          title: title.join(' '),
+          into: options.into,
+          ...(options.after === undefined ? {} : { after: options.after }),
+          ...(options.why === undefined ? {} : { why: options.why }),
+          ...(options.workType === undefined ? {} : { workType: options.workType }),
+          ...(options.owns === undefined ? {} : { ownedPaths: options.owns }),
+        });
+        emit(result, options.json === true, formatAdd);
+      },
+    );
 
   program
     .command('triage')

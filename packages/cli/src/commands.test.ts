@@ -152,6 +152,26 @@ describe('sequence assignment', () => {
     await fs.writeFile(path.join(root, 'FEAT-009.md'), 'x');
     expect(await nextSequence(root, 'TASK')).toBe(1);
   });
+
+  it('reads the frontmatter id, not only the filename', async () => {
+    // The `id` field is canonical (contract 02 §2.2); the filename slug is
+    // sugar derived once and never re-derived (contract 06 §3.2). A file whose
+    // name has drifted — imported, hand-created, renamed — is invisible to a
+    // name-only scan, and the sequence then mints an ID that already exists.
+    const root = await workspace();
+    await fs.writeFile(
+      path.join(root, 'notes.md'),
+      '---\nid: TASK-014\ntitle: renamed by hand\n---\n',
+      'utf8',
+    );
+    expect(await nextSequence(root, 'TASK')).toBe(15);
+  });
+
+  it('takes the highest of the two sources rather than preferring one', async () => {
+    const root = await workspace();
+    await fs.writeFile(path.join(root, 'TASK-020-a.md'), '---\nid: TASK-003\n---\n', 'utf8');
+    expect(await nextSequence(root, 'TASK')).toBe(21);
+  });
 });
 
 describe('new', () => {

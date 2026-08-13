@@ -329,18 +329,44 @@ export interface NewItemResult {
   readonly kind: string;
 }
 
-/** Assigns the next free sequence for a kind by scanning existing files. */
+/**
+ * Assigns the next free sequence for a kind.
+ *
+ * Reads **both** the filename and the frontmatter `id`, and takes the highest.
+ * Filenames alone are not enough, and the reason is in the contracts: the `id`
+ * frontmatter field is canonical (contract 02 §2.2) while the filename's
+ * `-slug` is explicitly filesystem sugar that is derived once and never
+ * re-derived (contract 06 §3.2). Any file whose name has drifted from its
+ * `id` — an imported item, a hand-created card, one renamed by a human — is
+ * invisible to a name-only scan, and the sequence then hands out an ID that
+ * already exists.
+ *
+ * A duplicate ID in a content-in-git system is close to the worst outcome
+ * available here: two files both claiming to be `FEAT-001`, with every
+ * `relates_to`/`parent` reference to it now ambiguous, and nothing about the
+ * moment of creation looking wrong.
+ */
 export async function nextSequence(kanbanDir: string, prefix: string): Promise<number> {
   const seen: number[] = [];
+  const pattern = new RegExp(`^${prefix}-(\\d+)`);
   const walk = async (dir: string): Promise<void> => {
     const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else {
-        const match = new RegExp(`^${prefix}-(\\d+)`).exec(entry.name);
-        if (match?.[1] !== undefined) seen.push(Number.parseInt(match[1], 10));
+      if (entry.isDirectory()) {
+        await walk(full);
+        continue;
       }
+
+      const fromName = pattern.exec(entry.name);
+      if (fromName?.[1] !== undefined) seen.push(Number.parseInt(fromName[1], 10));
+
+      if (!entry.name.endsWith('.md')) continue;
+      const raw = await fs.readFile(full, 'utf8').catch(() => '');
+      const id = parseFrontmatter(raw).data['id'];
+      if (typeof id !== 'string') continue;
+      const fromId = pattern.exec(id);
+      if (fromId?.[1] !== undefined) seen.push(Number.parseInt(fromId[1], 10));
     }
   };
   await walk(kanbanDir);
