@@ -6,7 +6,12 @@ import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { init, claimWorkItem } from './commands.js';
 import { advanceWorkItem, verifyWorkItem } from './advance.js';
-import { ConcurrentModificationError, versionOf, writeCardIfUnchanged } from './lifecycle-write.js';
+import {
+  ConcurrentModificationError,
+  TerminalWriteError,
+  versionOf,
+  writeCardIfUnchanged,
+} from './lifecycle-write.js';
 
 /**
  * Compare-and-swap on lifecycle writes (P1-LIFE-04).
@@ -101,6 +106,83 @@ describe('the swap itself', () => {
     await expect(
       writeCardIfUnchanged(cardPath(), versionOf(raw), 'new contents', 'TASK-001'),
     ).rejects.toBeInstanceOf(ConcurrentModificationError);
+  }, 180_000);
+});
+
+describe('the terminal check on this path too (P2-INS-02)', () => {
+  /**
+   * The typed writer is supposed to be where terminal immutability lives, so
+   * that no workflow can route around it (`.research/11 §3`). This path did:
+   * it renders bytes and writes them without ever calling `writeWorkItem`, so
+   * the invariant held only for callers that used the other door. An invariant
+   * with two doors and a guard on one is a convention.
+   */
+
+  const DONE = CARD('done').replace('status: In Progress', 'status: Done');
+
+  async function finished(): Promise<string> {
+    await fs.writeFile(cardPath(), DONE, 'utf8');
+    return DONE;
+  }
+
+  it('refuses an ungrounded write to a finished card', async () => {
+    const raw = await finished();
+    await expect(
+      writeCardIfUnchanged(cardPath(), versionOf(raw), CARD('implement'), 'TASK-001'),
+    ).rejects.toBeInstanceOf(TerminalWriteError);
+    expect(await fs.readFile(cardPath(), 'utf8')).toBe(DONE);
+  }, 180_000);
+
+  it('allows a retraction backed by an unsupported attestation', async () => {
+    const raw = await finished();
+    const back = DONE.replace('lifecycle_state: done', 'lifecycle_state: implement').replace(
+      'status: Done',
+      'status: In Progress',
+    );
+    await expect(
+      writeCardIfUnchanged(cardPath(), versionOf(raw), back, 'TASK-001', {
+        kind: 'retraction',
+        itemId: 'TASK-001',
+        attestation: 'unsupported',
+      }),
+    ).resolves.toBeUndefined();
+  }, 180_000);
+
+  it('refuses a retraction whose attestation says the claim held', async () => {
+    // `supported` means the claim was true and `stale` means re-run the check.
+    // Retracting on either reopens honest work, which is how a retraction stops
+    // being read as a serious finding.
+    const raw = await finished();
+    for (const attestation of ['supported', 'stale', 'not-applicable']) {
+      await expect(
+        writeCardIfUnchanged(cardPath(), versionOf(raw), CARD('implement'), 'TASK-001', {
+          kind: 'retraction',
+          itemId: 'TASK-001',
+          attestation,
+        }),
+      ).rejects.toBeInstanceOf(TerminalWriteError);
+    }
+  }, 180_000);
+
+  it('refuses a retraction that also rewrites content', async () => {
+    const raw = await finished();
+    const rewritten = DONE.replace('lifecycle_state: done', 'lifecycle_state: implement')
+      .replace('status: Done', 'status: In Progress')
+      .replace('title: Concurrent', 'title: Rewritten');
+    await expect(
+      writeCardIfUnchanged(cardPath(), versionOf(raw), rewritten, 'TASK-001', {
+        kind: 'retraction',
+        itemId: 'TASK-001',
+        attestation: 'unsupported',
+      }),
+    ).rejects.toBeInstanceOf(TerminalWriteError);
+  }, 180_000);
+
+  it('leaves ordinary non-terminal writes alone', async () => {
+    const raw = await fs.readFile(cardPath(), 'utf8');
+    await expect(
+      writeCardIfUnchanged(cardPath(), versionOf(raw), CARD('test'), 'TASK-001'),
+    ).resolves.toBeUndefined();
   }, 180_000);
 });
 

@@ -756,7 +756,14 @@ export async function reopenWorkItem(
       } as never,
       parsed.body.trim() + '\n',
     );
-    await writeCardIfUnchanged(found.filePath, versionOf(found.raw), rewritten, id);
+    // The grounds, not a flag. `attested.attestation` is `unsupported` by the
+    // check above; handing it to the writer means the storage layer verifies
+    // the same fact rather than trusting that this function checked it.
+    await writeCardIfUnchanged(found.filePath, versionOf(found.raw), rewritten, id, {
+      kind: 'retraction',
+      itemId: id,
+      attestation: attested.attestation,
+    });
 
     return {
       workItemId: id,

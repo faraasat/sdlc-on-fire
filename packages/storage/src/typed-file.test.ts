@@ -172,13 +172,101 @@ describe('terminal-item immutability (ADR-0013)', () => {
     await expect(writeWorkItem(target, task(), 'body\n')).rejects.toBeInstanceOf(TerminalItemError);
   });
 
-  it('allows the daemon selective-reopen escape hatch', async () => {
-    const target = await tempFile();
-    await writeWorkItem(target, task({ lifecycle_state: 'done', status: 'Done' }), 'body\n');
+  describe('the selective gate re-open (P2-INS-02, contract 02 §8 q2)', () => {
+    const authorization = {
+      kind: 'insertion' as const,
+      insertionId: 'INSERT-014',
+      insertionState: 'approved',
+      blastRadius: ['TASK-001'],
+      itemId: 'TASK-001',
+    };
 
-    await expect(
-      writeWorkItem(target, task(), 'body\n', { allowTerminal: true }),
-    ).resolves.toBeUndefined();
+    async function finished(): Promise<string> {
+      const target = await tempFile();
+      await writeWorkItem(target, task({ lifecycle_state: 'done', status: 'Done' }), 'body\n');
+      return target;
+    }
+
+    it('allows a re-open that only moves gate state', async () => {
+      const target = await finished();
+      await expect(
+        writeWorkItem(target, task({ lifecycle_state: 'review', status: 'Review' }), 'body\n', {
+          reopen: authorization,
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses a re-open that rewrites content', async () => {
+      // The whole reason the old `allowTerminal: boolean` had to go. A caller
+      // that can pass a flag can pass it alongside any diff at all; a caller
+      // that must pass an authorization still cannot smuggle a content edit
+      // through it.
+      const target = await finished();
+      await expect(
+        writeWorkItem(
+          target,
+          task({ lifecycle_state: 'review', status: 'Review', title: 'Rewritten' }),
+          'body\n',
+          { reopen: authorization },
+        ),
+      ).rejects.toBeInstanceOf(TerminalItemError);
+    });
+
+    it('refuses a re-open that rewrites the body', async () => {
+      const target = await finished();
+      await expect(
+        writeWorkItem(target, task({ lifecycle_state: 'review', status: 'Review' }), 'other\n', {
+          reopen: authorization,
+        }),
+      ).rejects.toBeInstanceOf(TerminalItemError);
+    });
+
+    it('refuses a re-open whose insertion was never approved', async () => {
+      const target = await finished();
+      await expect(
+        writeWorkItem(target, task({ lifecycle_state: 'review', status: 'Review' }), 'body\n', {
+          reopen: { ...authorization, insertionState: 'proposed' },
+        }),
+      ).rejects.toBeInstanceOf(TerminalItemError);
+    });
+
+    it('refuses a re-open for an item outside the blast radius', async () => {
+      const target = await finished();
+      await expect(
+        writeWorkItem(target, task({ lifecycle_state: 'review', status: 'Review' }), 'body\n', {
+          reopen: { ...authorization, blastRadius: ['STORY-999'] },
+        }),
+      ).rejects.toBeInstanceOf(TerminalItemError);
+    });
+
+    it('says why the offered re-open did not hold', async () => {
+      const target = await finished();
+      await expect(
+        writeWorkItem(
+          target,
+          task({ lifecycle_state: 'review', status: 'Review', title: 'Rewritten' }),
+          'body\n',
+          { reopen: { ...authorization, insertionState: 'proposed' } },
+        ),
+      ).rejects.toThrow(/not an authority[\s\S]*not re-openable/);
+    });
+
+    it('compares against the file on disk, not the caller’s account of it', async () => {
+      // The same discipline as the terminal check itself: an agent that hands
+      // over a "before" of its own devising must not thereby define what
+      // counts as unchanged.
+      const target = await finished();
+      await fs.writeFile(
+        target,
+        '---\nid: TASK-001\nlifecycle_state: done\ntitle: On disk\n---\nreal body\n',
+        'utf8',
+      );
+      await expect(
+        writeWorkItem(target, task({ lifecycle_state: 'review', status: 'Review' }), 'body\n', {
+          reopen: authorization,
+        }),
+      ).rejects.toBeInstanceOf(TerminalItemError);
+    });
   });
 
   it('permits editing a non-terminal item', async () => {

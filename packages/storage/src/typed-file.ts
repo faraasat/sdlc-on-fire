@@ -1,9 +1,12 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
+  authorizeTerminalWrite,
+  contentPreserved,
   isTerminalStage,
   LifecycleStageSchema,
   WorkItemSchema,
+  type TerminalWriteGrounds,
   type WorkItem,
 } from '@sdlc-on-fire/core';
 import { parseFrontmatter, serializeFrontmatter } from './frontmatter.js';
@@ -36,10 +39,14 @@ export class TerminalItemError extends Error {
   constructor(
     readonly filePath: string,
     readonly stage: string,
+    /** Why an offered re-open authorization did not hold, when one was offered. */
+    readonly reopenReasons: readonly string[] = [],
   ) {
     super(
       `${filePath} is at terminal stage "${stage}" and cannot be edited in place. ` +
-        'Create a new work item with `supersedes` or `corrects` pointing at it instead (ADR-0013).',
+        (reopenReasons.length === 0
+          ? 'Create a new work item with `supersedes` or `corrects` pointing at it instead (ADR-0013).'
+          : `A gate re-open was offered but does not hold:\n  - ${reopenReasons.join('\n  - ')}`),
     );
   }
 }
@@ -94,11 +101,22 @@ export async function readOnDiskStage(filePath: string): Promise<string | null> 
 
 export interface WriteWorkItemOptions {
   /**
-   * Bypass the terminal-state check. Reserved for the daemon's selective
-   * gate-reopen path (Phase 2 hard insertion), which is the one legitimate
-   * reason to touch a finished item — contract §8 open question 2.
+   * A selective gate re-open — the one legitimate reason to write a finished
+   * item (P2-INS-02, contract 02 §8 open question 2, now settled).
+   *
+   * This replaces the `allowTerminal: boolean` that used to sit here, and the
+   * replacement is the point. A bypass reachable by passing `true` is not a
+   * guard: any caller that can reach the writer can reach the flag, so the
+   * invariant held only for callers that already intended to honour it.
+   *
+   * What arrives instead is a *claim*, every part of which is checked here
+   * against the incoming write: which insertion authorises this, whether that
+   * insertion was approved, whether its blast radius actually reaches this
+   * item, and — the condition that matters — whether the write leaves every
+   * content field and the body untouched. A re-open changes gate state. It
+   * cannot reach the text the finished work was reviewed against.
    */
-  readonly allowTerminal?: boolean | undefined;
+  readonly reopen?: TerminalWriteGrounds | undefined;
 }
 
 /**
@@ -154,13 +172,23 @@ export async function writeWorkItem(
   const validated = WorkItemSchema.safeParse(item);
   if (!validated.success) throw new ValidationError(filePath, issueStrings(validated.error));
 
-  if (options?.allowTerminal !== true) {
-    const existingStage = await readOnDiskStage(filePath);
-    if (existingStage !== null) {
-      const parsedStage = LifecycleStageSchema.safeParse(existingStage);
-      if (parsedStage.success && isTerminalStage(parsedStage.data)) {
-        throw new TerminalItemError(filePath, existingStage);
-      }
+  const existingStage = await readOnDiskStage(filePath);
+  if (existingStage !== null) {
+    const parsedStage = LifecycleStageSchema.safeParse(existingStage);
+    if (parsedStage.success && isTerminalStage(parsedStage.data)) {
+      // The terminal check reads the file about to be overwritten and, when a
+      // re-open is claimed, compares it against the incoming write. Both halves
+      // read the *existing* file rather than the caller's assertion about it.
+      const existing = parseFrontmatter(await fs.readFile(filePath, 'utf8'));
+      const verdict =
+        options?.reopen === undefined
+          ? { allowed: false, reasons: [] as readonly string[] }
+          : authorizeTerminalWrite(
+              options.reopen,
+              contentPreserved(existing.data, existing.body, { ...item }, body),
+            );
+
+      if (!verdict.allowed) throw new TerminalItemError(filePath, existingStage, verdict.reasons);
     }
   }
 

@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import {
+  authorizeTerminalWrite,
+  contentPreserved,
+  isLifecycleStage,
+  isTerminalStage,
+  type TerminalWriteGrounds,
+} from '@sdlc-on-fire/core';
+import { parseFrontmatter } from '@sdlc-on-fire/storage';
 
 /**
  * Compare-and-swap for lifecycle writes (P1-LIFE-04, FEAT-STORE-023).
@@ -54,15 +62,54 @@ export function versionOf(raw: string): string {
  * but it closes the window from "the whole decision" down to "two adjacent
  * syscalls", and it does so without a lock file that can be orphaned by a crash.
  */
+export class TerminalWriteError extends Error {
+  override readonly name = 'TerminalWriteError';
+  constructor(
+    readonly filePath: string,
+    readonly workItemId: string,
+    readonly reasons: readonly string[],
+  ) {
+    super(
+      `${workItemId} is at a terminal stage and this write has no recognised grounds (${filePath}):\n  - ` +
+        (reasons.length === 0
+          ? 'none offered — create a new work item with `supersedes` or `corrects` instead (ADR-0013).'
+          : reasons.join('\n  - ')),
+    );
+  }
+}
+
 export async function writeCardIfUnchanged(
   filePath: string,
   expectedVersion: string,
   contents: string,
   workItemId: string,
+  grounds?: TerminalWriteGrounds,
 ): Promise<void> {
   const current = await fs.readFile(filePath, 'utf8').catch(() => null);
   if (current === null || versionOf(current) !== expectedVersion) {
     throw new ConcurrentModificationError(filePath, workItemId);
   }
+
+  // The terminal check belongs here as well as in the typed writer, and the
+  // reason is the whole argument for storage-layer enforcement (`.research/11
+  // §3`): the refusal is pushed down so that *no workflow* can route around
+  // it. This path did route around it — it renders and writes bytes without
+  // ever calling `writeWorkItem` — so the invariant held only for callers that
+  // happened to use the other door. An invariant with two doors and a guard on
+  // one is a convention.
+  const before = parseFrontmatter(current);
+  const stage = before.data['lifecycle_state'];
+  if (typeof stage === 'string' && isLifecycleStage(stage) && isTerminalStage(stage)) {
+    const after = parseFrontmatter(contents);
+    const verdict =
+      grounds === undefined
+        ? { allowed: false, reasons: [] as readonly string[] }
+        : authorizeTerminalWrite(
+            grounds,
+            contentPreserved(before.data, before.body, after.data, after.body),
+          );
+    if (!verdict.allowed) throw new TerminalWriteError(filePath, workItemId, verdict.reasons);
+  }
+
   await fs.writeFile(filePath, contents, 'utf8');
 }

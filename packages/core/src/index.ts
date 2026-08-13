@@ -57,6 +57,7 @@ export * from './confidence.js';
 export * from './migration-plan.js';
 export * from './blast-radius.js';
 export * from './insertion.js';
+export * from './gate-reopen.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report

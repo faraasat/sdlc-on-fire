@@ -69,6 +69,7 @@ import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
+import { formatReopen, reopenGates } from './reopen.js';
 import { checkLicenses, formatLicenses } from './licenses.js';
 import { watchDependencies, formatWatch } from './watch.js';
 import {
@@ -498,6 +499,51 @@ export function buildProgram(): Command {
           ...(options.owns === undefined ? {} : { ownedPaths: options.owns }),
         });
         emit(result, options.json === true, formatAdd);
+      },
+    );
+
+  program
+    // Not `reopen` — that verb is taken by claim retraction below, and the two
+    // are different acts: that one withdraws a terminal claim its own evidence
+    // never supported, this one re-arms gates an approved insertion invalidated.
+    .command('reopen-gates')
+    .argument('<insertion-id>', 'the approved insertion authorising this, e.g. INSERT-014')
+    .requiredOption('--requires <ids...>', 'gate requirements to consider')
+    .option('--changed <paths...>', 'files the insertion changed', [])
+    .option(
+      '--covers <requirement=prefix...>',
+      'declared coverage, e.g. unit-tests=src/ (undeclared requirements always re-open)',
+      [],
+    )
+    .option('--work-type <type>', 'feature | bug | task | migrate | refactor | …', 'feature')
+    .option('--apply', 'append the audit section to the insertion record')
+    .description('selectively re-open gates a hard insertion invalidated')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        insertionId: string,
+        options: {
+          requires: string[];
+          changed?: string[];
+          covers?: string[];
+          workType?: string;
+          apply?: boolean;
+          json?: boolean;
+        },
+      ): Promise<void> => {
+        const coverage = (options.covers ?? []).map((entry) => {
+          const [requirementId, ...rest] = entry.split('=');
+          return { requirementId: requirementId ?? entry, paths: rest.join('=').split(',') };
+        });
+        const result = await reopenGates(root(), {
+          insertionId,
+          requirements: options.requires,
+          changed: options.changed ?? [],
+          coverage,
+          ...(options.workType === undefined ? {} : { workType: options.workType }),
+          ...(options.apply === undefined ? {} : { apply: options.apply }),
+        });
+        emit(result, options.json === true, formatReopen);
       },
     );
 
