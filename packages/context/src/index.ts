@@ -6,6 +6,7 @@ export * from './rehydrate.js';
 export * from './comment-directives.js';
 export * from './hybrid.js';
 export * from './rerank.js';
+export * from './corrective.js';
 
 import type { PackageInfo } from '@sdlc-on-fire/core';
 import { corePackage } from '@sdlc-on-fire/core';
