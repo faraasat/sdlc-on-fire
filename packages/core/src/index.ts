@@ -54,6 +54,7 @@ export * from './revert-guard.js';
 export * from './upgrade-triage.js';
 export * from './regression-scope.js';
 export * from './confidence.js';
+export * from './migration-plan.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report
