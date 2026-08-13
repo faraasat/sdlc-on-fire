@@ -29,8 +29,10 @@ export default tseslint.config(
     },
   },
   {
-    // Config files are not part of a package tsconfig.
-    files: ['*.mjs', '*.config.ts', 'packages/*/*.config.ts'],
+    // Config files and plain-ESM tooling are not part of a package tsconfig.
+    // `scripts/**/*.ts` is deliberately absent from this list — it has its own
+    // project (scripts/tsconfig.json) so it stays typechecked.
+    files: ['*.mjs', 'scripts/**/*.mjs', '*.config.ts', 'packages/*/*.config.ts'],
     ...tseslint.configs.disableTypeChecked,
   },
   prettier,

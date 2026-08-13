@@ -50,3 +50,34 @@ jobs:
       # dist/index.js a syntax error while 320 unit tests stayed green, because
       # every one of them imported the module instead of running the artifact.
       - run: node packages/cli/dist/index.js --version
+
+  # Would this actually install if published? Separate job because it needs to
+  # run once, not three times — a tarball's contents do not vary by runner OS.
+  #
+  # This is on the PR rather than only in `release.yml` because the failure it
+  # catches is invisible in the working tree. `sdlc-on-fire` declares eight
+  # `workspace:*` dependencies; every test imports them from the workspace,
+  # where they resolve perfectly, and every one would keep passing while the
+  # published package failed on a consumer's first `npm install`.
+  packable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+
+      # Packs every publishable package and inspects the artifact that would be
+      # uploaded: no `workspace:` ranges surviving, siblings pinned to this
+      # release's version, dist present, declared entry points actually packed,
+      # exactly one shebang per bin.
+      - run: pnpm run verify:package

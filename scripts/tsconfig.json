@@ -1,0 +1,21 @@
+{
+  // Repo tooling, typechecked like everything else.
+  //
+  // `scripts/` sat outside every project, so `tsc --build` never saw it. That
+  // is the same blind spot that let a `string[]` vs `readonly string[]`
+  // mismatch through in a CLI test while nine vitest cases stayed green —
+  // vitest does not typecheck, so an untypechecked test file is a file whose
+  // types are asserted by nobody.
+  //
+  // `noEmit`: these run from source as ESM. Nothing here is built or shipped.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "emitDeclarationOnly": false,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["**/*.ts"]
+}

@@ -21,7 +21,12 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['packages/*/src/**/*.test.ts'],
+    // `scripts/` is included deliberately. The release guard lives there
+    // rather than in a package — it is repo tooling, not shipped code — and a
+    // glob covering only `packages/` meant its test file was collected by
+    // nothing and reported by nothing. A test that silently never runs is worse
+    // than no test, because the file's presence reads as coverage.
+    include: ['packages/*/src/**/*.test.ts', 'scripts/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],

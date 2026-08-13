@@ -1,0 +1,107 @@
+# Static analysis (P2-QA-05, ADR-0044).
+#
+# ADR-0044 scheduled richer security scanning — semgrep/CodeQL/OWASP — for
+# Phase 2, and P2-QA-05 made `security-scan` a *blocking* gate input at the
+# `standard` preset. This is the workflow that produces that evidence.
+#
+# Separate from `ci.yml` on purpose. `ci.yml` answers "does this build and does
+# it work", and it runs on three operating systems because portability is a
+# claim we make. These answer "is this safe", they only need one OS, and they
+# take long enough that folding them in would slow every push for an answer
+# that does not change per platform.
+#
+# Each tool below finds a different class of thing. That is the whole reason to
+# run more than one: `.research/14`'s consistent finding is that no single
+# signal is sufficient, and three analyzers agreeing is worth more than one
+# analyzer trusted.
+name: static-analysis
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, because the code stops changing but the rules do not. A scan that
+    # only runs on push cannot find the vulnerability disclosed after the last
+    # commit — which, for a repository that has gone quiet, is most of them.
+    - cron: '27 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Findings go to the Security tab, where they persist and can be triaged,
+      # rather than into a log that scrolls away.
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # `security-and-quality` over the default `security` pack: the extra
+          # rules catch the correctness patterns this codebase actually hits —
+          # unused results, unreachable branches, comparisons that are always
+          # true — which are exactly what a passing test suite does not notice.
+          queries: security-and-quality
+
+      # Autobuild is skipped: this is TypeScript, CodeQL analyses the source
+      # directly, and letting it guess at a pnpm monorepo's build wastes minutes
+      # to reach the same place.
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: returntocorp/semgrep-action@v1
+        with:
+          # Two registry packs and no custom rules yet. `p/typescript` covers
+          # language-level footguns; `p/security-audit` covers the injection and
+          # unsafe-API patterns. Project-specific rules — encoding this repo's
+          # own invariants, like "no adapter import inside a port" — belong here
+          # later, and are deliberately not invented now: a rule written before
+          # there is a violation to test it against is a rule nobody has seen
+          # fire.
+          config: >-
+            p/typescript
+            p/security-audit
+        env:
+          SEMGREP_SEND_METRICS: 'off'
+
+  dependency-review:
+    name: Dependency review
+    # PRs only: it compares the base to the head, and on a push to `main` there
+    # is nothing to compare against.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/dependency-review-action@v4
+        with:
+          # Blocks the PR rather than commenting on it. `sdlc deps check`
+          # already refuses an advisory-carrying package at install time; this
+          # is the same rule enforced at the boundary where it is still cheap —
+          # before the dependency is in the lockfile anyone else pulls.
+          fail-on-severity: moderate
+          # GPL/AGPL against an MIT project is the case `sdlc deps licenses`
+          # flags locally. Denying it here too means the answer does not depend
+          # on whether somebody ran the local check.
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0, SSPL-1.0
+          comment-summary-in-pr: on-failure

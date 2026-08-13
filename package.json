@@ -21,9 +21,10 @@
     "clean": "tsc --build --clean && pnpm -r exec rm -rf dist",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "pnpm run build && changeset publish",
+    "release": "pnpm run build && node scripts/publish.mjs",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "verify:package": "node scripts/verify-package.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "2.31.1",

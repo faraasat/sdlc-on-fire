@@ -1,0 +1,64 @@
+# OSSF Scorecard (ADR-0033).
+#
+# The other analyzers read the code. This one reads the *project*: are actions
+# pinned, is the default branch protected, are releases signed, is there a
+# security policy, does dependency update tooling run.
+#
+# It earns its place here for a reason specific to what this repository is. This
+# is a supply-chain-security product. A consumer deciding whether to trust
+# `sdlc-on-fire` with their release pipeline is entitled to check whether we
+# hold ourselves to the standard we sell — and Scorecard is the check they will
+# reach for, because it is the one that produces a number without asking us.
+#
+# Findings will not all be flattering at first. That is the correct starting
+# state for a measurement, and a score we can see is worth more than a posture
+# we assert.
+name: scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '19 6 * * 2'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    name: Scorecard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Results land in the Security tab alongside CodeQL and Semgrep.
+      security-events: write
+      # Scorecard publishes its own signed provenance for the results, so a
+      # badge cannot be forged by someone who did not run the analysis.
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@v2
+        id: scorecard
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Publishes to the OpenSSF public dataset, which is what makes the
+          # README badge resolve. It exposes only the score and the checks that
+          # produced it — all of which are already derivable from a public repo
+          # by anyone who runs Scorecard themselves.
+          publish_results: true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 30
+
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

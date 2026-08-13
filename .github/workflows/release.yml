@@ -1,31 +1,79 @@
-# Release (P0-META-03, ADR-0033) — dual SBOM + Sigstore provenance + npm publish.
+# Release (P0-META-03, ADR-0033, ADR-0062) — Changesets release PR → npm.
 #
-# Three supply-chain requirements, each here for a stated reason:
+# Two-step by design, and the split is the point: a push to `main` never
+# publishes. It opens (or updates) a "Version Packages" PR showing the exact
+# bumps and changelog. Publishing happens only when a person merges that PR.
 #
-#   * `--frozen-lockfile` — publish exactly the dependency tree that was
-#     reviewed and tested, not whatever resolved at publish time.
-#   * Dual SBOM (CycloneDX + SPDX) — consumers' scanners disagree about which
-#     format they read, and an SBOM nobody can parse is not an SBOM.
-#   * `--provenance` — signs the build with the workflow that produced it, so a
-#     consumer can verify the tarball came from this repo rather than from
-#     someone who guessed the package name.
+# That is this repo's own rule applied to its own pipeline — agents are actors,
+# never approvers — and it buys the one thing npm cannot give back. The unpublish
+# window is 72 hours, and a version number, once used, is burned forever.
+#
+# ─── Why publish is pack-then-publish rather than one command ────────────────
+#
+# Two requirements that no single publisher satisfies:
+#
+#   * `workspace:*` must be rewritten. `sdlc-on-fire` declares eight of them
+#     against sibling packages. Publish those literals and `npm install
+#     sdlc-on-fire` fails on the first resolve. `pnpm pack` rewrites them;
+#     `npm publish` does not.
+#   * Provenance is required (ADR-0033). `npm publish --provenance` signs the
+#     build with the workflow that produced it; `pnpm publish` has no such flag.
+#
+# So: pack with pnpm (correct dependency ranges), publish the resulting tarballs
+# with npm (provenance + OIDC). Verified locally — `pnpm pack` emits
+# `@sdlc-on-fire/core: 0.1.0` where the source says `workspace:*`, and `npm
+# publish <tarball> --provenance` accepts a prepacked tarball.
+#
+# ─── Authentication ──────────────────────────────────────────────────────────
+#
+# npm Trusted Publishing (OIDC). There is no NPM_TOKEN: npm verifies this
+# workflow's own identity, so there is no long-lived publish credential sitting
+# in repository secrets at all. Given that ADR-0033's incident record is made
+# almost entirely of compromised maintainer accounts and stolen CI tokens,
+# shipping a supply-chain product with a standing publish token would be a
+# position hard to defend.
+#
+# One-time setup per package on npmjs.com (Settings → Trusted publishing):
+#   repository: faraasat/sdlc-on-fire   workflow: release.yml   environment: (none)
+# Until that is configured, the publish step fails closed with an auth error —
+# which is the correct failure, not a silent skip.
 name: release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  # A second push while a release is mid-flight must not race it to the
+  # registry. Not cancel-in-progress: killing a run *between* two package
+  # publishes would leave the lockstep set half-published, which is the one
+  # state that cannot be rolled back.
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
-  # Required for Sigstore provenance: npm exchanges this for a signing identity.
-  id-token: write
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
+    permissions:
+      # Changesets needs to push the version branch and open its PR.
+      contents: write
+      pull-requests: write
+      # Sigstore provenance: npm exchanges this for a short-lived signing
+      # identity. This is also what makes Trusted Publishing work without a token.
+      id-token: write
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Changesets reads history to work out what changed since the last
+          # release. A shallow clone makes it guess.
+          fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
         with:
@@ -37,22 +85,76 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      # Trusted Publishing needs a recent npm; the runner's bundled version
+      # predates it on some images. Pinned rather than `@latest` so a release
+      # cannot silently change its own publisher.
+      - name: Pin npm for trusted publishing
+        run: npm install -g npm@11.6.2
+
       - run: pnpm install --frozen-lockfile
+
+      # The full gate, on the exact tree about to be published. `ci.yml` already
+      # ran this on the PR, but a merge queue, a stale branch, or a
+      # semantic-conflict merge all produce a `main` that no CI run ever saw.
       - run: pnpm run check
 
+      # Pack every publishable package and inspect the artifacts that would
+      # actually be uploaded: no `workspace:` ranges left, siblings pinned to
+      # this release's version, dist present, entry points packed, exactly one
+      # shebang on each bin. Runs before Changesets so a broken tarball stops
+      # the release rather than being discovered by the first person to install.
+      - name: Verify the packages that would ship
+        run: node scripts/verify-package.mjs
+
+      - name: Version PR, or publish a merged one
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          # Opens/updates the "Version Packages" PR when changesets are pending.
+          version: pnpm run version-packages
+          # Runs only when no changesets remain — i.e. that PR was just merged.
+          publish: pnpm run release
+          commit: 'chore(release): version packages'
+          title: 'chore(release): version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Read by the npm invocation inside the publish script.
+          NPM_CONFIG_PROVENANCE: true
+
+      - name: Read the published version
+        id: version
+        if: steps.changesets.outputs.published == 'true'
+        run: echo "version=$(node -p "require('./packages/cli/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      # SBOMs describe what was *actually* published, so they are generated
+      # after the publish rather than before — a bill of materials for a
+      # candidate build is a bill of materials for something nobody installed.
+      #
+      # Dual format because consumers' scanners disagree about which they read,
+      # and an SBOM nobody can parse is not an SBOM (ADR-0033).
       - name: Generate SBOMs
+        if: steps.changesets.outputs.published == 'true'
         run: |
           mkdir -p sbom
           pnpm dlx @cyclonedx/cyclonedx-npm --output-format json --output-file sbom/cyclonedx.json
-          pnpm dlx spdx-sbom-generator -o sbom || echo "spdx generation unavailable; cyclonedx still emitted"
+          pnpm dlx @cyclonedx/cyclonedx-npm --output-format xml --output-file sbom/cyclonedx.xml
 
       - uses: actions/upload-artifact@v4
+        if: steps.changesets.outputs.published == 'true'
         with:
-          name: sbom
+          name: sbom-${{ steps.version.outputs.version }}
           path: sbom/
+          retention-days: 90
 
-      # Provenance requires npm's own publisher, not pnpm's.
-      - name: Publish with provenance
-        run: npm publish --workspace packages/cli --provenance --access public
+      - name: GitHub Release
+        if: steps.changesets.outputs.published == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          # The changelog Changesets already wrote is the human-authored record;
+          # the generated notes add the commit list underneath it.
+          generate_release_notes: true
+          files: sbom/*
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
