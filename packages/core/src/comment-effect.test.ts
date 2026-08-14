@@ -50,11 +50,11 @@ describe('the rows that carry the design', () => {
 
   it('routes a designer note to acceptance criteria and a PM decision to rescope', () => {
     expect(roleEffectFor('normal', 'designer')).toBe('UX_ACCEPTANCE_UPDATE');
-    expect(roleEffectFor('decision', 'product-manager')).toBe('RESCOPE');
+    expect(roleEffectFor('decision', 'pm')).toBe('RESCOPE');
   });
 
   it('falls back to the unroled row where a role changes nothing', () => {
-    expect(roleEffectFor('bug-report', 'engineer')).toBe(roleEffectFor('bug-report', null));
+    expect(roleEffectFor('bug-report', 'sr-eng')).toBe(roleEffectFor('bug-report', null));
   });
 });
 

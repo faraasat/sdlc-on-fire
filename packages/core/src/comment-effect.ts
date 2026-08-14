@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ROLE_KEYS } from './capability.js';
 
 /**
  * The `(comment_type × author_role) → role_effect` dispatch (P1-CMT-02,
@@ -35,17 +36,19 @@ export const COMMENT_TYPES = [
 export const CommentTypeSchema = z.enum(COMMENT_TYPES);
 export type CommentType = z.infer<typeof CommentTypeSchema>;
 
-/** The ~8-role ceiling (ADR-0010). Unpopulated in v0.1; the dispatch handles that. */
-export const AUTHOR_ROLES = [
-  'eng-lead',
-  'engineer',
-  'designer',
-  'product-manager',
-  'qa',
-  'security',
-  'tech-writer',
-  'stakeholder',
-] as const;
+/**
+ * The ~8-role ceiling (ADR-0010) — the same list `capability()` and the `roles`
+ * table use, not a second copy of it.
+ *
+ * It was a second copy, spelling two of the eight differently (`engineer` for
+ * `sr-eng`, `product-manager` for `pm`). That cost nothing while `roles` was
+ * unpopulated, and became a live defect the moment P3-RBAC-01 populated it:
+ * `comments.author_role_id` resolves to a `roles.key`, so a comment from a real
+ * `pm` would miss the `product-manager` row in the dispatch below and fall
+ * through to the unroled default — turning a PM's `decision` from `RESCOPE`
+ * into `DECISION_TO_MEMORY`, silently, with the table still looking correct.
+ */
+export const AUTHOR_ROLES = ROLE_KEYS;
 export const AuthorRoleSchema = z.enum(AUTHOR_ROLES);
 export type AuthorRole = z.infer<typeof AuthorRoleSchema>;
 
@@ -103,7 +106,7 @@ const BY_ROLE: Readonly<Partial<Record<AuthorRole, Partial<Record<CommentType, R
     'context-reference': 'NONE',
   },
   designer: { normal: 'UX_ACCEPTANCE_UPDATE' },
-  'product-manager': { decision: 'RESCOPE' },
+  pm: { decision: 'RESCOPE' },
   security: { blocker: 'GATE_BLOCK' },
   'eng-lead': { review: 'REQUIRED_CHANGE' },
 };

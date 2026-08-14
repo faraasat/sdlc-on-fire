@@ -75,6 +75,58 @@ export const roles = pgTable('roles', {
   description: text('description'),
 });
 
+/**
+ * Who holds which role, and until when (P3-RBAC-01, contract 01 §3.3).
+ *
+ * `expires_at` is the ADR-0035 amendment: grants are time-bounded, so a role
+ * handed out for one release does not quietly become permanent. It is nullable
+ * because most memberships are indefinite — but a check that reads the row
+ * without reading the date makes every temporary grant permanent, and nothing
+ * looks wrong. `capability()` in `core` is where that reading happens.
+ */
+export const memberships = pgTable(
+  'memberships',
+  {
+    actorId: uuid('actor_id')
+      .notNull()
+      .references(() => actors.id),
+    roleId: integer('role_id')
+      .notNull()
+      .references(() => roles.id),
+    expiresAt: timestamp('expires_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.actorId, table.roleId] })],
+);
+
+/** The action vocabulary. Rows, not an enum — the set grows per phase. */
+export const permissions = pgTable('permissions', {
+  id: serial('id').primaryKey(),
+  key: text('key').notNull().unique(),
+  description: text('description'),
+});
+
+/**
+ * The role side of `capability()`.
+ *
+ * Deliberately a plain join table with no conditions on it: ADR-0010 caps the
+ * model at roughly eight roles and explicitly does not intend ABAC generality.
+ * Anything card-specific belongs in a relationship grant, not in a predicate
+ * column here.
+ */
+export const rolePermissions = pgTable(
+  'role_permissions',
+  {
+    roleId: integer('role_id')
+      .notNull()
+      .references(() => roles.id),
+    permissionId: integer('permission_id')
+      .notNull()
+      .references(() => permissions.id),
+  },
+  (table) => [primaryKey({ columns: [table.roleId, table.permissionId] })],
+);
+
 /* ---------------------------------------------------------------- content mirror */
 
 export const workItems = pgTable(

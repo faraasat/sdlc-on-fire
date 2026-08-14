@@ -15,6 +15,13 @@
       "when": 1786361434689,
       "tag": "0001_lethal_omega_sentinel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786726262712,
+      "tag": "0002_whole_white_queen",
+      "breakpoints": true
     }
   ]
 }

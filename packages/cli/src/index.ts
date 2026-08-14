@@ -28,6 +28,8 @@ import {
   type Preset,
   type RefreshCadence,
   AmbiguitySchema,
+  PERMISSION_KEYS,
+  ROLE_KEYS,
 } from '@sdlc-on-fire/core';
 import { renderWorkItem } from '@sdlc-on-fire/storage';
 import fs from 'node:fs/promises';
@@ -99,6 +101,14 @@ import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
 import { checkE2e, formatE2eCheck, formatE2eSeal, sealE2eEvidence } from './e2e.js';
+import {
+  checkAccess,
+  formatAccessCheck,
+  formatPolicy,
+  grantRole,
+  showPolicy,
+  whoami,
+} from './access.js';
 import { deriveRoles, formatRoles } from './roles.js';
 import { checkPilot, formatPilotCheck, writePilotTemplate } from './pilot.js';
 import {
@@ -1495,6 +1505,91 @@ export function buildProgram(): Command {
       // first run red.
       if (!result.ok) process.exitCode = 1;
     });
+
+  const access = program
+    .command('access')
+    .description('who may do what — roles, memberships and the capability check (ADR-0010)');
+
+  access
+    .command('policy')
+    .description('the role × action table, read from the database, and any drift from the code')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await showPolicy(root());
+      emit(result, options.json === true, formatPolicy);
+      // Drift is a refusal. A permission the code has and the rows do not
+      // passes every unit test and refuses every real user.
+      if (!result.ok) process.exitCode = 1;
+    });
+
+  access
+    .command('whoami')
+    .description('the human actor for this workspace, bootstrapped from git config user.email')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await whoami(root());
+      emit(result, options.json === true, (r: typeof result) =>
+        [
+          `${r.actor.displayName} — ${r.actor.kind} ${r.actor.id}`,
+          `  ${r.created ? 'created' : 'found'} from ${r.source}`,
+          `  roles: ${
+            r.actor.roles.length === 0
+              ? 'none yet — `sdlc access grant` gives one'
+              : r.actor.roles
+                  .map((role) =>
+                    role.expiresAt === null ? role.key : `${role.key} until ${role.expiresAt}`,
+                  )
+                  .join(', ')
+          }`,
+        ].join('\n'),
+      );
+    });
+
+  access
+    .command('grant')
+    .argument('<actor>', 'actor id, email or display name')
+    .argument('<role>', ROLE_KEYS.join(' | '))
+    .description('give an actor a role, optionally with an end date')
+    .option('--until <iso>', 'when the grant lapses (ADR-0035) — leave off for indefinite')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        actor: string,
+        role: string,
+        options: { until?: string; json?: boolean },
+      ): Promise<void> => {
+        const result = await grantRole(root(), actor, role, options.until);
+        emit(result, options.json === true, (r: typeof result) =>
+          [
+            `${r.actor.displayName} ${r.alreadyHeld ? 'already held' : 'now holds'} "${r.role}"` +
+              (r.expiresAt === null ? '' : ` until ${r.expiresAt}`),
+            r.expiresAt === null
+              ? '  Indefinite. A grant with no end date is the ordinary way a permission model rots (ADR-0035).'
+              : '  Lapses on its own — `capability()` reads the date, not just the row.',
+          ].join('\n'),
+        );
+      },
+    );
+
+  access
+    .command('check')
+    .argument('<actor>', 'actor id, email or display name')
+    .argument('<action>', PERMISSION_KEYS.join(' | '))
+    .argument('<work-item-id>', 'the card the action is on')
+    .description('would this actor be allowed, and on what grounds')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        actor: string,
+        action: string,
+        id: string,
+        options: { json?: boolean },
+      ): Promise<void> => {
+        const result = await checkAccess(root(), actor, action, id);
+        emit(result, options.json === true, formatAccessCheck);
+        if (!result.ok) process.exitCode = 1;
+      },
+    );
 
   const mcp = program
     .command('mcp')

@@ -1,7 +1,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isTerminalStage, LIFECYCLE_STAGES } from '@sdlc-on-fire/core';
+import {
+  DEFAULT_ROLE_PERMISSIONS,
+  isTerminalStage,
+  LIFECYCLE_STAGES,
+  PERMISSION_KEYS,
+  ROLE_KEYS,
+} from '@sdlc-on-fire/core';
 
 /**
  * Schema application for the PGlite fast path.
@@ -332,6 +338,40 @@ export async function seedLifecycleStates(db: SqlRunner): Promise<void> {
 }
 
 /**
+ * Seeds `roles`, `permissions` and `role_permissions` (P3-RBAC-01, ADR-0010).
+ *
+ * Data-driven for the same reason the lifecycle is: the policy `capability()`
+ * evaluates and the rows the database holds have to be the same policy, and the
+ * only way to guarantee that is to derive one from the other. A hand-written
+ * seed file drifts from `DEFAULT_ROLE_PERMISSIONS` the first time somebody
+ * edits one of them, and the symptom is a permission that works in a unit test
+ * and not in the product.
+ *
+ * Idempotent, and it does not delete: revoking a permission is a deliberate act
+ * with an audit trail, not something a `db:up` does on the way past.
+ */
+export async function seedRoles(db: SqlRunner): Promise<void> {
+  for (const key of ROLE_KEYS) {
+    await db.query('INSERT INTO roles (key) VALUES ($1) ON CONFLICT (key) DO NOTHING;', [key]);
+  }
+  for (const key of PERMISSION_KEYS) {
+    await db.query('INSERT INTO permissions (key) VALUES ($1) ON CONFLICT (key) DO NOTHING;', [
+      key,
+    ]);
+  }
+  for (const [role, permissions] of Object.entries(DEFAULT_ROLE_PERMISSIONS)) {
+    for (const permission of permissions) {
+      await db.query(
+        `INSERT INTO role_permissions (role_id, permission_id)
+         SELECT r.id, p.id FROM roles r, permissions p WHERE r.key = $1 AND p.key = $2
+         ON CONFLICT DO NOTHING;`,
+        [role, permission],
+      );
+    }
+  }
+}
+
+/**
  * Ledger of applied migrations.
  *
  * drizzle-kit emits bare `CREATE TABLE`, so replaying a migration fails rather
@@ -383,4 +423,5 @@ export async function applySchema(db: SqlRunner): Promise<void> {
   }
 
   await seedLifecycleStates(db);
+  await seedRoles(db);
 }
