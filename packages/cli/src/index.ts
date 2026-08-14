@@ -17,6 +17,7 @@ import {
   AppetiteSchema,
   formatCallVerdict,
   formatProposalVerdict,
+  formatRecommendations,
   PRESETS,
   PresetSchema,
   REFRESH_CADENCES,
@@ -98,7 +99,13 @@ import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
 import { checkE2e, formatE2eCheck, formatE2eSeal, sealE2eEvidence } from './e2e.js';
-import { checkMcpCall, formatMcpList, listMcpServers, setMcpConsent } from './mcp.js';
+import {
+  checkMcpCall,
+  formatMcpList,
+  listMcpServers,
+  setMcpConsent,
+  suggestMcpServers,
+} from './mcp.js';
 import {
   approveImprovement,
   formatMining,
@@ -1460,6 +1467,18 @@ export function buildProgram(): Command {
       // Drift is a refusal, not a note: a consented server whose tool set moved
       // is one the user agreed to under different terms.
       if (!result.ok) process.exitCode = 1;
+    });
+
+  mcp
+    .command('suggest')
+    .description('servers worth considering for this project’s stack — grounded, and opt-in')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await suggestMcpServers(root());
+      emit(result, options.json === true, (r: typeof result) => formatRecommendations(r.result));
+      // Deliberately exit 0 whatever it finds. A suggestion is not a finding,
+      // and a recommender that fails a build because it had an idea is one
+      // people turn off.
     });
 
   mcp

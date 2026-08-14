@@ -5,14 +5,17 @@ import {
   diffSchema,
   evaluateMcpCall,
   pinSchema,
+  recommendMcpServers,
   relativePosix,
   resolveWorkspaceLayout,
   type CallVerdict,
   type ConsentState,
   type McpServerRecord,
   type McpToolDescriptor,
+  type RecommendationResult,
   type ToolClassification,
 } from '@sdlc-on-fire/core';
+import { detectProjectStack } from './research.js';
 
 /**
  * `sdlc mcp` — consuming external MCP servers (P2-MCP-01, ADR-0058).
@@ -248,4 +251,52 @@ export function formatMcpList(result: McpListResult): string {
     "annotation is the server's claim about itself and never licenses on its own.",
   );
   return lines.join('\n');
+}
+
+export interface McpSuggestResult {
+  readonly technologies: readonly string[];
+  readonly result: RecommendationResult;
+}
+
+/**
+ * Suggests servers for the technologies this project actually depends on
+ * (P2-MCP-02).
+ *
+ * Composed from two things already here rather than a third detector: the
+ * manifest walk `sdlc research` uses, and the consent registry `sdlc mcp`
+ * writes. That composition is the point — a recommender with its own idea of
+ * the stack would disagree with `research scan` eventually, and a recommender
+ * that could not see the consent file would re-suggest a server the user has
+ * already declined.
+ */
+export async function suggestMcpServers(
+  root: string,
+  options: { readonly today?: string | undefined } = {},
+): Promise<McpSuggestResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const today = options.today ?? new Date().toISOString().slice(0, 10);
+
+  // The same detector `sdlc research` uses, not a second one — see
+  // `detectProjectStack`. A recommender with its own idea of the stack
+  // disagrees with `research scan` eventually, and the disagreement shows up as
+  // advice rather than as an error.
+  const { detected } = await detectProjectStack(layout.root);
+  const technologies = detected.map((tech) => ({
+    tech: tech.tech,
+    // Package names too: a catalogue entry keyed on `@supabase/supabase-js`
+    // must match a project that depends on it, and the folder name for that
+    // package is `supabase`, which is a different string.
+    packages: tech.packages.map((pkg) => pkg.name),
+  }));
+
+  // Consented *and* declined. Suggesting something the user already said no to
+  // turns a recorded decision into a prompt they keep answering.
+  const settled = (await readRegistry(root))
+    .filter((entry) => entry.consent !== 'unconsented')
+    .map((entry) => entry.id);
+
+  return {
+    technologies: technologies.map((tech) => tech.tech),
+    result: recommendMcpServers(technologies, today, settled),
+  };
 }

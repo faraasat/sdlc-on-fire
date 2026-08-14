@@ -101,48 +101,7 @@ export async function scanResearch(
   const layout = resolveWorkspaceLayout(root);
   const today = options.today ?? new Date().toISOString().slice(0, 10);
 
-  const manifestPaths = await workspaceManifests(layout.root);
-  const manifests: string[] = [];
-  const merged = new Map<string, DetectedTech>();
-
-  // The project's own packages are not technologies to research. In a monorepo
-  // they appear in each other's `dependencies` like anything else, and the
-  // first run of this against our own tree duly asked for a research folder
-  // about `sdlc-on-fire`. Collected from the manifests themselves rather than
-  // guessed from a name prefix, which would exempt exactly the wrong thing in a
-  // project whose packages are named after a vendor it also depends on.
-  const own = new Set<string>();
-  const parsed = new Map<string, unknown>();
-  for (const manifestPath of manifestPaths) {
-    const raw = await fs.readFile(manifestPath, 'utf8').catch(() => null);
-    if (raw === null) continue;
-    const manifest = JSON.parse(raw) as { name?: unknown };
-    parsed.set(manifestPath, manifest);
-    if (typeof manifest.name === 'string') own.add(manifest.name);
-  }
-
-  for (const manifestPath of manifestPaths) {
-    const manifest = parsed.get(manifestPath);
-    if (manifest === undefined) continue;
-    manifests.push(relativePosix(layout.root, manifestPath));
-    for (const tech of detectStack(manifest)) {
-      if (tech.packages.every((entry) => own.has(entry.name))) continue;
-      const existing = merged.get(tech.tech);
-      merged.set(
-        tech.tech,
-        existing === undefined
-          ? tech
-          : {
-              ...existing,
-              packages: [...existing.packages, ...tech.packages].filter(
-                (entry, index, all) =>
-                  all.findIndex((other) => other.name === entry.name) === index,
-              ),
-            },
-      );
-    }
-  }
-  const detected = [...merged.values()].sort((a, b) => a.tech.localeCompare(b.tech));
+  const { manifests, detected } = await detectProjectStack(layout.root);
 
   const verdicts: TechResearchVerdict[] = [];
   for (const tech of detected) {
@@ -189,6 +148,68 @@ export async function workspaceManifests(root: string, depth = 3): Promise<strin
 
   await walk(root, depth);
   return found.sort();
+}
+
+export interface ProjectStack {
+  /** Manifests actually read, relative to the workspace root. */
+  readonly manifests: readonly string[];
+  readonly detected: readonly DetectedTech[];
+}
+
+/**
+ * The technologies a project depends on, across every manifest in it.
+ *
+ * Shared rather than duplicated, and that is not tidiness. `sdlc mcp suggest`
+ * grew its own copy of this walk and immediately re-introduced a defect this
+ * one had already fixed: it offered to find an MCP server for the project's own
+ * packages. Two callers with two ideas of "the stack" disagree eventually, and
+ * the disagreement shows up as advice rather than as an error.
+ */
+export async function detectProjectStack(root: string): Promise<ProjectStack> {
+  const manifestPaths = await workspaceManifests(root);
+  const manifests: string[] = [];
+  const merged = new Map<string, DetectedTech>();
+
+  // The project's own packages are not technologies to research. In a monorepo
+  // they appear in each other's `dependencies` like anything else, and the
+  // first run of this against our own tree duly asked for a research folder
+  // about `sdlc-on-fire`. Collected from the manifests themselves rather than
+  // guessed from a name prefix, which would exempt exactly the wrong thing in a
+  // project whose packages are named after a vendor it also depends on.
+  const own = new Set<string>();
+  const parsed = new Map<string, unknown>();
+  for (const manifestPath of manifestPaths) {
+    const raw = await fs.readFile(manifestPath, 'utf8').catch(() => null);
+    if (raw === null) continue;
+    const manifest = JSON.parse(raw) as { name?: unknown };
+    parsed.set(manifestPath, manifest);
+    if (typeof manifest.name === 'string') own.add(manifest.name);
+  }
+
+  for (const manifestPath of manifestPaths) {
+    const manifest = parsed.get(manifestPath);
+    if (manifest === undefined) continue;
+    manifests.push(relativePosix(root, manifestPath));
+    for (const tech of detectStack(manifest)) {
+      if (tech.packages.every((entry) => own.has(entry.name))) continue;
+      const existing = merged.get(tech.tech);
+      merged.set(
+        tech.tech,
+        existing === undefined
+          ? tech
+          : {
+              ...existing,
+              packages: [...existing.packages, ...tech.packages].filter(
+                (entry, index, all) =>
+                  all.findIndex((other) => other.name === entry.name) === index,
+              ),
+            },
+      );
+    }
+  }
+  const detected = [...merged.values()].sort((a, b) => a.tech.localeCompare(b.tech));
+
+  return { manifests, detected };
 }
 
 export interface NewResearchResult {

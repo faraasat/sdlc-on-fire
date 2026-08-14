@@ -2,7 +2,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { checkMcpCall, listMcpServers, MCP_REGISTRY, setMcpConsent } from './mcp.js';
+import {
+  checkMcpCall,
+  listMcpServers,
+  MCP_REGISTRY,
+  setMcpConsent,
+  suggestMcpServers,
+} from './mcp.js';
 
 /**
  * Teardown retries, because Windows keeps a file locked while anything holds it.
@@ -189,5 +195,67 @@ describe('calls', () => {
     const result = await checkMcpCall(root, 'supabase', 'apply_migration', 'write');
     expect(result.verdict.allowed).toBe(false);
     expect(result.verdict.reasons.join(' ')).toContain('a person approves it');
+  });
+});
+
+describe('suggestMcpServers (P2-MCP-02)', () => {
+  const project = async (files: Record<string, string>): Promise<string> => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sdlcof-mcp-s-'));
+    dirs.push(root);
+    for (const [relative, content] of Object.entries(files)) {
+      const full = path.join(root, relative);
+      await fs.mkdir(path.dirname(full), { recursive: true });
+      await fs.writeFile(full, content, 'utf8');
+    }
+    return root;
+  };
+
+  it('suggests a server for a technology the project actually has', async () => {
+    const root = await project({
+      'package.json': JSON.stringify({ name: 'app', dependencies: { pg: '^8' } }),
+    });
+    const result = await suggestMcpServers(root, { today: '2026-08-14' });
+    expect(result.result.recommendations.map((r) => r.id)).toEqual(['postgres']);
+  });
+
+  it('does not offer to find a server for the project’s own packages', async () => {
+    // The defect this shares `detectProjectStack` to prevent: `sdlc mcp suggest`
+    // had its own copy of the manifest walk and immediately re-introduced it,
+    // asking after a server for `@app/core`.
+    const root = await project({
+      'package.json': JSON.stringify({ name: 'app' }),
+      'packages/core/package.json': JSON.stringify({ name: '@app/core' }),
+      'packages/web/package.json': JSON.stringify({
+        name: '@app/web',
+        dependencies: { '@app/core': 'workspace:*' },
+      }),
+    });
+    const result = await suggestMcpServers(root, { today: '2026-08-14' });
+    expect(result.technologies).toEqual([]);
+    expect(result.result.unmatched).toEqual([]);
+  });
+
+  it('never re-suggests a server already declined', async () => {
+    const root = await project({
+      'package.json': JSON.stringify({ name: 'app', dependencies: { pg: '^8' } }),
+      [MCP_REGISTRY]: JSON.stringify({
+        servers: [{ id: 'postgres', provenance: 'x', consent: 'declined', tools: [] }],
+      }),
+    });
+    const result = await suggestMcpServers(root, { today: '2026-08-14' });
+    expect(result.result.recommendations).toEqual([]);
+    expect(result.result.settled).toEqual(['postgres']);
+  });
+
+  it('matches a catalogue entry keyed on the package name', async () => {
+    const root = await project({
+      'package.json': JSON.stringify({
+        name: 'app',
+        dependencies: { '@supabase/supabase-js': '^2' },
+      }),
+    });
+    const result = await suggestMcpServers(root, { today: '2026-08-14' });
+    expect(result.result.recommendations.map((r) => r.id)).toEqual(['supabase']);
+    expect(result.result.unmatched).toEqual([]);
   });
 });

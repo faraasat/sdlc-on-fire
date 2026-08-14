@@ -24,6 +24,7 @@ export * from './embedding.js';
 export * from './memory.js';
 export * from './memory-entry.js';
 export * from './improvement.js';
+export * from './mcp-catalogue.js';
 export * from './mcp-client.js';
 export * from './posix-path.js';
 export * from './test-environment.js';
