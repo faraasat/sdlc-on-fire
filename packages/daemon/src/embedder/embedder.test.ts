@@ -5,8 +5,9 @@ import { createOnnxEmbedder, type PipelineFactory } from './onnx.js';
  * P1-CTX-04 — the adapter.
  *
  * The pipeline is injected so a unit test never downloads 126 MB. The *real*
- * runtime is exercised separately against PGlite in `worker.test.ts`; a suite
- * that only ever ran a stub would be testing the stub.
+ * runtime is exercised separately against PGlite in
+ * `worker.integration.test.ts`; a suite that only ever ran a stub would be
+ * testing the stub.
  */
 
 /** A pipeline that returns unit vectors of the requested width. */

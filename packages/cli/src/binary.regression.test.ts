@@ -7,11 +7,14 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
 /**
- * Executes the **built binary**, not the module.
+ * Bugs the built binary already shipped once, pinned so they cannot return.
  *
- * A duplicate shebang once shipped past a fully green unit suite: every test
- * imported `index.ts`, and no test ever ran `dist/index.js`. The bundle was a
- * syntax error on line 2. Nothing short of executing the artifact catches that.
+ * Every case here is a defect that reached `dist/index.js` past a fully green
+ * unit suite: every test imported `index.ts`, and no test ever ran the artifact.
+ * Nothing short of executing it catches that class of failure, and nothing short
+ * of a permanent case keeps it caught.
+ *
+ * The boot checks that pin nothing live in `binary.smoke.test.ts`.
  */
 
 const run = promisify(execFile);
@@ -36,11 +39,6 @@ describe('built binary', () => {
     expect(shebangs).toHaveLength(1);
     expect(built.startsWith('#!')).toBe(true);
   });
-
-  it('executes and reports its version', async () => {
-    const { stdout } = await run('node', [CLI, '--help']);
-    expect(stdout).toContain('sdlc');
-  }, 30_000);
 
   it('runs through a bin symlink, the way npm installs it', async () => {
     // npm installs a bin as `node_modules/.bin/sdlc` symlinked at
@@ -77,17 +75,4 @@ describe('built binary', () => {
     const { stdout } = await run('node', [probe, 'status', '--json']);
     expect(stdout).toBe('imported-cleanly');
   }, 30_000);
-
-  it('runs the real init → status → new flow', async () => {
-    const root = await workspace();
-    await run('node', [CLI, '-C', root, 'init']);
-
-    const { stdout: statusJson } = await run('node', [CLI, '-C', root, 'status', '--json']);
-    expect(JSON.parse(statusJson)).toMatchObject({ initialised: true, databaseMode: 'pglite' });
-
-    await run('node', [CLI, '-C', root, 'new', 'task', 'Smoke']);
-    await expect(
-      fs.stat(path.join(root, 'kanban', '_inbox', 'TASK-001.md')),
-    ).resolves.toBeDefined();
-  }, 60_000);
 });

@@ -100,7 +100,14 @@ export function publishFlags(env = process.env) {
 
 function main() {
   const cwd = process.cwd();
+  // `--dry-run` rehearses the whole release: packs, verifies, and asks npm to
+  // validate each tarball, uploading nothing. Publishing is irreversible per
+  // package and a version number is burned forever, so the run that proves the
+  // pipeline works must not be the run that commits to it.
+  const dryRun = process.argv.includes('--dry-run');
   const packages = publishablePackages(cwd);
+
+  if (dryRun) process.stdout.write('DRY RUN — nothing will be uploaded.\n\n');
 
   if (packages.length === 0) {
     // Discovery returning nothing is a broken script, not an empty release.
@@ -144,9 +151,25 @@ function main() {
       // a prerelease to every plain `npm install`.
       const tag = distTagFor(pkg.version);
       const { provenance, flags } = publishFlags();
-      run('npm', ['publish', pkg.tarball, ...flags, '--tag', tag], {
-        stdio: ['ignore', 'inherit', 'inherit'],
+      // `--provenance` and `--dry-run` cannot be combined: npm refuses to mint
+      // an attestation for an upload that will not happen. The rehearsal drops
+      // provenance, which is the one difference between it and the real run.
+      const publishArgs = dryRun
+        ? ['publish', pkg.tarball, '--access', 'public', '--tag', tag, '--dry-run']
+        : ['publish', pkg.tarball, ...flags, '--tag', tag];
+      // A real publish shows everything npm says; the rehearsal drops stdout
+      // because it prints the full tarball manifest nine times over, which
+      // buries the one line per package that actually matters. Stderr is
+      // inherited either way — a failure is never the quiet one.
+      run('npm', publishArgs, {
+        stdio: dryRun ? ['ignore', 'ignore', 'inherit'] : ['ignore', 'inherit', 'inherit'],
       });
+
+      if (dryRun) {
+        process.stdout.write(`✓ ${pkg.name}@${pkg.version} would publish to "${tag}"\n`);
+        published.push(pkg);
+        continue;
+      }
 
       // The line `changesets/action` parses. Emitted per package, after that
       // package is actually on the registry — never in advance.
@@ -166,7 +189,7 @@ function main() {
   }
 
   process.stdout.write(
-    `\n${String(published.length)} of ${String(packages.length)} package(s) published at ${String(expectedVersion)}\n`,
+    `\n${String(published.length)} of ${String(packages.length)} package(s) ${dryRun ? 'would publish' : 'published'} at ${String(expectedVersion)}\n`,
   );
 }
 
