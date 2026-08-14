@@ -15,6 +15,7 @@ import {
   kanbanColumnForStage,
   APPETITES,
   AppetiteSchema,
+  formatProposalVerdict,
   PRESETS,
   PresetSchema,
   REFRESH_CADENCES,
@@ -95,6 +96,13 @@ import {
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
+import {
+  approveImprovement,
+  formatMining,
+  formatReview,
+  mineImprovements,
+  reviewImprovements,
+} from './improve.js';
 import { scanQuality } from './quality.js';
 import {
   listMemory,
@@ -1432,6 +1440,53 @@ export function buildProgram(): Command {
         emit(result, options.json === true, (r: Awaited<ReturnType<typeof compileSkills>>) =>
           formatCompile(r, options.dryRun === true),
         );
+      },
+    );
+
+  const improve = program
+    .command('improve')
+    .description(
+      'the bounded trace → propose → validate → human-merge loop (ADR-0026). Nothing here redeploys.',
+    );
+
+  improve
+    .command('mine <traces>')
+    .description(
+      'read a trace log and report recurring patterns — proposes nothing, applies nothing',
+    )
+    .option('--json', 'emit JSON')
+    .action(async (traces: string, options: { json?: boolean }): Promise<void> => {
+      const result = await mineImprovements(root(), traces);
+      emit(result, options.json === true, formatMining);
+    });
+
+  improve
+    .command('review')
+    .description('judge the waiting proposals against their held-out runs')
+    .option('--tier <tier>', 'the model tier production actually uses', 'medium')
+    .option('--json', 'emit JSON')
+    .action(async (options: { tier?: string; json?: boolean }): Promise<void> => {
+      const result = await reviewImprovements(root(), options.tier ?? 'medium');
+      emit(result, options.json === true, formatReview);
+    });
+
+  improve
+    // The human step, and a separate command on purpose: nothing in `mine` or
+    // `review` can reach it, and no flag on either shortcuts it (ADR-0026 §5).
+    .command('approve <id>')
+    .description('merge-approve a validated proposal, as a person')
+    .requiredOption('--as <actor>', 'who you are — recorded on the proposal')
+    .option('--tier <tier>', 'the model tier production actually uses', 'medium')
+    .option('--json', 'emit JSON')
+    .action(
+      async (id: string, options: { as: string; tier?: string; json?: boolean }): Promise<void> => {
+        const result = await approveImprovement(root(), id, options.as, options.tier ?? 'medium');
+        emit(result, options.json === true, (r: typeof result) => formatProposalVerdict(r.verdict));
+        // An approval that did not carry — because the proposal was never
+        // validated, or was validated on the wrong tier — exits non-zero. It is
+        // recorded either way; what must not happen is a person believing they
+        // merged something they did not.
+        if (result.verdict.state !== 'approved') process.exitCode = 1;
       },
     );
 
