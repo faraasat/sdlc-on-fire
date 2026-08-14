@@ -97,8 +97,20 @@ describe('roles are summoned by the stack', () => {
     expect(roles).not.toContain('react');
   });
 
-  it('always includes the orchestrator', () => {
-    expect(rolesForStack(ROLE_REGISTRY, []).map((r) => r.key)).toEqual([ORCHESTRATOR_KEY]);
+  it('always includes the orchestrator and the stack-independent roles', () => {
+    // This used to assert the orchestrator *alone*, and it passed because the
+    // adversarial reviewer's `triggers: ['*']` was compared as a literal — so
+    // the reviewer appeared only for a project depending on a package named
+    // `*`. The expectation was encoding the defect. A reviewer is
+    // stack-independent by design; a stack-derived role still is not.
+    const keys = rolesForStack(ROLE_REGISTRY, []).map((r) => r.key);
+    expect(keys).toContain(ORCHESTRATOR_KEY);
+    expect(keys).toContain('reviewer');
+    expect(keys).not.toContain('sql');
+  });
+
+  it('includes a `*` role for any stack at all', () => {
+    expect(rolesForStack(ROLE_REGISTRY, ['cobol']).map((r) => r.key)).toContain('reviewer');
   });
 });
 

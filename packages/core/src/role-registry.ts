@@ -139,6 +139,8 @@ export function registryViolationsFor(roles: readonly RoleDefinition[]): readonl
  * Spawning a specialist that nothing in the project needs is the role explosion
  * ADR-0029 caps against.
  */
+export const ANY_STACK = '*';
+
 export function rolesForStack(
   registry: readonly RoleDefinition[],
   detected: readonly string[],
@@ -147,6 +149,14 @@ export function rolesForStack(
   return registry.filter(
     (role) =>
       role.key === ORCHESTRATOR_KEY ||
+      // `*` means stack-independent, and it needed saying. The shipped registry
+      // gave the adversarial reviewer `triggers: ['*']` meaning "always", and
+      // this compared it as a literal — so the reviewer appeared only for a
+      // project that depended on a package called `*`, which is to say never.
+      // Every unit test passed: they all asked about roles that do have real
+      // triggers. Found by deriving roles for a real repository and noticing
+      // the reviewer was not in the list.
+      role.triggers.includes(ANY_STACK) ||
       role.triggers.some((trigger) => stack.has(trigger.toLowerCase())),
   );
 }
@@ -165,7 +175,10 @@ export const ROLE_REGISTRY: readonly RoleDefinition[] = [
   RoleDefinitionSchema.parse({
     key: 'typescript',
     persona: 'TypeScript engineer working to the project’s own conventions.',
-    triggers: ['typescript', 'ts', 'node'],
+    // Package names, because that is what the stack detector reports. The
+    // first version listed `ts` and `node` — plausible names for the
+    // technology, and not what appears in anybody's manifest.
+    triggers: ['typescript', 'tsx', 'tsup', 'commander', 'zod'],
     contextScope: ['**/*.ts', 'tsconfig*.json', 'package.json'],
     tools: ['read', 'edit', 'run-tests'],
     tier: 'medium',
@@ -174,7 +187,14 @@ export const ROLE_REGISTRY: readonly RoleDefinition[] = [
   RoleDefinitionSchema.parse({
     key: 'sql',
     persona: 'Database engineer who treats a migration as irreversible.',
-    triggers: ['postgres', 'sql', 'pglite', 'drizzle'],
+    triggers: [
+      'postgres',
+      'pg',
+      'drizzle-orm',
+      'drizzle-kit',
+      'electric-sql',
+      '@electric-sql/pglite',
+    ],
     contextScope: ['**/*.sql', '**/schema.ts', '**/migrations/**'],
     tools: ['read', 'edit'],
     tier: 'medium',
@@ -183,7 +203,7 @@ export const ROLE_REGISTRY: readonly RoleDefinition[] = [
   RoleDefinitionSchema.parse({
     key: 'react',
     persona: 'Frontend engineer who checks what the user actually sees.',
-    triggers: ['react', 'next', 'vite'],
+    triggers: ['react', 'react-dom', 'next', 'vite', 'astro', 'nuxt'],
     contextScope: ['**/*.tsx', '**/*.css'],
     tools: ['read', 'edit', 'screenshot'],
     tier: 'medium',

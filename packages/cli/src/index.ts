@@ -99,6 +99,7 @@ import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
 import { checkE2e, formatE2eCheck, formatE2eSeal, sealE2eEvidence } from './e2e.js';
+import { deriveRoles, formatRoles } from './roles.js';
 import {
   checkMcpCall,
   formatMcpList,
@@ -1452,6 +1453,20 @@ export function buildProgram(): Command {
         );
       },
     );
+
+  program
+    .command('roles')
+    .description('the specialist team this project’s stack implies (ADR-0059)')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await deriveRoles(root());
+      emit(result, options.json === true, formatRoles);
+      // A broken registry or a team too wide to dispatch exits non-zero; a
+      // technology with no specialist does not — that is the registry not
+      // having grown yet, and failing on it would make every real project's
+      // first run red.
+      if (!result.ok) process.exitCode = 1;
+    });
 
   const mcp = program
     .command('mcp')
