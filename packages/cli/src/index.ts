@@ -15,6 +15,7 @@ import {
   kanbanColumnForStage,
   APPETITES,
   AppetiteSchema,
+  formatCallVerdict,
   formatProposalVerdict,
   PRESETS,
   PresetSchema,
@@ -97,6 +98,7 @@ import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
 import { checkE2e, formatE2eCheck, formatE2eSeal, sealE2eEvidence } from './e2e.js';
+import { checkMcpCall, formatMcpList, listMcpServers, setMcpConsent } from './mcp.js';
 import {
   approveImprovement,
   formatMining,
@@ -1443,6 +1445,71 @@ export function buildProgram(): Command {
         );
       },
     );
+
+  const mcp = program
+    .command('mcp')
+    .description('external MCP servers: what is consented, what is read-only, what needs a person');
+
+  mcp
+    .command('list')
+    .description('every registered server, its consent state and each tool’s access level')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await listMcpServers(root());
+      emit(result, options.json === true, formatMcpList);
+      // Drift is a refusal, not a note: a consented server whose tool set moved
+      // is one the user agreed to under different terms.
+      if (!result.ok) process.exitCode = 1;
+    });
+
+  mcp
+    .command('consent <id>')
+    .description('record consent to a server, pinning the tool set as it stands now')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { json?: boolean }): Promise<void> => {
+      const result = await setMcpConsent(root(), id, 'consented');
+      emit(
+        result,
+        options.json === true,
+        (r: typeof result) =>
+          `${r.id}: consented, ${String(r.toolsPinned)} tool(s) pinned` +
+          (r.drift?.drifted === true
+            ? `\n  newly agreed to: ${[...r.drift.added, ...r.drift.redescribed].join(', ')}`
+            : ''),
+      );
+    });
+
+  mcp
+    .command('decline <id>')
+    .description('record a decline — kept, and revisable later')
+    .option('--reason <text>', 'why, for whoever reads this next')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { reason?: string; json?: boolean }): Promise<void> => {
+      const result = await setMcpConsent(root(), id, 'declined', { reason: options.reason });
+      emit(
+        result,
+        options.json === true,
+        (r: typeof result) => `${r.id}: declined — recorded, and revisable`,
+      );
+    });
+
+  mcp
+    .command('check <id> <tool>')
+    .description('whether one call would be permitted, without making it')
+    .option('--write', 'the call would write — requires a human approval')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, toolName: string, options: { write?: boolean; json?: boolean }) => {
+      const result = await checkMcpCall(
+        root(),
+        id,
+        toolName,
+        options.write === true ? 'write' : 'read',
+      );
+      emit(result, options.json === true, (r: typeof result) =>
+        formatCallVerdict(r.server, r.tool, r.verdict),
+      );
+      if (!result.verdict.allowed) process.exitCode = 1;
+    });
 
   const e2e = program
     .command('e2e')
