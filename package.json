@@ -17,7 +17,7 @@
     "lint:fix": "eslint . --fix",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
+    "check": "pnpm run format:check && pnpm run typecheck && pnpm run lint && pnpm run build && pnpm run test",
     "clean": "tsc --build --clean && pnpm -r exec rm -rf dist",
     "changeset": "changeset",
     "version-packages": "changeset version",

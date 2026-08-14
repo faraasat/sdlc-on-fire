@@ -1,0 +1,16 @@
+# Line endings are LF in the repository, on every platform.
+#
+# Without this, git checks files out with CRLF on Windows and Prettier's
+# `format:check` fails on every text file in the repo — 409 of them, none of
+# which a developer edited. The failure reads as a formatting problem and is a
+# checkout artefact.
+* text=auto eol=lf
+
+# Binary, never converted.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.tgz binary

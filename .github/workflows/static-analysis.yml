@@ -38,6 +38,11 @@ jobs:
       # Findings go to the Security tab, where they persist and can be triaged,
       # rather than into a log that scrolls away.
       security-events: write
+      # `codeql-action/analyze` reads its own workflow run to attach results to
+      # it. Without this the analysis completes and then fails on the upload
+      # with "Resource not accessible by integration" — a green scan reported
+      # as a red job.
+      actions: read
     steps:
       - uses: actions/checkout@v4
 
