@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   checkResolution,
+  declarationsFor,
   formatListing,
   listConflicts,
   originalConflict,
@@ -275,5 +276,73 @@ describe('checkResolution, against a real conflict', () => {
     );
     expect(result.accepted).toBe(false);
     expect(result.verdict.reason).toContain('failed');
+  });
+});
+
+describe('declarationsFor (P2-SKILL-07)', () => {
+  const output = {
+    work_item_id: 'FEAT-001',
+    resolutions: [
+      {
+        file: 'config.ts',
+        hunk: 0,
+        kind: 'ours',
+        rationale: 'the slow-network timeout was superseded by the retry policy',
+      },
+      { file: 'other.ts', hunk: 0, kind: 'union', rationale: 'kept both sides of the other file' },
+    ],
+  };
+
+  it('reads the declarations for the file being checked', () => {
+    const declared = declarationsFor(output, 'config.ts');
+    expect(declared).toHaveLength(1);
+    expect(declared[0]?.hunk).toBe(0);
+  });
+
+  it('does not let another file’s declaration cover this one', () => {
+    // Otherwise one rationale written about `other.ts` silently satisfies the
+    // drop in `config.ts`, which is the declaration requirement defeating
+    // itself.
+    expect(declarationsFor(output, 'unrelated.ts')).toEqual([]);
+  });
+
+  it('carries the claimed kind through, which is the whole point', () => {
+    // Without `kind` the checker has nothing to compare against the file, and
+    // the skill's account of itself goes unchecked.
+    expect(declarationsFor(output, 'config.ts')[0]?.kind).toBe('ours');
+  });
+
+  it('leaves kind absent when the skill did not claim one', () => {
+    const declared = declarationsFor(
+      { resolutions: [{ file: 'a.ts', hunk: 1, rationale: 'x'.repeat(30) }] },
+      'a.ts',
+    );
+    expect(declared[0]?.kind).toBeUndefined();
+  });
+
+  it('skips a malformed entry rather than failing the whole check', () => {
+    // A declaration nobody can parse leaves the hunk *undeclared*, which the
+    // review already blocks on. Refusing to run because one entry was malformed
+    // would turn a missing declaration into a missing check.
+    const declared = declarationsFor(
+      {
+        resolutions: [
+          { file: 'a.ts', hunk: 'zero', rationale: 'not a number' },
+          { file: 'a.ts', rationale: 'no hunk at all' },
+          { file: 'a.ts', hunk: 2 },
+          null,
+          { file: 'a.ts', hunk: 3, rationale: 'this one is fine and long enough' },
+        ],
+      },
+      'a.ts',
+    );
+    expect(declared.map((d) => d.hunk)).toEqual([3]);
+  });
+
+  it('returns nothing for output that carries no resolutions', () => {
+    expect(declarationsFor({}, 'a.ts')).toEqual([]);
+    expect(declarationsFor(null, 'a.ts')).toEqual([]);
+    expect(declarationsFor('not an object', 'a.ts')).toEqual([]);
+    expect(declarationsFor({ resolutions: 'not an array' }, 'a.ts')).toEqual([]);
   });
 });

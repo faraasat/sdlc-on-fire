@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { CanonicalSkillSchema, PROMPT_SECTION_ORDER, SKILL_STAGES } from './skill.js';
+import {
+  CanonicalSkillSchema,
+  PROMPT_SECTION_ORDER,
+  SKILL_SITUATIONS,
+  SKILL_STAGES,
+} from './skill.js';
 
 function skill(overrides: Record<string, unknown> = {}) {
   return {
@@ -143,5 +148,61 @@ describe('prompt section order', () => {
     expect(order.indexOf('role')).toBeLessThan(order.indexOf('task'));
     expect(order.indexOf('constitution')).toBeLessThan(order.indexOf('task'));
     expect(order.indexOf('output-contract')).toBeLessThan(order.indexOf('stop-condition'));
+  });
+});
+
+describe('exactly one trigger (contract 04 §2.1, P2-SKILL-07)', () => {
+  const base = {
+    schema_version: '0.1.0',
+    name: 'example',
+    description: 'x',
+    tier: 'medium',
+    context_pack_spec_ref: 'context-packs/x.yaml',
+    role: 'r',
+    constitution_excerpt_ref: 'constitution#x',
+    task: 't',
+    output_contract: { tool_name: 'x_output', json_schema_ref: 'schemas/x.schema.json' },
+    stop_condition: 's',
+    verify: { command_template: '{{verify_command}}', done_criteria_ref: 'work-item#done' },
+  };
+
+  it('accepts a stage skill', () => {
+    expect(CanonicalSkillSchema.safeParse({ ...base, stage: 'implement' }).success).toBe(true);
+  });
+
+  it('accepts a situational skill', () => {
+    // A merge conflict is not a lifecycle stage: it happens partway through
+    // `implement` and arrives without the stage changing at all.
+    expect(CanonicalSkillSchema.safeParse({ ...base, situation: 'merge-conflict' }).success).toBe(
+      true,
+    );
+  });
+
+  it('refuses a skill with neither', () => {
+    // Nothing dispatches it, so it is a file that can never run.
+    const result = CanonicalSkillSchema.safeParse(base);
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).toContain('nothing dispatches it');
+  });
+
+  it('refuses a skill claiming both', () => {
+    // Which trigger wins would be decided by whichever code path read the file
+    // first, rather than by anything written down.
+    const result = CanonicalSkillSchema.safeParse({
+      ...base,
+      stage: 'implement',
+      situation: 'merge-conflict',
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).toContain('never both');
+  });
+
+  it('keeps the situation vocabulary closed', () => {
+    // An open string lets a skill declare a trigger nothing dispatches — the
+    // same defect the stage validation exists to prevent, through another field.
+    expect(
+      CanonicalSkillSchema.safeParse({ ...base, situation: 'whenever-i-feel-like-it' }).success,
+    ).toBe(false);
+    expect([...SKILL_SITUATIONS]).toEqual(['merge-conflict']);
   });
 });

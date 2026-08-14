@@ -1,6 +1,7 @@
 import { CanonicalSkillSchema, type CanonicalSkill } from '@sdlc-on-fire/core';
 import { REVIEW_SKILL } from './review.js';
 import { RETROSPECTIVE_SKILL } from './retrospective.js';
+import { RESOLVE_CONFLICT_SKILL } from './resolve-conflict.js';
 
 /**
  * The canonical stage skills (P1-SKILL-01).
@@ -95,12 +96,22 @@ export const IMPLEMENT_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
   context_mode: 'inline',
 });
 
+/**
+ * A skill that backs a lifecycle stage — `stage` guaranteed present.
+ *
+ * The guarantee is structural rather than a comment: `skillForStage` matches on
+ * `stage`, so a situational skill can never be returned by it, and the type
+ * says so instead of leaving every caller to re-derive it.
+ */
+export type StageSkill = CanonicalSkill & { stage: NonNullable<CanonicalSkill['stage']> };
+
 /** Every canonical skill shipped in v0.1, by name. */
 export const CANONICAL_SKILLS: Readonly<Record<string, CanonicalSkill>> = {
   spec: SPEC_SKILL,
   implement: IMPLEMENT_SKILL,
   review: REVIEW_SKILL,
   retrospective: RETROSPECTIVE_SKILL,
+  'resolve-conflict': RESOLVE_CONFLICT_SKILL,
 };
 
 export function getSkill(name: string): CanonicalSkill | undefined {
@@ -116,6 +127,21 @@ export function getSkill(name: string): CanonicalSkill | undefined {
  * `undefined` deliberately — the daemon runs verify, and `done` is a gate
  * outcome, so neither is an agent's job.
  */
-export function skillForStage(stage: string): CanonicalSkill | undefined {
-  return Object.values(CANONICAL_SKILLS).find((skill) => skill.stage === stage);
+export function skillForStage(stage: string): StageSkill | undefined {
+  return Object.values(CANONICAL_SKILLS).find(
+    (skill): skill is StageSkill => skill.stage !== undefined && skill.stage === stage,
+  );
+}
+
+/**
+ * The skill dispatched by an event rather than by a stage (contract 04 §2.1).
+ *
+ * Separate from {@link skillForStage} rather than one lookup over both, because
+ * the two are reached from different places: the lifecycle asks "what drives
+ * this stage", and the git manager asks "what handles a merge conflict". A
+ * single function taking either would let a stage name find a situational
+ * skill by accident.
+ */
+export function skillForSituation(situation: string): CanonicalSkill | undefined {
+  return Object.values(CANONICAL_SKILLS).find((skill) => skill.situation === situation);
 }

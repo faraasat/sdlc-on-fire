@@ -236,4 +236,47 @@ export function formatCheck(result: CheckResult): string {
   return [`── ${result.path}`, formatReview(result.review, result.verdict)].join('\n');
 }
 
+/**
+ * Declarations read from the `resolve-conflict` skill's own output
+ * (P2-SKILL-07).
+ *
+ * The skill emits `resolutions[]` through its output contract, each carrying
+ * the hunk, the rationale, and the `kind` it believes it produced. Reading them
+ * here is what turns that `kind` from a sentence in a report into something the
+ * checker compares against the file — an agent claiming `union` while the file
+ * kept one side is caught rather than believed.
+ *
+ * Malformed entries are skipped rather than fatal: a declaration nobody can
+ * parse leaves the hunk *undeclared*, which the review already blocks on. That
+ * is the right failure — refusing to run because one entry was malformed would
+ * turn a missing declaration into a missing check.
+ */
+export function declarationsFor(
+  output: unknown,
+  file: string,
+): readonly (DeclaredResolution & { file: string })[] {
+  const resolutions =
+    typeof output === 'object' && output !== null
+      ? (output as { resolutions?: unknown }).resolutions
+      : undefined;
+  if (!Array.isArray(resolutions)) return [];
+
+  const declared: (DeclaredResolution & { file: string })[] = [];
+  for (const entry of resolutions) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    if (row['file'] !== file) continue;
+    if (typeof row['hunk'] !== 'number' || typeof row['rationale'] !== 'string') continue;
+    declared.push({
+      file,
+      hunk: row['hunk'],
+      rationale: row['rationale'],
+      ...(typeof row['kind'] === 'string'
+        ? { kind: row['kind'] as DeclaredResolution['kind'] }
+        : {}),
+    });
+  }
+  return declared;
+}
+
 export { hasConflictMarkers };

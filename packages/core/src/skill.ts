@@ -35,6 +35,23 @@ export type SkillStage = z.infer<typeof SkillStageSchema>;
  * the tier→model router at dispatch, never hardcoded to a model ID here — a
  * skill that names a model goes stale on every provider release.
  */
+/**
+ * Events that dispatch a skill without a stage change (contract 04 §2.1).
+ *
+ * A merge conflict is not a lifecycle state. It happens partway through
+ * `implement` and arrives without the stage moving, so `resolve-conflict`
+ * (P2-SKILL-07) had no expressible home: `stage: implement` collides with the
+ * one-skill-per-stage rule, and inventing a `resolve-conflict` stage would put
+ * a state in the machine that nothing ever transitions into.
+ *
+ * **Closed, like `SKILL_STAGES`.** An open string would let a skill declare a
+ * trigger nothing dispatches — the same defect the stage validation exists to
+ * prevent, arriving through a different field.
+ */
+export const SKILL_SITUATIONS = ['merge-conflict'] as const;
+export const SkillSituationSchema = z.enum(SKILL_SITUATIONS);
+export type SkillSituation = z.infer<typeof SkillSituationSchema>;
+
 export const SKILL_TIERS = ['low', 'medium', 'high'] as const;
 export const SkillTierSchema = z.enum(SKILL_TIERS);
 export type SkillTier = z.infer<typeof SkillTierSchema>;
@@ -81,7 +98,10 @@ export const CanonicalSkillSchema = z
     schema_version: z.string().regex(SEMVER, 'schema_version must be semver'),
     name: z.string().regex(KEBAB_CASE, 'skill names are kebab-case and stable once assigned'),
     description: z.string().min(1),
-    stage: SkillStageSchema,
+    /** Present on stage skills. Exactly one of `stage` / `situation` (contract 04 §2.1). */
+    stage: SkillStageSchema.optional(),
+    /** Present on situational skills — dispatched by an event, not by a stage. */
+    situation: SkillSituationSchema.optional(),
     tier: SkillTierSchema,
     /** Reference, never an inline copy — pack tuning and skill edits move on different cadences. */
     context_pack_spec_ref: z.string().min(1),
@@ -102,6 +122,21 @@ export const CanonicalSkillSchema = z
     hooks: z.record(z.string(), z.unknown()).optional(),
   })
   .superRefine((skill, ctx) => {
+    // Exactly one trigger. Neither means nothing dispatches the skill; both
+    // means it claims two, and which one wins would be settled by whichever
+    // code path read the file first rather than by anything written down.
+    const triggers = [skill.stage, skill.situation].filter((value) => value !== undefined);
+    if (triggers.length !== 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['stage'],
+        message:
+          triggers.length === 0
+            ? 'a skill declares exactly one of `stage` or `situation` — with neither, nothing dispatches it (contract 04 §2.1)'
+            : 'a skill declares exactly one of `stage` or `situation`, never both (contract 04 §2.1)',
+      });
+    }
+
     // A review skill that can pass silently is the failure mode adversarial
     // review exists to prevent (contract §2.2, borrowed from BMAD).
     if (skill.stage === 'review' && skill.self_verification === undefined) {

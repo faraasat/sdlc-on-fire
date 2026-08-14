@@ -7,6 +7,7 @@ import {
   CANONICAL_SKILLS,
   getSkill,
   skillForStage,
+  skillForSituation,
   IMPLEMENT_SKILL,
   SPEC_SKILL,
 } from './canonical.js';
@@ -15,23 +16,44 @@ import { RETROSPECTIVE_SKILL } from './retrospective.js';
 const skills = Object.values(CANONICAL_SKILLS);
 
 describe('canonical skills', () => {
-  it('ships exactly the four v0.1 skills', () => {
+  it('ships exactly the v0.1 skills', () => {
     // spec + implement (P1-SKILL-01), review (P1-SKILL-02), retrospective
-    // (P1-SKILL-03). `review` was once built but never registered, which made
-    // it invisible to stage resolution — hence this census.
+    // (P1-SKILL-03), resolve-conflict (P2-SKILL-07). `review` was once built
+    // but never registered, which made it invisible to stage resolution —
+    // hence this census.
     expect(Object.keys(CANONICAL_SKILLS).sort()).toEqual([
       'implement',
+      'resolve-conflict',
       'retrospective',
       'review',
       'spec',
     ]);
   });
 
-  it('maps each skill to a distinct stage', () => {
+  it('maps each stage skill to a distinct stage', () => {
     // skillForStage resolves by the skill's own stage field, so two skills
-    // claiming one stage would make dispatch order-dependent.
-    const stages = skills.map((skill) => skill.stage);
+    // claiming one stage would make dispatch order-dependent. Situational
+    // skills have no stage and are excluded rather than counted as a
+    // collision on `undefined`.
+    const stages = skills.map((skill) => skill.stage).filter((stage) => stage !== undefined);
     expect(new Set(stages).size).toBe(stages.length);
+  });
+
+  it('gives every skill exactly one trigger', () => {
+    // Contract 04 §2.1. Neither means nothing dispatches it; both means it
+    // claims two and which wins is decided by whichever code path reads it.
+    for (const skill of skills) {
+      const triggers = [skill.stage, skill.situation].filter((v) => v !== undefined);
+      expect(triggers.length, skill.name).toBe(1);
+    }
+  });
+
+  it('resolves a situation to its skill, separately from stages', () => {
+    // A merge conflict is not a lifecycle state — it happens partway through
+    // `implement` and arrives without the stage changing.
+    expect(skillForSituation('merge-conflict')?.name).toBe('resolve-conflict');
+    expect(skillForStage('merge-conflict')).toBeUndefined();
+    expect(skillForSituation('implement')).toBeUndefined();
   });
 
   it('resolves a stage to its skill, and leaves daemon stages unclaimed', () => {

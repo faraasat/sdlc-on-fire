@@ -215,6 +215,18 @@ export interface ResolutionFinding {
 export interface DeclaredResolution {
   readonly hunk: number;
   readonly rationale: string;
+  /**
+   * What the resolver believes it did with this hunk.
+   *
+   * Optional, and checked against the classification when present. This is the
+   * disposer for the `resolve-conflict` skill's own account of itself
+   * (P2-SKILL-07): an agent that reports `union` while the file actually kept
+   * one side has produced a rationale that describes a resolution nobody wrote,
+   * and the rationale is the only thing a reviewer reads. Comparing the claim
+   * against the file is cheap, mechanical, and the difference between a
+   * declaration and a self-report.
+   */
+  readonly kind?: ResolutionKind | undefined;
 }
 
 const MIN_RATIONALE = 20;
@@ -275,8 +287,21 @@ export function reviewResolution(
     const kind = classifyResolution(hunk, resolvedHunks[position] ?? [], context);
     kinds.push(kind);
 
-    const rationale = (byHunk.get(hunk.index)?.rationale ?? '').trim();
+    const entry = byHunk.get(hunk.index);
+    const rationale = (entry?.rationale ?? '').trim();
     const declaredWell = rationale.length >= MIN_RATIONALE;
+
+    // The resolver's account of itself, checked against the file. A rationale
+    // explaining a `union` while the file kept one side describes a resolution
+    // nobody wrote — and the rationale is the only part a reviewer reads.
+    if (entry?.kind !== undefined && entry.kind !== kind) {
+      findings.push({
+        severity: 'blocking',
+        hunk: hunk.index,
+        kind,
+        message: `hunk ${String(hunk.index)} was declared as ${entry.kind} but the file reads as ${kind} — the rationale describes a resolution that is not the one on disk`,
+      });
+    }
 
     if (kind === 'ours' || kind === 'theirs') {
       const dropped = kind === 'ours' ? hunk.theirsLabel || 'theirs' : hunk.oursLabel || 'ours';

@@ -34,8 +34,17 @@ export const STAGE_SUMMARY_BUDGET_CHARS: Readonly<Record<string, number>> = {
 /** Applied to any stage without an explicit entry — 1–2K tokens, roughly. */
 export const DEFAULT_SUMMARY_BUDGET_CHARS = 6_000;
 
-export function summaryBudgetFor(stage: string): number {
-  return STAGE_SUMMARY_BUDGET_CHARS[stage] ?? DEFAULT_SUMMARY_BUDGET_CHARS;
+/**
+ * `undefined` is a situational skill, which has no stage (contract 04 §2.1) and
+ * therefore no per-stage budget. It takes the default, same as an unrecognised
+ * stage — the fallback already exists for exactly the case of a skill this
+ * table has no row for.
+ */
+export function summaryBudgetFor(stage: string | undefined): number {
+  return (
+    (stage === undefined ? undefined : STAGE_SUMMARY_BUDGET_CHARS[stage]) ??
+    DEFAULT_SUMMARY_BUDGET_CHARS
+  );
 }
 
 export interface IsolatedResult {

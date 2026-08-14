@@ -73,6 +73,7 @@ import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
 import {
   checkResolution,
+  declarationsFor,
   defaultGit as conflictGit,
   formatCheck,
   formatListing,
@@ -520,6 +521,7 @@ export function buildProgram(): Command {
       'why a side was discarded, e.g. --why 0="superseded by the retry policy"',
       [],
     )
+    .option('--claims <path>', "the resolve-conflict skill's JSON output, for per-hunk claims")
     .option('--passed', 'checks were re-run against the resolved tree and passed')
     .option('--failed', 'checks were re-run against the resolved tree and failed')
     .option('--json', 'emit JSON')
@@ -527,6 +529,7 @@ export function buildProgram(): Command {
       async (options: {
         check?: boolean;
         why?: string[];
+        claims?: string;
         passed?: boolean;
         failed?: boolean;
         json?: boolean;
@@ -539,10 +542,19 @@ export function buildProgram(): Command {
           return;
         }
 
-        const declared = (options.why ?? []).map((entry) => {
+        const fromFlags = (options.why ?? []).map((entry) => {
           const [hunk, ...rest] = entry.split('=');
           return { hunk: Number.parseInt(hunk ?? '0', 10), rationale: rest.join('=') };
         });
+
+        // The `resolve-conflict` skill's output, when it produced the
+        // resolution. It carries the `kind` each hunk was claimed to be, which
+        // the review compares against the file — the disposer for the skill's
+        // account of itself (P2-SKILL-07).
+        const claims =
+          options.claims === undefined
+            ? null
+            : (JSON.parse(await fs.readFile(options.claims, 'utf8')) as unknown);
 
         const tree = await treeContext(workspace);
         const head = {
@@ -564,6 +576,10 @@ export function buildProgram(): Command {
           const original = await originalConflict(git, file.path, scratch);
           if (original === null) continue;
           const resolved = await fs.readFile(path.join(workspace, file.path), 'utf8');
+          const declared = [
+            ...fromFlags,
+            ...(claims === null ? [] : declarationsFor(claims, file.path)),
+          ];
           checked.push(checkResolution(file.path, original, resolved, declared, evidence, head));
         }
 

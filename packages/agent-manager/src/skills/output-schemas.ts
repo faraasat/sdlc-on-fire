@@ -111,6 +111,45 @@ export const RetrospectiveOutputSchema = z
   })
   .strict();
 
+export const ResolveConflictOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    /**
+     * The declaration, per hunk — and the whole deliverable.
+     *
+     * The resolution itself is a file edit, which this schema deliberately does
+     * not carry: an output saying "I resolved it" is a self-report, while an
+     * output saying "hunk 0 kept ours and dropped theirs, because …" is a claim
+     * `sdlc conflicts --check` can refuse. `kind` is what the agent believes it
+     * did; the checker classifies the file independently and the two are
+     * compared, so a wrong `kind` is caught rather than believed.
+     */
+    resolutions: z
+      .array(
+        z
+          .object({
+            file: z.string().min(1),
+            hunk: z.number().int().min(0),
+            kind: z.enum(['ours', 'theirs', 'union', 'synthesis']),
+            /** What our side changed, relative to the common ancestor. */
+            ours_intent: z.string().min(1),
+            /** What their side changed. */
+            theirs_intent: z.string().min(1),
+            /**
+             * Why this resolution is right, and what the discarded side was
+             * for. Long enough to survive the checker's minimum, which exists
+             * because "n/a" satisfies a required field without saying anything.
+             */
+            rationale: z.string().min(20),
+          })
+          .strict(),
+      )
+      .min(1),
+    /** Required at the boundary — see {@link SpecOutputSchema}. */
+    handoff: AuthoredHandoffSchema,
+  })
+  .strict();
+
 /**
  * Every `json_schema_ref` a canonical skill may declare, and what it means.
  *
@@ -122,6 +161,7 @@ export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/implement-output.schema.json': ImplementOutputSchema,
   'schemas/review-output.schema.json': ReviewOutputSchema,
   'schemas/retrospective-output.schema.json': RetrospectiveOutputSchema,
+  'schemas/resolve-conflict-output.schema.json': ResolveConflictOutputSchema,
 };
 
 export function resolveOutputSchema(ref: string): z.ZodType | undefined {

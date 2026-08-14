@@ -346,3 +346,59 @@ describe('formatReview', () => {
     expect(text).toContain('Resolution accepted.');
   });
 });
+
+describe('the declared kind is checked against the file (P2-SKILL-07)', () => {
+  const hunks = parseConflicts(CONFLICT);
+
+  it('blocks a declaration that disagrees with what was written', () => {
+    // The `resolve-conflict` skill reports what it believes it did. An agent
+    // claiming `union` while the file kept one side has produced a rationale
+    // describing a resolution nobody wrote — and the rationale is the only part
+    // a reviewer reads.
+    const review = reviewResolution(
+      hunks,
+      [['  timeout: 30,', '  retries: 3,']],
+      [
+        {
+          hunk: 0,
+          kind: 'union',
+          rationale: 'kept both the retry policy and the slow-network timeout',
+        },
+      ],
+      '',
+      CONFLICT,
+    );
+    expect(review.structurallyOk).toBe(false);
+    expect(review.findings[0]?.message).toContain('not the one on disk');
+  });
+
+  it('accepts a declaration that matches', () => {
+    const review = reviewResolution(
+      hunks,
+      [['  timeout: 30,', '  retries: 3,']],
+      [
+        {
+          hunk: 0,
+          kind: 'ours',
+          rationale: 'the slow-network timeout was superseded by the retry policy on main',
+        },
+      ],
+      '',
+      CONFLICT,
+    );
+    expect(review.structurallyOk).toBe(true);
+  });
+
+  it('checks nothing when no kind was claimed', () => {
+    // A rationale with no claimed kind is still a valid declaration; the check
+    // exists for claims, and inventing one to check would be the guess.
+    const review = reviewResolution(
+      hunks,
+      [['  timeout: 30,', '  retries: 3,']],
+      [{ hunk: 0, rationale: 'the slow-network timeout was superseded by the retry policy' }],
+      '',
+      CONFLICT,
+    );
+    expect(review.structurallyOk).toBe(true);
+  });
+});

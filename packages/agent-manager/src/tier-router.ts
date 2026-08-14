@@ -108,7 +108,11 @@ export class UnroutableTierError extends Error {
  */
 export function resolveTier(skill: CanonicalSkill, policy: TierPolicy): TierResolution {
   const bySkill = policy.skillOverrides?.[skill.name];
-  const byStage = policy.stageOverrides?.[skill.stage];
+  // A situational skill has no stage (contract 04 §2.1), so no stage override
+  // can reach it — "run everything at review high" says nothing about a skill
+  // dispatched by a merge conflict. It is overridable by name, which is the
+  // only statement that names it.
+  const byStage = skill.stage === undefined ? undefined : policy.stageOverrides?.[skill.stage];
 
   const tier: SkillTier = bySkill ?? byStage ?? skill.tier;
   const source: TierSource =
