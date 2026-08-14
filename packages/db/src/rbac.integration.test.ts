@@ -210,3 +210,77 @@ describe('capability() against the rows it models', () => {
     ).rejects.toThrow();
   });
 });
+
+describe('no agent holds a role (P3-RBAC-04)', () => {
+  let agent: string;
+  let human: string;
+
+  beforeAll(async () => {
+    const [a] = await db.query<{ id: string }>(
+      `INSERT INTO actors (kind, display_name, agent_target) VALUES ('agent','codex','codex')
+       RETURNING id;`,
+    );
+    const [h] = await db.query<{ id: string }>(
+      `INSERT INTO actors (kind, display_name, email) VALUES ('human','Grace','grace@example.com')
+       RETURNING id;`,
+    );
+    agent = a?.id ?? '';
+    human = h?.id ?? '';
+  });
+
+  it('refuses to give an agent a membership at all', async () => {
+    // ADR-0010's wording is structural. The `approvals` trigger sits one table
+    // downstream and only fires on a role-gated approval, which leaves the
+    // *state* reachable: an agent holding eng-lead shows up in every roster
+    // query as somebody who could approve.
+    await expect(
+      db.query(
+        `INSERT INTO memberships (actor_id, role_id) SELECT $1, id FROM roles WHERE key = 'eng-lead';`,
+        [agent],
+      ),
+    ).rejects.toThrow(/cannot hold a role/);
+  });
+
+  it('refuses on update as well as insert', async () => {
+    // Otherwise the rule is one UPDATE away from being bypassed: grant a human,
+    // then re-point the row at an agent.
+    await db.query(
+      `INSERT INTO memberships (actor_id, role_id) SELECT $1, id FROM roles WHERE key = 'designer';`,
+      [human],
+    );
+    await expect(
+      db.query(`UPDATE memberships SET actor_id = $1 WHERE actor_id = $2;`, [agent, human]),
+    ).rejects.toThrow(/cannot hold a role/);
+  });
+
+  it('leaves gate_policies.required_role unable to resolve to an agent', async () => {
+    // The property the phase file actually asks for, asked as a query rather
+    // than asserted about the trigger.
+    const rows = await db.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM memberships m
+         JOIN actors a ON a.id = m.actor_id WHERE a.kind = 'agent';`,
+    );
+    expect(rows[0]?.count).toBe(0);
+  });
+
+  it('still refuses an agent approval, because both triggers stay', async () => {
+    // Belt and braces. A row arriving through a restore from before the
+    // memberships trigger existed must still not become approving.
+    await db.query(
+      `INSERT INTO work_items (id, type, title, status, lifecycle_state, file_path, content_hash)
+       VALUES ('FEAT-RBAC-4','feature','t','In Progress','implement','kanban/rbac4.md','h')
+       ON CONFLICT (id) DO NOTHING;`,
+    );
+    const [gate] = await db.query<{ id: number }>(
+      `INSERT INTO gates (work_item_id, gate_name, result) VALUES ('FEAT-RBAC-4','review','pending')
+       RETURNING id;`,
+    );
+    await expect(
+      db.query(
+        `INSERT INTO approvals (gate_id, actor_id, role_id, decision)
+         SELECT $1, $2, id, 'approve' FROM roles WHERE key = 'eng-lead';`,
+        [gate?.id ?? 1, agent],
+      ),
+    ).rejects.toThrow(/agent/i);
+  });
+});

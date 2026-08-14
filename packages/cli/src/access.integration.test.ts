@@ -5,7 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DEFAULT_ROLE_PERMISSIONS, PERMISSION_KEYS, ROLE_KEYS } from '@sdlc-on-fire/core';
+import { applySchema } from '@sdlc-on-fire/db';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { openWorkspaceDatabase } from './commands.js';
 
 /**
  * `sdlc access` against the **built binary** and a real workspace (P3-RBAC-01).
@@ -159,4 +161,53 @@ describe('sdlc access grant and check', () => {
       expect(code, action).toBe(0);
     }
   }, 120_000);
+});
+
+describe('no agent holds a role (P3-RBAC-04)', () => {
+  it('refuses to grant a role to an agent, and says why', async () => {
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      await db.query(
+        `INSERT INTO actors (kind, display_name, agent_target) VALUES ('agent','codex','codex')
+         ON CONFLICT DO NOTHING;`,
+      );
+    } finally {
+      await db.close();
+    }
+
+    // Refused in the CLI as well as by the trigger, so the message explains the
+    // model rather than surfacing a raise from plpgsql.
+    const { stdout, code } = await sdlc('access', 'grant', 'codex', 'eng-lead');
+    expect(code).not.toBe(0);
+    expect(stdout).toContain('ADR-0010');
+    expect(stdout).toContain('assignee');
+  }, 90_000);
+
+  it('reports an agent that already holds one as a violation', async () => {
+    // The trigger stops new rows; a database restored from before it existed
+    // can still hold one, and an agent carrying a role appears in every roster
+    // query as somebody who could approve.
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      await db.query(
+        'ALTER TABLE memberships DISABLE TRIGGER memberships_agents_hold_no_roles_trg;',
+      );
+      await db.query(
+        `INSERT INTO memberships (actor_id, role_id)
+         SELECT a.id, r.id FROM actors a, roles r WHERE a.display_name = 'codex' AND r.key = 'qa'
+         ON CONFLICT DO NOTHING;`,
+      );
+      await db.query(
+        'ALTER TABLE memberships ENABLE TRIGGER memberships_agents_hold_no_roles_trg;',
+      );
+    } finally {
+      await db.close();
+    }
+
+    const { stdout, code } = await sdlc('access', 'policy');
+    expect(code).toBe(1);
+    expect(stdout).toContain('agent "codex" holds role "qa"');
+  }, 90_000);
 });

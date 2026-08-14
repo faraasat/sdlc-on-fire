@@ -336,6 +336,37 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      BEFORE INSERT ON approvals FOR EACH ROW
      EXECUTE FUNCTION approvals_agent_never_approves();`,
 
+  // ── No agent holds a role (P3-RBAC-04, ADR-0010, contract 01 §3.3) ────────
+  //
+  // ADR-0010's wording is structural: "the schema itself never grants agents
+  // role-level permissions". Until this, the only enforcement was on
+  // `approvals` — one table downstream, and only for a role-gated approval.
+  // That leaves the *state* reachable: an agent could hold `eng-lead`, appear
+  // in every roster query as somebody who could approve, and be counted as an
+  // eligible approver by anything that read memberships rather than approvals.
+  //
+  // This is what makes `gate_policies.required_role` unable to **resolve** to
+  // an agent, rather than merely unable to be satisfied by one.
+  //
+  // Both triggers stay. A row inserted before this one existed, or arriving
+  // through a restore, must still not become approving — belt and braces on an
+  // invariant is not redundancy, it is the property that no single bug is
+  // enough to defeat it.
+  `CREATE OR REPLACE FUNCTION memberships_agents_hold_no_roles() RETURNS trigger AS $$
+     DECLARE actor_kind TEXT;
+     BEGIN
+       SELECT kind INTO actor_kind FROM actors WHERE id = NEW.actor_id;
+       IF actor_kind = 'agent' THEN
+         RAISE EXCEPTION 'actors.kind = agent cannot hold a role (ADR-0010: the schema never grants agents role-level permissions)';
+       END IF;
+       RETURN NEW;
+     END;
+   $$ LANGUAGE plpgsql;`,
+  'DROP TRIGGER IF EXISTS memberships_agents_hold_no_roles_trg ON memberships;',
+  `CREATE TRIGGER memberships_agents_hold_no_roles_trg
+     BEFORE INSERT OR UPDATE ON memberships FOR EACH ROW
+     EXECUTE FUNCTION memberships_agents_hold_no_roles();`,
+
   `CREATE OR REPLACE FUNCTION gate_evidence_agent_claim_guard() RETURNS trigger AS $$
      DECLARE ev_producer TEXT; ev_kind TEXT;
      BEGIN

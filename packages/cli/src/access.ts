@@ -100,7 +100,25 @@ export async function showPolicy(root: string): Promise<PolicyResult> {
       }
     }
 
-    const violations = roleTableViolations(roles);
+    const violations = [...roleTableViolations(roles)];
+
+    // The invariant, asked of the rows rather than assumed from the trigger
+    // (P3-RBAC-04). The trigger stops new ones; a database restored from before
+    // it existed can still hold one, and an agent carrying a role appears in
+    // every roster query as somebody who could approve.
+    const agentsWithRoles = await db.query<{ display_name: string; key: string }>(
+      `SELECT a.display_name, r.key FROM memberships m
+         JOIN actors a ON a.id = m.actor_id
+         JOIN roles r ON r.id = m.role_id
+        WHERE a.kind = 'agent';`,
+    );
+    for (const row of agentsWithRoles) {
+      violations.push(
+        `agent "${row.display_name}" holds role "${row.key}" — the schema never grants agents ` +
+          'role-level permissions (ADR-0010), and this row predates the trigger that refuses it',
+      );
+    }
+
     return {
       roles,
       permissions,
@@ -264,6 +282,16 @@ export async function grantRole(
     const actor = await findActor(db, reference);
     if (actor === null)
       throw new Error(`no actor matches "${reference}" — try \`sdlc access whoami\``);
+
+    // Refused here as well as by the trigger (P3-RBAC-04), so the message
+    // explains the model rather than surfacing a raise from plpgsql.
+    if (actor.kind === 'agent') {
+      throw new Error(
+        `${actor.displayName} is an agent, and the schema never grants agents role-level ` +
+          "permissions (ADR-0010) — an agent's capability comes from its relationship to a card, " +
+          'being its assignee, never from a role',
+      );
+    }
 
     const alreadyHeld = actor.roles.some((held) => held.key === role);
     await db.query(
