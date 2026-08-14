@@ -72,6 +72,7 @@ import { checkRisk, formatRisk } from './risk.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
+import { formatTiers, reportTiers } from './tiers.js';
 import {
   checkResolution,
   declarationsFor,
@@ -512,6 +513,17 @@ export function buildProgram(): Command {
         emit(result, options.json === true, formatAdd);
       },
     );
+
+  program
+    .command('tiers')
+    .description('which test tiers this repository has, and which the preset requires')
+    .option('--preset <preset>', 'lite | standard | strict', 'standard')
+    .option('--json', 'emit JSON')
+    .action(async (options: { preset?: string; json?: boolean }): Promise<void> => {
+      const result = await reportTiers(root(), options.preset ?? 'standard');
+      emit(result, options.json === true, formatTiers);
+      if (!result.report.satisfied) process.exitCode = 1;
+    });
 
   program
     .command('conflicts')
