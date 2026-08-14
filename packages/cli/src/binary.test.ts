@@ -42,6 +42,42 @@ describe('built binary', () => {
     expect(stdout).toContain('sdlc');
   }, 30_000);
 
+  it('runs through a bin symlink, the way npm installs it', async () => {
+    // npm installs a bin as `node_modules/.bin/sdlc` symlinked at
+    // `dist/index.js`, so `argv[1]` is the *symlink*. The entry guard used to
+    // ask whether `import.meta.url` ended with `basename(argv[1])` — whether
+    // `…/dist/index.js` ends with `sdlc`. It does not, so **every installed
+    // copy did nothing and exited 0**: `sdlc --help`, `sdlc init`, all of it,
+    // silent success. Nothing caught it because every test and every manual
+    // check ran `node dist/index.js`, where the basenames happen to match.
+    //
+    // Exit 0 with empty stdout is the exact signature, so this asserts on
+    // output rather than on the exit code.
+    const dir = await workspace();
+    const shim = path.join(dir, 'sdlc');
+    await fs.symlink(CLI, shim);
+
+    const { stdout } = await run('node', [shim, '--help']);
+    expect(stdout).toContain('Usage: sdlc');
+    expect(stdout.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('does not run when merely imported', async () => {
+    // The other half of the guard: importing the module from a test must not
+    // parse the test runner's argv. A fix for the symlink case that made this
+    // always-true would trade one silent failure for a louder one.
+    const dir = await workspace();
+    const probe = path.join(dir, 'probe.mjs');
+    await fs.writeFile(
+      probe,
+      `await import(${JSON.stringify(CLI)});\nprocess.stdout.write('imported-cleanly');\n`,
+      'utf8',
+    );
+
+    const { stdout } = await run('node', [probe, 'status', '--json']);
+    expect(stdout).toBe('imported-cleanly');
+  }, 30_000);
+
   it('runs the real init → status → new flow', async () => {
     const root = await workspace();
     await run('node', [CLI, '-C', root, 'init']);

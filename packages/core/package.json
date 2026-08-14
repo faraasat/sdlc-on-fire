@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/core",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "description": "Object model, Zod schemas, lifecycle/state-machine definitions, and the StoragePort interface.",
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,8 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.*",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"

@@ -1,6 +1,6 @@
 {
   "name": "sdlc-on-fire",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "description": "The sdlc CLI: Commander entrypoint with a --json twin on every command. The published surface of SDLC on Fire.",
   "license": "MIT",
   "type": "module",
@@ -27,7 +27,8 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.*",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"

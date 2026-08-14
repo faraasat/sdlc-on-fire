@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/evidence",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.0",
   "description": "Test-output parsers, coverage-delta, Playwright driver, and the pure evaluateGate function.",
   "license": "MIT",
   "type": "module",
@@ -24,7 +24,8 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.*",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"

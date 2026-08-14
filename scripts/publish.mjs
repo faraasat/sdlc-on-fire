@@ -24,9 +24,10 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { verifyTarball } from './verify-package.mjs';
 
 const run = (file, args, options = {}) =>
@@ -54,6 +55,23 @@ function alreadyPublished(name, version) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Which npm dist-tag a version belongs on.
+ *
+ * npm defaults to `latest` when no tag is given, and `latest` is what a bare
+ * `npm install sdlc-on-fire` resolves to. Publishing `0.1.0-alpha.0` without a
+ * tag would therefore serve a prerelease to everyone who typed the plain
+ * install command — the opposite of what a prerelease is for, and not fixable
+ * afterwards without publishing something else on top.
+ *
+ * So the tag is derived from the version rather than passed in: a version with
+ * a prerelease component goes to `next`, everything else to `latest`. Nothing
+ * to remember at release time, and no flag to forget.
+ */
+export function distTagFor(version) {
+  return String(version).includes('-') ? 'next' : 'latest';
 }
 
 function main() {
@@ -100,13 +118,17 @@ function main() {
 
       // `--provenance` signs the build with this workflow. Under Trusted
       // Publishing the OIDC identity also authenticates, so no token is read.
-      run('npm', ['publish', pkg.tarball, '--provenance', '--access', 'public'], {
+      // `--tag` is always passed: omitting it means `latest`, which would serve
+      // a prerelease to every plain `npm install`.
+      const tag = distTagFor(pkg.version);
+      run('npm', ['publish', pkg.tarball, '--provenance', '--access', 'public', '--tag', tag], {
         stdio: ['ignore', 'inherit', 'inherit'],
       });
 
       // The line `changesets/action` parses. Emitted per package, after that
       // package is actually on the registry — never in advance.
       process.stdout.write(`New tag: ${pkg.name}@${pkg.version}\n`);
+      process.stdout.write(`  published to dist-tag "${tag}"\n`);
       published.push(pkg);
     }
   } finally {
@@ -118,4 +140,22 @@ function main() {
   );
 }
 
-main();
+/**
+ * Only publish when run as a script.
+ *
+ * Without this, `import { distTagFor } from './publish.mjs'` — which the test
+ * beside this file does — executes `main()` on import and attempts a real
+ * release. Same shape as the bug the CLI entry point carried: a module that
+ * does its work at import time is a module nothing can safely test.
+ */
+function invokedAsScript() {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (invokedAsScript()) main();

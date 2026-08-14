@@ -2,9 +2,10 @@
 // in the source too produces a duplicate on line 2 of the bundle, which is a
 // syntax error — and one that no unit test can see, because tests import the
 // module rather than executing the built binary.
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { agentManagerPackage } from '@sdlc-on-fire/agent-manager';
 import { daemonPackage } from '@sdlc-on-fire/daemon';
 import { dbPackage } from '@sdlc-on-fire/db';
@@ -1625,9 +1626,36 @@ export function buildProgram(): Command {
   return program;
 }
 
-// Only run when invoked as the binary, so importing this module in tests does
-// not parse the test runner's own argv.
-if (process.argv[1] !== undefined && import.meta.url.endsWith(path.basename(process.argv[1]))) {
+/**
+ * Whether this process was started *as* the CLI binary.
+ *
+ * The guard exists so importing this module from a test does not parse the test
+ * runner's argv. It has to survive a symlink, and that is the whole story: npm
+ * installs a bin as `node_modules/.bin/sdlc` symlinked at `dist/index.js`, so
+ * `argv[1]` is `.../.bin/sdlc` while `import.meta.url` is `.../dist/index.js`.
+ *
+ * The previous version compared `import.meta.url.endsWith(basename(argv[1]))`,
+ * i.e. did `…/dist/index.js` end with `sdlc`. It does not. **Every installed
+ * copy of this CLI did nothing and exited 0** — `sdlc --help`, `sdlc init`, all
+ * of it, silent success. Nothing caught it because every test and every manual
+ * check invoked `node dist/index.js` directly, where the basenames happen to
+ * match. It took installing the packed tarball and running the shim.
+ *
+ * Comparing resolved real paths is the check that was meant: it follows the
+ * symlink on both sides and asks whether they are the same file.
+ */
+function invokedAsBinary(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    // A deleted or unreadable entry point is not this module.
+    return false;
+  }
+}
+
+if (invokedAsBinary()) {
   buildProgram()
     .parseAsync(process.argv)
     .catch((error: unknown) => {

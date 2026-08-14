@@ -1,0 +1,16 @@
+{
+  "mode": "pre",
+  "tag": "alpha",
+  "initialVersions": {
+    "@sdlc-on-fire/agent-manager": "0.0.0",
+    "sdlc-on-fire": "0.0.0",
+    "@sdlc-on-fire/context": "0.0.0",
+    "@sdlc-on-fire/core": "0.0.0",
+    "@sdlc-on-fire/daemon": "0.0.0",
+    "@sdlc-on-fire/db": "0.0.0",
+    "@sdlc-on-fire/evidence": "0.0.0",
+    "@sdlc-on-fire/importers": "0.0.0",
+    "@sdlc-on-fire/storage": "0.0.0"
+  },
+  "changesets": ["first-alpha"]
+}
