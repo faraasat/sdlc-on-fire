@@ -96,6 +96,7 @@ import {
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
 import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
+import { checkE2e, formatE2eCheck, formatE2eSeal, sealE2eEvidence } from './e2e.js';
 import {
   approveImprovement,
   formatMining,
@@ -1440,6 +1441,48 @@ export function buildProgram(): Command {
         emit(result, options.json === true, (r: Awaited<ReturnType<typeof compileSkills>>) =>
           formatCompile(r, options.dryRun === true),
         );
+      },
+    );
+
+  const e2e = program
+    .command('e2e')
+    .description(
+      'the disposable-credential harness: what a run may point at, and what it may keep (ADR-0052)',
+    );
+
+  e2e
+    .command('check')
+    .description('check the target and credentials before a run starts')
+    .requiredOption('--run <id>', 'this run’s id — must appear in the tenant id')
+    .option('--json', 'emit JSON')
+    .action(async (options: { run: string; json?: boolean }): Promise<void> => {
+      const result = await checkE2e(root(), options.run);
+      emit(result, options.json === true, formatE2eCheck);
+      // Non-zero so this can gate the run that follows it. A check whose result
+      // nothing reads is a check nobody ran.
+      if (!result.ok) process.exitCode = 1;
+    });
+
+  e2e
+    .command('seal <directory>')
+    .description('scan captured artifacts before any of them are persisted')
+    .requiredOption('--run <id>', 'the run whose artifacts these are')
+    .option('--tore-down', 'the declared teardown was observed to have run')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        directory: string,
+        options: { run: string; toreDown?: boolean; json?: boolean },
+      ): Promise<void> => {
+        const workspace = root();
+        const result = await sealE2eEvidence(
+          workspace,
+          options.run,
+          directory,
+          options.toreDown === true,
+        );
+        emit(result, options.json === true, (r: typeof result) => formatE2eSeal(r, workspace));
+        if (!result.run.ok) process.exitCode = 1;
       },
     );
 

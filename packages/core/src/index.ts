@@ -25,6 +25,7 @@ export * from './memory.js';
 export * from './memory-entry.js';
 export * from './improvement.js';
 export * from './posix-path.js';
+export * from './test-environment.js';
 export * from './tech-research.js';
 export * from './tech-stack.js';
 export * from './workspace.js';
