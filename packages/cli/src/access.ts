@@ -11,7 +11,7 @@ import {
   type CapabilityVerdict,
   type RoleKey,
 } from '@sdlc-on-fire/core';
-import { applySchema } from '@sdlc-on-fire/db';
+import { applySchema, PostgresStorageAdapter } from '@sdlc-on-fire/db';
 import { openWorkspaceDatabase } from './commands.js';
 
 /**
@@ -438,4 +438,168 @@ export async function resolveAuthor(
   }
 
   return { actorId: actor.id, roleKey: role };
+}
+
+/* ------------------------------------------------------- expiring grants */
+
+export const GRANT_EXPIRED_ACTION = 'MEMBERSHIP_EXPIRED';
+
+export interface GrantRow {
+  readonly actorId: string;
+  readonly displayName: string;
+  readonly roleKey: string;
+  readonly expiresAt: string | null;
+  /** `live` | `expiring` (inside the window) | `lapsed`. */
+  readonly state: 'live' | 'expiring' | 'lapsed';
+}
+
+export interface GrantsResult {
+  readonly grants: readonly GrantRow[];
+  /** Lapses this run recorded in the audit log for the first time. */
+  readonly recorded: readonly string[];
+  /** Roles that no live human grant covers any more. */
+  readonly uncovered: readonly string[];
+  readonly windowDays: number;
+}
+
+/**
+ * `sdlc access grants` — every membership, when it lapses, and what that costs.
+ *
+ * ADR-0035 added `expires_at` so a grant handed out for one release does not
+ * become permanent, and `capability()` reads the date at evaluation time — so
+ * the revert is automatic by construction, with no sweep to forget to run.
+ *
+ * What automatic does **not** give you is a record or a warning, and both
+ * matter here. ADR-0035's stated motivation is the *inactive-approver deadlock*:
+ * the last holder of a required role goes quiet, their grant lapses, and the
+ * first anybody hears of it is a gate that will not open. So this does three
+ * things a bare column cannot:
+ *
+ * **Records the lapse, once.** A grant that expires by clock produces no event;
+ * this writes `MEMBERSHIP_EXPIRED` into the append-only audit log the first time
+ * anybody looks, keyed so a second look does not write a second row. "It just
+ * stopped working" is not an audit trail.
+ *
+ * **Warns before, not after.** A grant inside the window is `expiring`, which
+ * is the only state a person can still act on.
+ *
+ * **Names the roles about to lose their last holder** — the deadlock itself,
+ * rather than the row that causes it.
+ */
+export async function listGrants(
+  root: string,
+  windowDays = 14,
+  now = new Date(),
+): Promise<GrantsResult> {
+  return withDb(root, async (db) => {
+    const rows = await db.query<{
+      actor_id: string;
+      display_name: string;
+      kind: string;
+      role_key: string;
+      expires_at: Date | string | null;
+    }>(
+      `SELECT m.actor_id, a.display_name, a.kind, r.key AS role_key, m.expires_at
+         FROM memberships m
+         JOIN actors a ON a.id = m.actor_id
+         JOIN roles r ON r.id = m.role_id
+        ORDER BY a.display_name, r.key;`,
+    );
+
+    const horizon = new Date(now.getTime() + windowDays * 24 * 60 * 60 * 1000);
+    const grants: GrantRow[] = rows.map((row) => {
+      const expiresAt = row.expires_at === null ? null : new Date(String(row.expires_at));
+      const state: GrantRow['state'] =
+        expiresAt === null
+          ? 'live'
+          : expiresAt <= now
+            ? 'lapsed'
+            : expiresAt <= horizon
+              ? 'expiring'
+              : 'live';
+      return {
+        actorId: row.actor_id,
+        displayName: row.display_name,
+        roleKey: row.role_key,
+        expiresAt: expiresAt === null ? null : expiresAt.toISOString(),
+        state,
+      };
+    });
+
+    // Recorded once. The key is (actor, role, expiry) rather than (actor, role)
+    // so a re-granted-and-lapsed-again membership is a second event, which it is.
+    const recorded: string[] = [];
+    for (const grant of grants.filter((entry) => entry.state === 'lapsed')) {
+      const key = `${grant.actorId}:${grant.roleKey}:${grant.expiresAt ?? ''}`;
+      const already = await db.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM audit_log
+          WHERE action = $1 AND target_type = 'membership' AND target_id = $2;`,
+        [GRANT_EXPIRED_ACTION, key],
+      );
+      if ((already[0]?.count ?? 0) > 0) continue;
+
+      const port = await PostgresStorageAdapter.create(db);
+      await port.appendAudit({
+        action: GRANT_EXPIRED_ACTION,
+        actorId: grant.actorId,
+        targetType: 'membership',
+        targetId: key,
+        detail: {
+          role: grant.roleKey,
+          expiredAt: grant.expiresAt,
+          note: 'grant lapsed on its own (ADR-0035); recorded the first time anybody looked',
+        },
+      });
+      recorded.push(key);
+    }
+
+    // A role whose last *live* holder is gone. This is the deadlock ADR-0035
+    // names, stated as the thing that breaks rather than the row that expired.
+    const live = new Set(
+      grants.filter((grant) => grant.state !== 'lapsed').map((grant) => grant.roleKey),
+    );
+    const uncovered = [
+      ...new Set(
+        grants
+          .filter((grant) => grant.state === 'lapsed' && !live.has(grant.roleKey))
+          .map((g) => g.roleKey),
+      ),
+    ].sort();
+
+    return { grants, recorded, uncovered, windowDays };
+  });
+}
+
+export function formatGrants(result: GrantsResult): string {
+  const lines = [`${String(result.grants.length)} grant(s)`, ''];
+
+  for (const grant of result.grants) {
+    const when =
+      grant.expiresAt === null
+        ? 'indefinite'
+        : `${grant.state === 'lapsed' ? 'lapsed' : 'until'} ${grant.expiresAt}`;
+    const mark = grant.state === 'lapsed' ? '✗' : grant.state === 'expiring' ? '!' : '•';
+    lines.push(`  ${mark} ${grant.displayName.padEnd(16)} ${grant.roleKey.padEnd(12)} ${when}`);
+  }
+  if (result.grants.length === 0) lines.push('  none — `sdlc access grant` gives one');
+
+  if (result.recorded.length > 0) {
+    lines.push(
+      '',
+      `${String(result.recorded.length)} lapse(s) recorded in the audit log just now.`,
+      'A grant that expires by clock produces no event of its own, and "it just',
+      'stopped working" is not an audit trail.',
+    );
+  }
+
+  if (result.uncovered.length > 0) {
+    lines.push(
+      '',
+      `No live holder for: ${result.uncovered.join(', ')}.`,
+      'This is the deadlock ADR-0035 is about: a gate requiring one of these',
+      'cannot open, and nothing else would have said so until somebody tried.',
+    );
+  }
+
+  return lines.join('\n');
 }

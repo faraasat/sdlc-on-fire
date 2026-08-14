@@ -104,8 +104,10 @@ import { checkE2e, formatE2eCheck, formatE2eSeal, sealE2eEvidence } from './e2e.
 import {
   checkAccess,
   formatAccessCheck,
+  formatGrants,
   formatPolicy,
   grantRole,
+  listGrants,
   showPolicy,
   whoami,
 } from './access.js';
@@ -1600,6 +1602,22 @@ export function buildProgram(): Command {
         );
       },
     );
+
+  access
+    .command('grants')
+    .description(
+      'every membership, when it lapses, and which roles are about to lose their last holder',
+    )
+    .option('--window <days>', 'how far ahead to warn', '14')
+    .option('--json', 'emit JSON')
+    .action(async (options: { window?: string; json?: boolean }): Promise<void> => {
+      const days = Number.parseInt(options.window ?? '14', 10);
+      const result = await listGrants(root(), Number.isNaN(days) ? 14 : days);
+      emit(result, options.json === true, formatGrants);
+      // A role with no live holder is the ADR-0035 deadlock: a gate requiring
+      // it cannot open, and nothing else says so until somebody tries.
+      if (result.uncovered.length > 0) process.exitCode = 1;
+    });
 
   access
     .command('check')

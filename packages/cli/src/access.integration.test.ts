@@ -211,3 +211,70 @@ describe('no agent holds a role (P3-RBAC-04)', () => {
     expect(stdout).toContain('agent "codex" holds role "qa"');
   }, 90_000);
 });
+
+describe('grants lapse on their own, and the lapse is recorded (P3-RBAC-07)', () => {
+  it('lists an indefinite grant as live', async () => {
+    await sdlc('access', 'grant', 'ada@example.test', 'designer');
+    const { stdout } = await sdlc('access', 'grants', '--json');
+    const result = JSON.parse(stdout) as { grants: { roleKey: string; state: string }[] };
+    expect(result.grants.find((g) => g.roleKey === 'designer')?.state).toBe('live');
+  }, 90_000);
+
+  it('warns before a grant lapses, not after', async () => {
+    // `expiring` is the only state a person can still act on. A column that
+    // only ever reads live-or-lapsed tells you at the moment it is too late.
+    const soon = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+    await sdlc('access', 'grant', 'ada@example.test', 'qa', '--until', soon);
+    const { stdout } = await sdlc('access', 'grants', '--json');
+    const result = JSON.parse(stdout) as { grants: { roleKey: string; state: string }[] };
+    expect(result.grants.find((g) => g.roleKey === 'qa')?.state).toBe('expiring');
+  }, 90_000);
+
+  it('records a lapse in the audit log, exactly once', async () => {
+    // A grant that expires by clock produces no event of its own, and "it just
+    // stopped working" is not an audit trail.
+    await sdlc(
+      'access',
+      'grant',
+      'ada@example.test',
+      'security',
+      '--until',
+      '2020-01-01T00:00:00Z',
+    );
+    const first = JSON.parse((await sdlc('access', 'grants', '--json')).stdout) as {
+      recorded: string[];
+    };
+    expect(first.recorded).toHaveLength(1);
+
+    const second = JSON.parse((await sdlc('access', 'grants', '--json')).stdout) as {
+      recorded: string[];
+    };
+    expect(second.recorded).toEqual([]);
+
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      const rows = await db.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM audit_log WHERE action = 'MEMBERSHIP_EXPIRED';`,
+      );
+      expect(rows[0]?.count).toBe(1);
+    } finally {
+      await db.close();
+    }
+  }, 120_000);
+
+  it('names the role that just lost its last holder, and exits non-zero', async () => {
+    // The deadlock ADR-0035 is actually about, stated as the thing that breaks
+    // rather than as the row that expired.
+    const { stdout, code } = await sdlc('access', 'grants');
+    expect(code).toBe(1);
+    expect(stdout).toContain('No live holder for: security');
+    expect(stdout).toContain('cannot open');
+  }, 90_000);
+
+  it('stops reporting the role once somebody live holds it again', async () => {
+    await sdlc('access', 'grant', 'ada@example.test', 'security');
+    const { stdout } = await sdlc('access', 'grants', '--json');
+    expect((JSON.parse(stdout) as { uncovered: string[] }).uncovered).toEqual([]);
+  }, 90_000);
+});
