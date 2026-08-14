@@ -40,6 +40,7 @@ import {
   showConfig,
   describeAgents,
   status,
+  treeContext,
   type InstructionsResult,
 } from './commands.js';
 import { advanceWorkItem } from './advance.js';
@@ -70,6 +71,14 @@ import { checkRisk, formatRisk } from './risk.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
+import {
+  checkResolution,
+  defaultGit as conflictGit,
+  formatCheck,
+  formatListing,
+  listConflicts,
+  originalConflict,
+} from './conflicts.js';
 import { checkLicenses, formatLicenses } from './licenses.js';
 import { watchDependencies, formatWatch } from './watch.js';
 import {
@@ -499,6 +508,74 @@ export function buildProgram(): Command {
           ...(options.owns === undefined ? {} : { ownedPaths: options.owns }),
         });
         emit(result, options.json === true, formatAdd);
+      },
+    );
+
+  program
+    .command('conflicts')
+    .description('lay out both sides of every merge conflict, or check a resolution')
+    .option('--check', 'review resolutions instead of listing conflicts')
+    .option(
+      '--why <hunk=rationale...>',
+      'why a side was discarded, e.g. --why 0="superseded by the retry policy"',
+      [],
+    )
+    .option('--passed', 'checks were re-run against the resolved tree and passed')
+    .option('--failed', 'checks were re-run against the resolved tree and failed')
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: {
+        check?: boolean;
+        why?: string[];
+        passed?: boolean;
+        failed?: boolean;
+        json?: boolean;
+      }): Promise<void> => {
+        const workspace = root();
+        const git = conflictGit(workspace);
+
+        if (options.check !== true) {
+          emit(await listConflicts(workspace, git), options.json === true, formatListing);
+          return;
+        }
+
+        const declared = (options.why ?? []).map((entry) => {
+          const [hunk, ...rest] = entry.split('=');
+          return { hunk: Number.parseInt(hunk ?? '0', 10), rationale: rest.join('=') };
+        });
+
+        const tree = await treeContext(workspace);
+        const head = {
+          git_sha: tree.headSha,
+          ...(tree.dirtyTreeHash === undefined ? {} : { dirty_tree_hash: tree.dirtyTreeHash }),
+        };
+        // `--passed` reports a run this command did not observe, so it is a
+        // claim rather than evidence — and absent either flag there is no
+        // evidence at all, which is the refusal. Binding this to a real
+        // EvidenceEnvelope belongs to the gate runner, not a second pipeline.
+        const evidence =
+          options.passed === true || options.failed === true
+            ? { ...head, passed: options.passed === true }
+            : null;
+
+        const scratch = path.join(workspace, '.sdlcof', 'cache', 'merge');
+        const checked: ReturnType<typeof checkResolution>[] = [];
+        for (const file of (await listConflicts(workspace, git)).files) {
+          const original = await originalConflict(git, file.path, scratch);
+          if (original === null) continue;
+          const resolved = await fs.readFile(path.join(workspace, file.path), 'utf8');
+          checked.push(checkResolution(file.path, original, resolved, declared, evidence, head));
+        }
+
+        if (checked.length === 0) {
+          emit([], options.json === true, () => 'No unmerged files to check.');
+          return;
+        }
+
+        emit(checked, options.json === true, (all: typeof checked) =>
+          all.map(formatCheck).join('\n\n'),
+        );
+        if (checked.some((result) => !result.accepted)) process.exitCode = 1;
       },
     );
 
