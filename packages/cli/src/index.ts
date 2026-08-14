@@ -100,6 +100,7 @@ import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skil
 import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
 import { checkE2e, formatE2eCheck, formatE2eSeal, sealE2eEvidence } from './e2e.js';
 import { deriveRoles, formatRoles } from './roles.js';
+import { checkPilot, formatPilotCheck, writePilotTemplate } from './pilot.js';
 import {
   checkMcpCall,
   formatMcpList,
@@ -1453,6 +1454,33 @@ export function buildProgram(): Command {
         );
       },
     );
+
+  const pilot = program
+    .command('pilot')
+    .description('the external-pilot gate on the public release (ADR-0064)');
+
+  pilot
+    .command('template')
+    .description('write a report skeleton — which deliberately does not pass `pilot check`')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await writePilotTemplate(root());
+      emit(result, options.json === true, (r: typeof result) =>
+        r.created
+          ? `${r.path} written. It has no measurements yet and will not pass \`sdlc pilot check\`.`
+          : `${r.path} already exists — left alone, in case it holds a real pilot's evidence.`,
+      );
+    });
+
+  pilot
+    .command('check')
+    .description('judge the pilot report; exits non-zero until the gate is met')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await checkPilot(root());
+      emit(result, options.json === true, (r: typeof result) => formatPilotCheck(r));
+      if (!result.ok) process.exitCode = 1;
+    });
 
   program
     .command('roles')
