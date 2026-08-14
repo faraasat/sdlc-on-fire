@@ -17,11 +17,13 @@ import {
   AppetiteSchema,
   PRESETS,
   PresetSchema,
+  REFRESH_CADENCES,
   resolveRequiredStages,
   resolveWorkspaceLayout,
   WORK_ITEM_ID_PREFIX,
   type PackageInfo,
   type Preset,
+  type RefreshCadence,
   AmbiguitySchema,
 } from '@sdlc-on-fire/core';
 import { renderWorkItem } from '@sdlc-on-fire/storage';
@@ -92,6 +94,7 @@ import {
 } from './threat.js';
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
 import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
+import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
 import { scanQuality } from './quality.js';
 import {
   listMemory,
@@ -1431,6 +1434,54 @@ export function buildProgram(): Command {
         );
       },
     );
+
+  const research = program
+    .command('research')
+    .description(
+      'the per-technology research folders ADR-0045 requires, and whether they are usable',
+    );
+
+  research
+    .command('scan')
+    .description("read the project's manifest and report which technologies have usable research")
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await scanResearch(root());
+      emit(result, options.json === true, formatResearchScan);
+    });
+
+  research
+    .command('check')
+    .description('the same scan, exit-coded, for a gate')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await scanResearch(root());
+      emit(result, options.json === true, formatResearchScan);
+      // A technology in the manifest with no usable research is the state
+      // ADR-0045 exists to stop code being written in. Exiting non-zero is what
+      // lets this sit in CI at all.
+      if (!result.ok) process.exitCode = 1;
+    });
+
+  research
+    .command('new <tech>')
+    .description('create the dated folder skeleton for one technology')
+    .option('--cadence <cadence>', 'how fast the tech moves: churning|active|stable|spec', 'active')
+    .option('--json', 'emit JSON')
+    .action(async (tech: string, options: { cadence?: string; json?: boolean }): Promise<void> => {
+      const cadence = options.cadence ?? 'active';
+      if (!(cadence in REFRESH_CADENCES)) {
+        // Named rather than defaulted. A typo'd cadence that silently becomes
+        // 90 days sets a refresh clock nobody chose.
+        throw new Error(
+          `unknown cadence "${cadence}" — one of ${Object.keys(REFRESH_CADENCES).join(', ')}`,
+        );
+      }
+      const result = await newResearch(root(), tech, {
+        cadence: cadence as RefreshCadence,
+      });
+      emit(result, options.json === true, formatNewResearch);
+    });
 
   program
     .command('agents')

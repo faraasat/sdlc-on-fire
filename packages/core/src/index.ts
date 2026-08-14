@@ -24,6 +24,8 @@ export * from './embedding.js';
 export * from './memory.js';
 export * from './memory-entry.js';
 export * from './posix-path.js';
+export * from './tech-research.js';
+export * from './tech-stack.js';
 export * from './workspace.js';
 export * from './storage-port.js';
 export * from './capabilities.js';
