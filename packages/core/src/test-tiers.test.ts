@@ -199,3 +199,46 @@ describe('formatTierReport', () => {
     expect(text).toContain('Every required tier ran and passed.');
   });
 });
+
+describe('discovery mode (P2-QA-07)', () => {
+  const files = [{ tier: 'unit' as const, total: 85, passed: 0, failed: 0 }];
+
+  it('never says a discovered tier passed', () => {
+    // The defect this closes: `sdlc tiers` synthesised a run per tier from a
+    // *file count* and rendered it through the run formatter, printing
+    // "85/85 unit tests passed" for a suite it had never executed. This
+    // product exists to refuse that sentence from an agent, and it was
+    // producing it about itself. Found by running the built binary against an
+    // unrelated repository.
+    const report = evaluateTiers('standard', files, 'discovery');
+    const unit = report.findings.find((finding) => finding.tier === 'unit');
+    expect(unit?.status).toBe('present');
+    expect(unit?.detail).toContain('not run, so not passing');
+    expect(unit?.detail).not.toContain('passed —');
+  });
+
+  it('is never satisfied by files alone', () => {
+    // Listing files cannot satisfy a tier requirement, whatever the count.
+    expect(evaluateTiers('standard', files, 'discovery').satisfied).toBe(false);
+  });
+
+  it('says nothing was run', () => {
+    const text = formatTierReport('standard', evaluateTiers('standard', files, 'discovery'));
+    expect(text).toContain('Nothing was run.');
+    expect(text).not.toContain('ran and passed');
+  });
+
+  it('still reports a real run in the language of a run', () => {
+    // The other mode is unchanged: an actual run still says passed.
+    const ran = [{ tier: 'unit' as const, total: 85, passed: 85, failed: 0 }];
+    expect(formatTierReport('standard', evaluateTiers('standard', ran))).toContain(
+      '85/85 unit tests passed',
+    );
+  });
+
+  it('describes a missing tier as absent files, not as an absent run', () => {
+    const report = evaluateTiers('standard', files, 'discovery');
+    const integration = report.findings.find((finding) => finding.tier === 'integration');
+    expect(integration?.detail).toBe('no integration test files found');
+  });
+});

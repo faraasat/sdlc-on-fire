@@ -120,9 +120,19 @@ export interface TierRun {
   readonly failed: number;
 }
 
+/**
+ * The verdicts a tier can carry.
+ *
+ * `present` is the discovery-mode one and is deliberately not `passed`: files
+ * existing is a different fact from tests passing, and a report that shares a
+ * word between them will eventually be read as the stronger claim.
+ */
+export const TIER_STATUSES = ['passed', 'failed', 'missing', 'empty', 'present'] as const;
+export type TierStatus = (typeof TIER_STATUSES)[number];
+
 export interface TierFinding {
   readonly tier: TestTier;
-  readonly status: 'passed' | 'failed' | 'missing' | 'empty';
+  readonly status: TierStatus;
   readonly detail: string;
 }
 
@@ -143,7 +153,28 @@ export interface TierReport {
  *   files exits 0, and exit 0 with no assertions is the most convincing-looking
  *   nothing in software. It is never a pass here.
  */
-export function evaluateTiers(preset: string, runs: readonly TierRun[]): TierReport {
+/**
+ * What a tier report is about.
+ *
+ * `run` means a runner executed and these are its counts. `discovery` means
+ * somebody listed files and nobody ran anything — and the two must not share a
+ * vocabulary, because they did not share an event.
+ *
+ * This is not hypothetical. `sdlc tiers` synthesised a `TierRun` per tier from
+ * a *file count* and rendered it through the run formatter, so pointing it at
+ * a real repository printed **"85/85 unit tests passed"** for a suite that had
+ * never been executed. The module comment said it counted files; the output
+ * said the tests passed. This product exists to refuse exactly that sentence
+ * from an agent, and it was producing it about itself. Found by running the
+ * built binary against an unrelated repository (P2-QA-07, ADR-0064).
+ */
+export type TierReportMode = 'run' | 'discovery';
+
+export function evaluateTiers(
+  preset: string,
+  runs: readonly TierRun[],
+  mode: TierReportMode = 'run',
+): TierReport {
   const required = REQUIRED_TIERS[preset] ?? REQUIRED_TIERS['standard'] ?? [];
   const byTier = new Map(runs.map((run) => [run.tier, run]));
 
@@ -153,8 +184,22 @@ export function evaluateTiers(preset: string, runs: readonly TierRun[]): TierRep
       return {
         tier,
         status: 'missing',
-        detail: `the ${tier} tier produced no run — a tier that did not execute is not a tier that passed`,
+        detail:
+          mode === 'discovery'
+            ? `no ${tier} test files found`
+            : `the ${tier} tier produced no run — a tier that did not execute is not a tier that passed`,
       };
+    }
+    if (mode === 'discovery') {
+      // Presence, and nothing about outcomes. Whether these files pass is
+      // `sdlc verify`'s question, asked against a real run.
+      return run.total === 0
+        ? { tier, status: 'empty', detail: `no ${tier} test files found` }
+        : {
+            tier,
+            status: 'present',
+            detail: `${String(run.total)} ${tier} test file(s) present — not run, so not passing`,
+          };
     }
     if (run.total === 0) {
       return {
@@ -179,6 +224,8 @@ export function evaluateTiers(preset: string, runs: readonly TierRun[]): TierRep
 
   return {
     findings,
+    // `present` is not `passed`, so a discovery report is never satisfied. That
+    // is the property: listing files can no longer satisfy a tier requirement.
     satisfied: findings.every((finding) => finding.status === 'passed'),
   };
 }
@@ -201,15 +248,26 @@ export function formatTierReport(
   report: TierReport,
   extra: readonly TestTier[] = [],
 ): string {
-  const mark = { passed: '✓', failed: '✗', missing: '·', empty: '⚠' } as const;
-  const lines = [`Test tiers required by \`${preset}\`:`];
+  const mark = { passed: '✓', failed: '✗', missing: '·', empty: '⚠', present: '·' } as const;
+  const discovery = report.findings.some((finding) => finding.status === 'present');
+  const lines = [
+    discovery
+      ? `Test tiers \`${preset}\` requires, and which this repository has files for:`
+      : `Test tiers required by \`${preset}\`:`,
+  ];
   for (const finding of report.findings) {
     lines.push(`  ${mark[finding.status]} ${finding.tier} — ${finding.detail}`);
   }
-  if (extra.length > 0) lines.push('', `  also ran (not required): ${extra.join(', ')}`);
+  if (extra.length > 0) {
+    lines.push('', `  also ${discovery ? 'present' : 'ran'} (not required): ${extra.join(', ')}`);
+  }
   lines.push(
     '',
-    report.satisfied ? 'Every required tier ran and passed.' : 'Required tiers are not satisfied.',
+    discovery
+      ? 'Nothing was run. `sdlc verify` is what asks whether these pass.'
+      : report.satisfied
+        ? 'Every required tier ran and passed.'
+        : 'Required tiers are not satisfied.',
   );
   return lines.join('\n');
 }

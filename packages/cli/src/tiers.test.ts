@@ -80,7 +80,14 @@ describe('reportTiers', () => {
     expect(result.report.satisfied).toBe(false);
   });
 
-  it('is satisfied when every required tier has files', async () => {
+  it('is never satisfied by files alone, however complete the set', async () => {
+    // This used to assert `satisfied === true`, and its own name said why that
+    // was wrong: "satisfied when every required tier has *files*". Discovery
+    // walks a directory; nothing was run, and a command that reports a
+    // requirement met on the strength of filenames is making the claim this
+    // product exists to refuse. Found by running the binary against an
+    // unrelated repository, where it printed "85/85 unit tests passed" for a
+    // suite it had never executed (P2-QA-07).
     const root = await tree([
       'src/a.test.ts',
       'src/b.integration.test.ts',
@@ -88,13 +95,15 @@ describe('reportTiers', () => {
     ]);
     const result = await reportTiers(root, 'standard');
     expect(result.unwritten).toEqual([]);
-    expect(result.report.satisfied).toBe(true);
+    expect(result.report.satisfied).toBe(false);
+    expect(result.report.findings.every((finding) => finding.status === 'present')).toBe(true);
   });
 
   it('holds a lite repository to a lite bar', async () => {
+    // The bar being lower shows up as nothing *unwritten*, not as a pass.
     const result = await reportTiers(await tree(['src/a.test.ts']), 'lite');
-    expect(result.report.satisfied).toBe(true);
     expect(result.unwritten).toEqual([]);
+    expect(result.report.satisfied).toBe(false);
   });
 
   it('asks strict for e2e and smoke as well', async () => {
@@ -115,7 +124,6 @@ describe('reportTiers', () => {
       'src/d.e2e.test.ts',
     ]);
     const result = await reportTiers(root, 'standard');
-    expect(result.report.satisfied).toBe(true);
     expect(result.extra).toEqual(['e2e']);
   });
 

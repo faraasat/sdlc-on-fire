@@ -92,10 +92,16 @@ export async function reportTiers(root: string, preset = 'standard'): Promise<Ti
   const required = REQUIRED_TIERS[preset] ?? REQUIRED_TIERS['standard'] ?? [];
   const unwritten = required.filter((tier) => !have.has(tier));
 
+  // `passed: 0`, and the report is asked for in discovery mode. The previous
+  // version set `passed` to the file count and rendered it through the run
+  // formatter, so this command printed "85/85 unit tests passed" for a suite it
+  // had never executed — the exact sentence the product exists to refuse from
+  // an agent, produced about itself. Found by running the built binary against
+  // an unrelated repository (P2-QA-07).
   const runs: TierRun[] = inventory.map((entry) => ({
     tier: entry.tier,
     total: entry.files.length,
-    passed: entry.files.length,
+    passed: 0,
     failed: 0,
   }));
 
@@ -105,7 +111,7 @@ export async function reportTiers(root: string, preset = 'standard'): Promise<Ti
     unwritten,
     // Counts *files*, not tests: this command reports what exists, and whether
     // those files pass is `sdlc verify`'s question, asked against a real run.
-    report: evaluateTiers(preset, runs),
+    report: evaluateTiers(preset, runs, 'discovery'),
     extra: extraTiers(preset, runs),
   };
 }
