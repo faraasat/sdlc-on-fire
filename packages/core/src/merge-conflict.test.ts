@@ -35,6 +35,33 @@ const CONFLICT = [
 ].join('\n');
 
 describe('parseConflicts', () => {
+  it('reads a CRLF file, because git on Windows writes one', () => {
+    // The failure this pins was not a crash. `<<<<<<<` still matched by prefix,
+    // so every hunk parsed; only the divider test is an equality, and
+    // `'=======\r' === '======='` is false. The result was a hunk whose "ours"
+    // held the entire conflict body and whose "theirs" was empty — a reviewer
+    // shown one side of a two-sided disagreement and told that was all of it.
+    const crlf = [
+      '<<<<<<< HEAD',
+      'retries: 3',
+      '=======',
+      'timeout: 60',
+      '>>>>>>> feat/x',
+      '',
+    ].join('\r\n');
+
+    const [hunk] = parseConflicts(crlf);
+    expect(hunk?.ours).toEqual(['retries: 3']);
+    expect(hunk?.theirs).toEqual(['timeout: 60']);
+    expect(hunk?.oursLabel).toBe('HEAD');
+    expect(hunk?.theirsLabel).toBe('feat/x');
+  });
+
+  it('reads LF and CRLF to the same hunks', () => {
+    const lines = ['<<<<<<< HEAD', 'a', '=======', 'b', '>>>>>>> other', ''];
+    expect(parseConflicts(lines.join('\r\n'))).toEqual(parseConflicts(lines.join('\n')));
+  });
+
   it('finds a hunk and both sides', () => {
     const [hunk] = parseConflicts(CONFLICT);
     expect(hunk?.ours).toEqual(['  timeout: 30,', '  retries: 3,']);

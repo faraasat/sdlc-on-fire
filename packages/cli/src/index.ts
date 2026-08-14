@@ -1403,9 +1403,10 @@ export function buildProgram(): Command {
   skills
     .command('doctor')
     .description('check every canonical skill against every target before anything is written')
+    .option('--target <id>', 'which surface to check against (claude-code, mcp)')
     .option('--json', 'emit JSON')
-    .action((options: { json?: boolean }): void => {
-      const report = doctorSkills();
+    .action((options: { target?: string; json?: boolean }): void => {
+      const report = doctorSkills({ target: options.target });
       emit(report, options.json === true, (r: ReturnType<typeof doctorSkills>) => formatDoctor(r));
       // An error-severity finding means a compile would drop something. Exiting
       // non-zero is what lets this sit in a pre-commit hook or CI at all.
@@ -1414,15 +1415,22 @@ export function buildProgram(): Command {
 
   skills
     .command('compile')
-    .description('compile the canonical skills to the Claude Code surface')
+    .description('compile the canonical skills to a configured agent surface')
+    // Named, never sniffed (ADR-0007): `detect()` reports, it does not choose.
+    .option('--target <id>', 'which surface to compile to (claude-code, mcp)', 'claude-code')
     .option('--dry-run', 'report what would be written without writing it')
     .option('--json', 'emit JSON')
-    .action(async (options: { dryRun?: boolean; json?: boolean }): Promise<void> => {
-      const result = await compileSkills(root(), { dryRun: options.dryRun === true });
-      emit(result, options.json === true, (r: Awaited<ReturnType<typeof compileSkills>>) =>
-        formatCompile(r, options.dryRun === true),
-      );
-    });
+    .action(
+      async (options: { target?: string; dryRun?: boolean; json?: boolean }): Promise<void> => {
+        const result = await compileSkills(root(), {
+          dryRun: options.dryRun === true,
+          target: options.target,
+        });
+        emit(result, options.json === true, (r: Awaited<ReturnType<typeof compileSkills>>) =>
+          formatCompile(r, options.dryRun === true),
+        );
+      },
+    );
 
   program
     .command('agents')

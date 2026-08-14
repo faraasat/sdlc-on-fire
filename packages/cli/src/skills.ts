@@ -5,8 +5,10 @@ import {
   CANONICAL_SKILLS,
   ClaudeCodeAdapter,
   formatDoctorReport,
+  McpAdapter,
   runDoctor,
   type AgentAdapter,
+  type CompileResult,
   type DoctorReport,
 } from '@sdlc-on-fire/agent-manager';
 
@@ -53,7 +55,22 @@ export interface CompileSkillsResult {
 export interface SkillSources {
   readonly skills?: readonly CanonicalSkill[] | undefined;
   readonly adapters?: readonly AgentAdapter[] | undefined;
+  /** Which configured target to compile to. Never sniffed from the tree (ADR-0007). */
+  readonly target?: string | undefined;
 }
+
+/**
+ * The targets this build can compile to.
+ *
+ * Explicit, and selected by name rather than detected. `detect()` exists for
+ * reporting only — a compiler that picks its target by looking at the working
+ * tree writes to whichever surface happens to be lying around, which is how a
+ * compiled artifact ends up somewhere nobody chose.
+ */
+export const COMPILE_TARGETS: Readonly<Record<string, () => AgentAdapter>> = {
+  'claude-code': () => new ClaudeCodeAdapter(),
+  mcp: () => new McpAdapter(),
+};
 
 /** Every canonical skill, in a stable order so output diffs are readable. */
 function allSkills(sources: SkillSources = {}): readonly CanonicalSkill[] {
@@ -62,7 +79,18 @@ function allSkills(sources: SkillSources = {}): readonly CanonicalSkill[] {
 }
 
 function allAdapters(sources: SkillSources = {}): readonly AgentAdapter[] {
-  return sources.adapters ?? [new ClaudeCodeAdapter()];
+  if (sources.adapters !== undefined) return sources.adapters;
+  if (sources.target === undefined) return [new ClaudeCodeAdapter()];
+
+  const build = COMPILE_TARGETS[sources.target];
+  if (build === undefined) {
+    // Named rather than silently defaulted. A typo'd target that quietly
+    // compiles to Claude Code reports success and writes to the wrong surface.
+    throw new Error(
+      `unknown target "${sources.target}" — configured targets are ${Object.keys(COMPILE_TARGETS).join(', ')}`,
+    );
+  }
+  return [build()];
 }
 
 /** Runs the pre-compile check without writing anything. */
@@ -81,7 +109,7 @@ const isAdapter = (value: unknown): value is AgentAdapter =>
   typeof value === 'object' && value !== null && 'compileSkill' in value;
 
 /**
- * Compiles every canonical skill to the Claude Code surface.
+ * Compiles every canonical skill to the configured surface.
  *
  * Refuses on an error-severity doctor finding rather than writing and warning.
  * A compiled surface that is wrong is worse than an absent one: the agent reads
@@ -106,10 +134,19 @@ export async function compileSkills(
   const files: CompiledSkillFile[] = [];
   const warnings: string[] = [];
 
-  for (const skill of skills) {
-    const result = adapter.compileSkill(skill);
+  // A target whose artifact is per-workspace compiles the set at once
+  // (contract §3.1). Looping `compileSkill` for MCP would emit one tool file
+  // per skill and no server — every tool present, and nothing to connect to.
+  const results: { label: string | null; result: CompileResult }[] =
+    adapter.compileServer === undefined
+      ? skills.map((skill) => ({ label: skill.name, result: adapter.compileSkill(skill) }))
+      : [{ label: null, result: adapter.compileServer(skills) }];
+
+  for (const { label, result } of results) {
     for (const warning of result.warnings) {
-      warnings.push(`${skill.name}: ${warning.message}`);
+      // A per-skill compile labels its warnings with the skill; a server
+      // compile's already name the tool they are about.
+      warnings.push(label === null ? warning.message : `${label}: ${warning.message}`);
     }
     for (const file of result.files) {
       const full = path.join(root, file.path);

@@ -1,4 +1,5 @@
 import { CanonicalSkillSchema, type CanonicalSkill } from '@sdlc-on-fire/core';
+import { WORK_ITEM_ID_ARG } from './arguments.js';
 
 /**
  * The `resolve-conflict` skill (P2-SKILL-07, FEAT-SKILL-023).
@@ -66,8 +67,14 @@ export const RESOLVE_CONFLICT_SKILL: CanonicalSkill = CanonicalSkillSchema.parse
   ].join(' '),
   verify: { command_template: '{{verify_command}}', done_criteria_ref: 'work-item#done' },
   arguments: [
-    { name: 'work-item-id', required: true },
-    { name: 'conflicted-paths', required: false },
+    { name: 'work-item-id', required: true, description: WORK_ITEM_ID_ARG },
+    {
+      name: 'conflicted-paths',
+      required: false,
+      description:
+        'Comma-separated repository-relative paths to restrict the review to. Omit to review ' +
+        'every path git reports as unmerged.',
+    },
   ],
   context_mode: 'fork',
 });

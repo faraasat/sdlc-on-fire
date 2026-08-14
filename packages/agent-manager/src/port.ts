@@ -61,6 +61,21 @@ export interface AgentAdapter {
   compileSkill(skill: CanonicalSkill): CompileResult;
 
   /**
+   * For targets whose artifact is per-workspace rather than per-skill (§3.1).
+   *
+   * Every target before MCP emitted one file per skill, so `compileSkill` was
+   * the whole port. An MCP server is one document listing every tool *and*
+   * declaring the capabilities it supports — neither derivable from one skill
+   * in isolation. Forcing that into `compileSkill` would either leave
+   * capability negotiation with nowhere to live, or move the merge into
+   * whatever writes files, which then needs to know one target's document
+   * shape while serving all of them.
+   *
+   * Optional: an adapter that emits one file per skill does not implement it.
+   */
+  compileServer?(skills: readonly CanonicalSkill[]): CompileResult;
+
+  /**
    * Reporting only — never silent auto-targeting at generate time. Targets are
    * explicitly configured per project, never sniffed (ADR-0007).
    */
@@ -73,6 +88,10 @@ export const CANONICAL_SKILL_FIELDS = [
   'name',
   'description',
   'stage',
+  // `situation` joined the canonical schema with P2-SKILL-07 and was never added
+  // here, so every adapter's capability table had a hole the totality check
+  // could not see — the one failure mode this list exists to make impossible.
+  'situation',
   'tier',
   'context_pack_spec_ref',
   'role',

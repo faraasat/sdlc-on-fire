@@ -84,6 +84,18 @@ export const SkillVerifySchema = z.object({
 export const SkillArgumentSchema = z.object({
   name: z.string().regex(KEBAB_CASE, 'argument names are kebab-case'),
   required: z.boolean(),
+  /**
+   * What the argument means, for targets that compile it into a schema.
+   *
+   * The first field this IR gained because a *target* needed it rather than
+   * because the IR wanted it (contract 04 §2.2, P2-AGT-01). Claude Code's
+   * `arguments` is a list of names and the model learns each one's meaning from
+   * the surrounding prose; an MCP tool has no surrounding prose, so
+   * `inputSchema` is the whole of what the model is told and a property with no
+   * description is a blank it fills by guessing. Optional, because it changes
+   * nothing for the targets that drop it.
+   */
+  description: z.string().min(1).optional(),
 });
 
 /** Tiered deprecation metadata (ADR-0034), read by `agents doctor`. */

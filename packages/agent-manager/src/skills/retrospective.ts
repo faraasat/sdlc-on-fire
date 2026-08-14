@@ -1,4 +1,5 @@
 import { CanonicalSkillSchema, type CanonicalSkill } from '@sdlc-on-fire/core';
+import { WORK_ITEM_ID_ARG } from './arguments.js';
 
 /**
  * The retrospective / memory-on-ship skill (P1-SKILL-03).
@@ -54,6 +55,6 @@ export const RETROSPECTIVE_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
   stop_condition:
     'Stop after one memory entry (or one explicit refusal) is emitted. Do not open follow-up work items.',
   verify: { command_template: '{{verify_command}}', done_criteria_ref: 'work-item#done' },
-  arguments: [{ name: 'work-item-id', required: true }],
+  arguments: [{ name: 'work-item-id', required: true, description: WORK_ITEM_ID_ARG }],
   context_mode: 'fork',
 });

@@ -135,3 +135,65 @@ describe('skills compile', () => {
     expect(result.files.map((f) => f.path)).toContain('.claude/skills/spec/SKILL.md');
   });
 });
+
+describe('the MCP target, through the command (P2-AGT-01)', () => {
+  it('compiles to one server document, not one file per skill', async () => {
+    // The whole reason the port grew `compileServer`. A loop over
+    // `compileSkill` would put every tool on disk and no server — each tool
+    // present, and nothing for a client to connect to.
+    const root = await tempRoot();
+    const result = await compileSkills(root, { target: 'mcp' });
+
+    expect(result.target).toBe('mcp');
+    expect(result.files.map((file) => file.path)).toEqual(['.mcp/sdlc-on-fire.json']);
+  });
+
+  it('writes a document a client could read, with every skill in it', async () => {
+    const root = await tempRoot();
+    await compileSkills(root, { target: 'mcp' });
+
+    const document = JSON.parse(
+      await fs.readFile(path.join(root, '.mcp', 'sdlc-on-fire.json'), 'utf8'),
+    ) as {
+      protocolVersion: string;
+      capabilities: Record<string, unknown>;
+      tools: { name: string; inputSchema: Record<string, unknown> }[];
+    };
+
+    expect(document.protocolVersion).toBe('2025-11-25');
+    expect(document.tools).toHaveLength(Object.keys(CANONICAL_SKILLS).length);
+    // Every tool callable: the spec requires a JSON Schema object here, and a
+    // tool whose `inputSchema` is missing lists fine and cannot be invoked.
+    for (const tool of document.tools) {
+      expect(tool.name.startsWith('sdlc__')).toBe(true);
+      expect(tool.inputSchema['type']).toBe('object');
+    }
+    expect(document.capabilities).toEqual({ tools: { listChanged: false } });
+  });
+
+  it('recompiles to a zero diff', async () => {
+    // Contract §3 point 4, and the one property the whole "regeneration is a
+    // disposable build step" convention rests on.
+    const root = await tempRoot();
+    await compileSkills(root, { target: 'mcp' });
+    const again = await compileSkills(root, { target: 'mcp' });
+    expect(again.files.every((file) => !file.changed)).toBe(true);
+  });
+
+  it('does not write the Claude surface when asked for MCP', async () => {
+    const root = await tempRoot();
+    await compileSkills(root, { target: 'mcp' });
+    await expect(fs.stat(path.join(root, '.claude'))).rejects.toThrow();
+  });
+
+  it('names an unknown target rather than defaulting to one', async () => {
+    // A typo that quietly compiles to Claude Code reports success and writes to
+    // the wrong surface.
+    const root = await tempRoot();
+    await expect(compileSkills(root, { target: 'mcp-server' })).rejects.toThrow(/unknown target/);
+  });
+
+  it('passes its own doctor', () => {
+    expect(doctorSkills({ target: 'mcp' }).ok).toBe(true);
+  });
+});

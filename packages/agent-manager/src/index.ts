@@ -1,6 +1,7 @@
 export * from './port.js';
 export * from './prompt.js';
 export * from './adapters/claude-code.js';
+export * from './adapters/mcp.js';
 export * from './doctor.js';
 export * from './skills/canonical.js';
 export * from './skills/review.js';

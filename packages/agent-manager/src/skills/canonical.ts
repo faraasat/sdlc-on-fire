@@ -2,6 +2,7 @@ import { CanonicalSkillSchema, type CanonicalSkill } from '@sdlc-on-fire/core';
 import { REVIEW_SKILL } from './review.js';
 import { RETROSPECTIVE_SKILL } from './retrospective.js';
 import { RESOLVE_CONFLICT_SKILL } from './resolve-conflict.js';
+import { WORK_ITEM_ID_ARG } from './arguments.js';
 
 /**
  * The canonical stage skills (P1-SKILL-01).
@@ -53,7 +54,7 @@ export const SPEC_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
     command_template: '{{verify_command}}',
     done_criteria_ref: 'work-item#done',
   },
-  arguments: [{ name: 'work-item-id', required: true }],
+  arguments: [{ name: 'work-item-id', required: true, description: WORK_ITEM_ID_ARG }],
   context_mode: 'inline',
 });
 
@@ -92,7 +93,7 @@ export const IMPLEMENT_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
     command_template: '{{verify_command}}',
     done_criteria_ref: 'work-item#done',
   },
-  arguments: [{ name: 'work-item-id', required: true }],
+  arguments: [{ name: 'work-item-id', required: true, description: WORK_ITEM_ID_ARG }],
   context_mode: 'inline',
 });
 

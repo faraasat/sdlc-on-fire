@@ -1,4 +1,5 @@
 import { CanonicalSkillSchema, type CanonicalSkill } from '@sdlc-on-fire/core';
+import { WORK_ITEM_ID_ARG } from './arguments.js';
 
 /**
  * The review stage skill (P1-SKILL-02).
@@ -40,6 +41,6 @@ export const REVIEW_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
   stop_condition:
     'Stop after one review report is emitted. Do not fix the findings, and do not advance the stage.',
   verify: { command_template: '{{verify_command}}', done_criteria_ref: 'work-item#done' },
-  arguments: [{ name: 'work-item-id', required: true }],
+  arguments: [{ name: 'work-item-id', required: true, description: WORK_ITEM_ID_ARG }],
   context_mode: 'fork',
 });
