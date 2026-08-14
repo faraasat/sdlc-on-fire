@@ -69,6 +69,10 @@ export const EAGER_DIRECTORIES = [
   // contracts/06). Created eagerly because a handoff written into a directory
   // that does not exist yet gets written somewhere else instead.
   'docs/handoff',
+  // Gate policies are content (contract 03 §4, contract 06 §2), so they are
+  // created eagerly and tracked — a governance rule git never sees is one
+  // nobody reviewed.
+  'docs/gates',
   'docs/assets/screenshots',
 ] as const;
 
@@ -86,6 +90,18 @@ export const INDEXED_DIRECTORIES: Readonly<Record<string, string>> = {
     'A decision that constrains work **outside** its initiative belongs here. One that\n' +
     "binds a single epic belongs in that initiative's `decisions/`, and is promoted here\n" +
     'by a superseding global ADR if its scope grows (ADR-0050).\n\n| ADR | Title |\n|---|---|\n',
+  'docs/gates':
+    '# Gate policies\n\nOne YAML file per policy, `<name>.yaml`, compiled into `gate_policies` by\n' +
+    '`sdlc gates list` (contract 03 §4, ADR-0005). Content, not machine state: these are\n' +
+    'hand-edited, diffed and reviewed in a PR, which is the whole reason they live here\n' +
+    'rather than in the hidden state directory.\n\n' +
+    'A project with no policy files is **ungated**, not passing — every transition goes\n' +
+    'through, and `sdlc gates list` says so rather than reporting a clean run.\n\n' +
+    '```yaml\nname: standard\napplies_to: { work_type: ["*"], risk_level: ["*"], path_pattern: ["**"] }\n' +
+    'transition: "build -> review"\nevidence:\n  - { kind: test, required: true }\n' +
+    'approvals: { required_roles: [], min_approvals: 0 }\noverridable_by: ["eng-lead"]\n```\n\n' +
+    '`overridable_by: []` is a **closed door**, not an unset field: it means there is no\n' +
+    'override path for this gate at all.\n',
   'docs/handoff':
     '# Handoffs\n\nWhat one stage or initiative handed the next: decisions made, questions\n' +
     'still open, and what the next stage needs. Structured rather than prose, so\n' +
@@ -151,6 +167,22 @@ export const WorkspaceConfigSchema = z
         generate: z.array(z.enum(DOCS_ROOT_FILES)).optional(),
       })
       .prefault({}),
+    /**
+     * Whether this workspace is one person or a team (P3-RBAC-03).
+     *
+     * Decides what happens to an approval rule nobody but the author could
+     * satisfy: `solo` auto-satisfies it — loudly, on the verdict — because the
+     * alternative is a board that can never advance; `team` deadlocks and names
+     * the missing role, because in a team an unsatisfiable rule means the
+     * roster is wrong and passing it silently is how a review requirement
+     * becomes decorative.
+     *
+     * **Declared, never inferred.** Deriving it from the roster would flip the
+     * mode the day somebody is added or goes on leave — a two-person team with
+     * one person away is still a team, and inferring would drop the review
+     * requirement exactly when it matters.
+     */
+    mode: z.enum(['solo', 'team']).default('solo'),
     /** Advanced capabilities, every one default-off (ADR-0067, P0-OBJ-04). */
     advanced: AdvancedConfigSchema,
     /** Intake behaviour — the echo-back gate's right-sizing knob (ADR-0049). */
@@ -238,6 +270,8 @@ export interface WorkspaceLayout {
   readonly root: string;
   readonly kanbanDir: string;
   readonly docsDir: string;
+  /** Gate-policy YAML (contract 03 §4, contract 06 §2) — content, so under `docs/`. */
+  readonly gatesDir: string;
   readonly stateDir: string;
   readonly dataDir: string;
   readonly lockDir: string;
@@ -263,6 +297,7 @@ export function resolveWorkspaceLayout(
     root: absoluteRoot,
     kanbanDir: path.join(absoluteRoot, paths?.kanban ?? DEFAULT_KANBAN_DIR),
     docsDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR),
+    gatesDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR, 'gates'),
     stateDir,
     dataDir: path.join(stateDir, 'db'),
     lockDir: path.join(stateDir, 'locks'),

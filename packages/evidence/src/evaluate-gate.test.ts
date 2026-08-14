@@ -7,6 +7,7 @@ import {
   GatePolicySchema,
   type Approval,
   type GateContext,
+  type GatePolicy,
 } from './evaluate-gate.js';
 
 const HEAD = 'a'.repeat(40);
@@ -257,5 +258,64 @@ describe('knowledge-claim outcomes stay separate (P1-GATE-04, ADR-0019)', () => 
     // The gate exists because agents cannot verify their own claims; an
     // agent-authored verification of an agent's claims is the same problem.
     expect(verdict.missing).toContain('knowledge-claim');
+  });
+});
+
+describe('every required role must approve, not any one of them (P3-RBAC-03)', () => {
+  const withRoles = (roles: string[], min: number): GatePolicy =>
+    GatePolicySchema.parse({
+      name: 'roles',
+      approvals: { required_roles: roles, min_approvals: min },
+    });
+
+  const approve = (roleId: string): Approval => ({
+    actorId: `who-${roleId}`,
+    actorKind: 'human',
+    roleId,
+    decision: 'approve',
+  });
+
+  const ctx = { currentHeadSha: 'sha', now: new Date('2026-08-14T00:00:00Z') };
+
+  it('blocks when a second named role has not approved', () => {
+    // `required_roles` used to be a *filter*: the survivors were counted against
+    // `min_approvals`, so one eng-lead approval satisfied a policy that also
+    // demanded a security review. A security sign-off a peer can satisfy is not
+    // a security sign-off.
+    const verdict = evaluateGate(
+      withRoles(['eng-lead', 'security'], 1),
+      [],
+      [approve('eng-lead')],
+      ctx,
+    );
+    expect(verdict.pass).toBe(false);
+    expect(verdict.missing).toContain('approval from security');
+  });
+
+  it('blocks a named role even when the floor is zero', () => {
+    const verdict = evaluateGate(withRoles(['security'], 0), [], [], ctx);
+    expect(verdict.pass).toBe(false);
+    expect(verdict.missing).toContain('approval from security');
+  });
+
+  it('passes once each named role has approved', () => {
+    const verdict = evaluateGate(
+      withRoles(['eng-lead', 'security'], 1),
+      [],
+      [approve('eng-lead'), approve('security')],
+      ctx,
+    );
+    expect(verdict.pass).toBe(true);
+  });
+
+  it('still applies the floor on top of the roles', () => {
+    const verdict = evaluateGate(withRoles(['eng-lead'], 2), [], [approve('eng-lead')], ctx);
+    expect(verdict.missing).toContain('approvals (1/2)');
+  });
+
+  it('leaves overridable_by closed when a policy omits it', () => {
+    // Empty means no override path at all (contract 03 §4); reading an omitted
+    // field as unrestricted would invert the strictest policy in the set.
+    expect(GatePolicySchema.parse({ name: 'p' }).overridable_by).toEqual([]);
   });
 });

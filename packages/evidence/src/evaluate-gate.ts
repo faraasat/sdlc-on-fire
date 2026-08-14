@@ -42,6 +42,15 @@ export const GatePolicySchema = z.object({
       min_approvals: z.number().int().nonnegative().default(0),
     })
     .prefault({}),
+  /**
+   * Roles permitted to record an override (contract 03 §4).
+   *
+   * Defaults to **empty**, and empty means *no override path at all* rather
+   * than "unrestricted" — the strict preset uses `overridable_by: []` to close
+   * the door, and reading an omitted field as open would invert the strictest
+   * policy in the set.
+   */
+  overridable_by: z.array(z.string().min(1)).default([]),
 });
 
 export type GatePolicy = z.infer<typeof GatePolicySchema>;
@@ -206,6 +215,19 @@ export function evaluateGate(
   }
 
   const counted = countingApprovals(approvals, policy);
+
+  // Each required role separately, then the floor (P3-RBAC-03). These were one
+  // check: `required_roles` filtered the approvals and the survivors were
+  // compared against `min_approvals`, so `["eng-lead","security"]` with a floor
+  // of 1 passed on one eng-lead approval and no security review — and a policy
+  // naming a role with a floor of 0 passed on nothing at all. Contract 03 §4
+  // says each named role must *each* have one, and a security sign-off a peer
+  // can satisfy is not a security sign-off.
+  for (const role of policy.approvals.required_roles) {
+    if (!counted.some((approval) => approval.roleId === role)) {
+      missing.push(`approval from ${role}`);
+    }
+  }
   if (counted.length < policy.approvals.min_approvals) {
     missing.push(`approvals (${counted.length}/${policy.approvals.min_approvals})`);
   }

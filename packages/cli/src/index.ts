@@ -109,6 +109,7 @@ import {
   showPolicy,
   whoami,
 } from './access.js';
+import { checkQuorum, formatGates, formatQuorumCheck, listGates } from './gates.js';
 import { deriveRoles, formatRoles } from './roles.js';
 import { checkPilot, formatPilotCheck, writePilotTemplate } from './pilot.js';
 import {
@@ -1504,6 +1505,34 @@ export function buildProgram(): Command {
       // technology with no specialist does not — that is the registry not
       // having grown yet, and failing on it would make every real project's
       // first run red.
+      if (!result.ok) process.exitCode = 1;
+    });
+
+  const gates = program
+    .command('gates')
+    .description('gate policies: the YAML in docs/gates/, compiled and asked about (ADR-0005)');
+
+  gates
+    .command('list')
+    .description('load every policy file, rebuild the compiled mirror, and report')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await listGates(root());
+      emit(result, options.json === true, formatGates);
+      // A file that does not load leaves a gate silently not gating, and that
+      // looks exactly like a card nobody wrote a policy for.
+      if (!result.ok) process.exitCode = 1;
+    });
+
+  gates
+    .command('quorum')
+    .argument('<work-item-id>', 'the card to ask about')
+    .description('who still has to approve this card, and why')
+    .option('--path <glob...>', 'files the change touches, for path-scoped policies')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { path?: string[]; json?: boolean }): Promise<void> => {
+      const result = await checkQuorum(root(), id, { paths: options.path ?? [] });
+      emit(result, options.json === true, formatQuorumCheck);
       if (!result.ok) process.exitCode = 1;
     });
 

@@ -11,6 +11,8 @@ export * from './user-guide.js';
 export * from './dependency-audit.js';
 export * from './runner.js';
 export * from './evaluate-gate.js';
+export * from './quorum.js';
+export * from './gate-policy-source.js';
 export * from './gate-record.js';
 export * from './constitution-compile.js';
 export * from './install-gate.js';
