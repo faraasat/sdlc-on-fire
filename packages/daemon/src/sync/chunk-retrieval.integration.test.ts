@@ -13,6 +13,16 @@ import { createTsvectorRetriever } from '@sdlc-on-fire/context';
 import { SyncEngine } from './sync-engine.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * Content retrieval, end to end against a real PGlite.
  *
  * These are the tests P0-SPIKE-02 found missing. The previous suite passed with
@@ -63,7 +73,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.close();
-  await fs.rm(workspace, { recursive: true, force: true });
+  await fs.rm(workspace, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('chunk persistence (D3)', () => {

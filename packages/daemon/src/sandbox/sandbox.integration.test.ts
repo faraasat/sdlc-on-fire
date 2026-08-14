@@ -15,6 +15,16 @@ import { probeSandbox, sandboxCommand, unsandboxedShell } from './exec.js';
 import { bubblewrapArgs, seatbeltProfile } from './tiers.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * Sandbox tiers (P1-SEC-02, ADR-0036).
  *
  * The enforcement test runs a **real** `sandbox-exec` on macOS and asserts a
@@ -155,8 +165,8 @@ describe('real enforcement', () => {
         await escape.cleanup?.();
         await expect(fs.stat(path.join(outside, 'escaped.txt'))).rejects.toThrow();
       } finally {
-        await fs.rm(workspace, { recursive: true, force: true });
-        await fs.rm(outside, { recursive: true, force: true });
+        await fs.rm(workspace, { recursive: true, force: true, ...RM_RETRY });
+        await fs.rm(outside, { recursive: true, force: true, ...RM_RETRY });
       }
     },
     120_000,

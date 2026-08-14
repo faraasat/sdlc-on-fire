@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -68,7 +68,10 @@ describe('built binary', () => {
     const probe = path.join(dir, 'probe.mjs');
     await fs.writeFile(
       probe,
-      `await import(${JSON.stringify(CLI)});\nprocess.stdout.write('imported-cleanly');\n`,
+      // A file URL, not a path. `import('C:\\…')` reads `C:` as a URL scheme
+      // and throws ERR_UNSUPPORTED_ESM_URL_SCHEME, which would fail this test
+      // for a reason that has nothing to do with the guard it is pinning.
+      `await import(${JSON.stringify(pathToFileURL(CLI).href)});\nprocess.stdout.write('imported-cleanly');\n`,
       'utf8',
     );
 

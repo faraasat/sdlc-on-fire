@@ -7,6 +7,16 @@ import { applySchema, migrationFiles, seedLifecycleStates } from './migrate.js';
 import { provisionPglite, type ProvisionedDatabase } from './pglite.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * Applies the real generated migration to a real PGlite. A mocked runner would
  * only prove the SQL string was passed along, not that Postgres accepts it —
  * and "the schema actually creates" is the entire claim being made here.
@@ -231,7 +241,7 @@ describe('idempotency', () => {
 afterAll(async () => {
   await Promise.all(opened.splice(0).map((handle) => handle.close().catch(() => undefined)));
   await Promise.all(
-    tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
+    tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true, ...RM_RETRY })),
   );
 });
 

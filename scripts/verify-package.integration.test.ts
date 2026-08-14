@@ -6,6 +6,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { verifyTarball } from './verify-package.mjs';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * The pre-publish guard (P2-META-01).
  *
  * Every case here builds a real tarball with a real defect and asserts the
@@ -16,7 +26,9 @@ import { verifyTarball } from './verify-package.mjs';
 
 const dirs: string[] = [];
 afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true, ...RM_RETRY })),
+  );
 });
 
 interface Layout {

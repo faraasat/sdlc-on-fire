@@ -7,6 +7,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { parseCoverage, parseIstanbulSummary, parseLcov } from './coverage.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * P2-QA-02 — parsed against coverage this repository actually produces.
  *
  * The formats are the point of failure. A hand-written lcov fixture proves the
@@ -19,7 +29,9 @@ const run = promisify(execFile);
 const dirs: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true, ...RM_RETRY })),
+  );
 });
 
 /** A tiny real project, half-covered on purpose. */

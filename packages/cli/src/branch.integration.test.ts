@@ -8,6 +8,16 @@ import { init, claimWorkItem } from './commands.js';
 import { branchFor } from './branch.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * `sdlc branch` — deriving a branch name from the work-item hierarchy (P1-GIT-03,
  * ADR-0048).
  *
@@ -63,7 +73,7 @@ beforeEach(async () => {
 }, 180_000);
 
 afterEach(async () => {
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('deriving the name from the hierarchy', () => {

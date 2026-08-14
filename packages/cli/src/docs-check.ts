@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { resolveWorkspaceLayout } from '@sdlc-on-fire/core';
+import { relativePosix, resolveWorkspaceLayout } from '@sdlc-on-fire/core';
 import { checkFreshness, type DocRecord, type FreshnessReport } from '@sdlc-on-fire/evidence';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import { createGitManager } from '@sdlc-on-fire/daemon';
@@ -26,7 +26,8 @@ async function walk(dir: string, root: string, out: string[]): Promise<void> {
     if (['node_modules', '.git', 'dist', '.sdlcof'].includes(entry.name)) continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) await walk(full, root, out);
-    else if (entry.name.endsWith('.md')) out.push(path.relative(root, full));
+    // The identity a `DocRecord.path` carries and every link resolves against.
+    else if (entry.name.endsWith('.md')) out.push(relativePosix(root, full));
   }
 }
 
@@ -57,7 +58,10 @@ export async function readDocs(root: string): Promise<readonly DocRecord[]> {
     for (const match of parsed.body.matchAll(/\]\(([^)#]+\.md)(?:#[^)]*)?\)/g)) {
       const target = match[1];
       if (target === undefined || target.startsWith('http')) continue;
-      const resolved = path.relative(
+      // Resolved on the filesystem, compared as an identity: `known` holds
+      // posix strings, so a native-separator result would report every link in
+      // the workspace as broken on Windows.
+      const resolved = relativePosix(
         layout.root,
         path.resolve(path.dirname(path.join(layout.root, relative)), target),
       );

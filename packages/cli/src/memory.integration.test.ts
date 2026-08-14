@@ -8,6 +8,16 @@ import { init } from './commands.js';
 import { listMemory, memoryHistory, recordMemory } from './memory.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * Typed memory end to end, against a real PGlite (P1-OBJ-04, ADR-0023).
  *
  * The pure resolution is argued with in `core/memory-entry.test.ts`. What is
@@ -27,7 +37,7 @@ beforeEach(async () => {
 }, 180_000);
 
 afterEach(async () => {
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, ...RM_RETRY });
 });
 
 const claim = (body: string, validFrom: string): Parameters<typeof recordMemory>[1] => ({

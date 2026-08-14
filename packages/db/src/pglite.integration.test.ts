@@ -10,6 +10,16 @@ import {
 } from './pglite.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * These tests boot a real PGlite instance rather than mocking one. A mocked
  * provisioner would prove only that the mock behaves like the mock — the whole
  * point of this adapter is that pgvector genuinely loads and the data directory
@@ -34,7 +44,7 @@ async function open(workspaceRoot: string): Promise<ProvisionedDatabase> {
 afterEach(async () => {
   await Promise.all(opened.splice(0).map((db) => db.close().catch(() => undefined)));
   await Promise.all(
-    tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true })),
+    tempRoots.splice(0).map((root) => fs.rm(root, { recursive: true, force: true, ...RM_RETRY })),
   );
 });
 

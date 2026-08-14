@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { toPosixPath } from '@sdlc-on-fire/core';
 import { simpleGit } from 'simple-git';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
@@ -10,6 +11,16 @@ import {
   parseWorktreePorcelain,
   type GitManager,
 } from './git-manager.js';
+
+/**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
 
 /**
  * These tests drive real `git` against real temporary repositories. Mocking
@@ -49,7 +60,9 @@ async function write(root: string, relative: string, contents: string): Promise<
 }
 
 afterEach(async () => {
-  await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true, ...RM_RETRY })),
+  );
 });
 
 describe('repository detection', () => {
@@ -215,7 +228,12 @@ describe('worktrees', () => {
   it('always lists the main worktree', async () => {
     const { root, git } = await newRepo();
     const listed = await git.listWorktrees();
-    expect(listed.some((w) => w.path === root)).toBe(true);
+    // Both sides through `realpath` and posix. `os.tmpdir()` on a Windows
+    // runner is the 8.3 short form (`C:\\Users\\RUNNER~1\\…`) while git reports
+    // the long one, so comparing the string this test happens to hold against
+    // the string git happens to print compares two spellings of one directory.
+    const expected = toPosixPath(await fs.realpath(root));
+    expect(listed.some((w) => toPosixPath(w.path) === expected)).toBe(true);
   });
 });
 

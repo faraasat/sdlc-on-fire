@@ -14,6 +14,16 @@ import { createGitManager } from '../git/git-manager.js';
 import { rebuildMirror } from './rebuild.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * A-07, the empirical half: does worktree-per-work-item isolation reconcile
  * cleanly with the DB mirror when several actors touch the same repo at once?
  *
@@ -75,7 +85,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await db.close().catch(() => undefined);
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('A-07 — worktree isolation against the DB mirror', () => {

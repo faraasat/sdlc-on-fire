@@ -12,6 +12,16 @@ import type { CanonicalSkill } from '@sdlc-on-fire/core';
 import { compileSkills, doctorSkills, formatCompile } from './skills.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * `sdlc skills doctor` / `sdlc skills compile` — the v0.1 DoD item 2 surface.
  *
  * The library underneath had tests and passed them throughout; what was missing
@@ -28,7 +38,9 @@ async function tempRoot(): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    dirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true, ...RM_RETRY })),
+  );
 });
 
 /** An adapter that cannot account for the canonical fields — an error finding. */

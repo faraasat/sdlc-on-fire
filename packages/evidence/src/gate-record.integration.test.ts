@@ -8,6 +8,16 @@ import { defaultV01Policy, type GateContext } from './evaluate-gate.js';
 import { persistEvidence, recordGate, replayGate } from './gate-record.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * Persists gates and evidence against the real schema, then replays them.
  *
  * Replay is the property under test: a verdict recorded once must be
@@ -46,7 +56,9 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.close().catch(() => undefined);
-  await Promise.all(tempRoots.splice(0).map((d) => fs.rm(d, { recursive: true, force: true })));
+  await Promise.all(
+    tempRoots.splice(0).map((d) => fs.rm(d, { recursive: true, force: true, ...RM_RETRY })),
+  );
 });
 
 beforeEach(async () => {

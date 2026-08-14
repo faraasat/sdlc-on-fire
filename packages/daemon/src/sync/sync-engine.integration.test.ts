@@ -12,6 +12,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SyncEngine, type SyncOutcome } from './sync-engine.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * Real files, real PGlite, real schema. The claim under test is "an edit on disk
  * lands in the mirror and the daemon's own write does not loop" — neither half
  * is observable against a mock.
@@ -46,7 +56,9 @@ beforeAll(async () => {
 afterAll(async () => {
   await engine.stop().catch(() => undefined);
   await db.close().catch(() => undefined);
-  await Promise.all(tempRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
+  await Promise.all(
+    tempRoots.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true, ...RM_RETRY })),
+  );
 });
 
 async function rows(table: string, filePath: string): Promise<Record<string, unknown>[]> {

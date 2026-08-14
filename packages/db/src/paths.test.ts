@@ -2,13 +2,25 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STATE_DIR, resolveWorkspacePaths } from './paths.js';
 
+/**
+ * `path.resolve`, not `path.join`, on both sides.
+ *
+ * The function under test absolutises its root, so on Windows `/tmp/project`
+ * becomes `D:\\tmp\\project` while a `path.join` expectation stays
+ * `\\tmp\\project` — the drive letter is the whole difference and it is the
+ * production behaviour, not a defect. Building the expectation the same way the
+ * code does keeps the assertion about the *layout* rather than about which
+ * platform ran it.
+ */
+const expected = (...segments: string[]): string => path.resolve('/tmp/project', ...segments);
+
 describe('workspace paths', () => {
   it('places machine state under the hidden state directory', () => {
     const paths = resolveWorkspacePaths('/tmp/project');
-    expect(paths.stateDir).toBe(path.join('/tmp/project', DEFAULT_STATE_DIR));
-    expect(paths.dataDir).toBe(path.join('/tmp/project', DEFAULT_STATE_DIR, 'db'));
-    expect(paths.lockDir).toBe(path.join('/tmp/project', DEFAULT_STATE_DIR, 'locks'));
-    expect(paths.logDir).toBe(path.join('/tmp/project', DEFAULT_STATE_DIR, 'logs'));
+    expect(paths.stateDir).toBe(expected(DEFAULT_STATE_DIR));
+    expect(paths.dataDir).toBe(expected(DEFAULT_STATE_DIR, 'db'));
+    expect(paths.lockDir).toBe(expected(DEFAULT_STATE_DIR, 'locks'));
+    expect(paths.logDir).toBe(expected(DEFAULT_STATE_DIR, 'logs'));
   });
 
   it('absolutises a relative root', () => {
@@ -17,7 +29,7 @@ describe('workspace paths', () => {
 
   it('honours a custom state directory name', () => {
     const paths = resolveWorkspacePaths('/tmp/project', '.custom');
-    expect(paths.dataDir).toBe(path.join('/tmp/project', '.custom', 'db'));
+    expect(paths.dataDir).toBe(expected('.custom', 'db'));
   });
 
   it('creates nothing — resolution is pure', async () => {

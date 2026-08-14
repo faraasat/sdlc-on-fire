@@ -7,6 +7,7 @@ import {
   formatReview,
   hasConflictMarkers,
   parseConflicts,
+  splitLines,
   resolutionVerified,
   reviewResolution,
   type ConflictHunk,
@@ -134,7 +135,10 @@ export function checkResolution(
   head: { git_sha: string; dirty_tree_hash?: string | undefined },
 ): CheckResult {
   const hunks = parseConflicts(original);
-  const resolvedLines = resolved.split('\n');
+  // The same splitter the hunks were parsed with. Two different splitters over
+  // a CRLF file produce lines that never compare equal, and every hunk would
+  // classify as a rewrite.
+  const resolvedLines = splitLines(resolved);
 
   // Each hunk is classified against the whole resolved file. Segmenting it per
   // hunk would need an alignment the resolution may legitimately have destroyed

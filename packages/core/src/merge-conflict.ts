@@ -62,12 +62,24 @@ export interface ConflictHunk {
   readonly theirs: readonly string[];
 }
 
+/**
+ * Splits a file into lines, on either line ending.
+ *
+ * `split('\n')` leaves a trailing `\r` on every line of a CRLF file, and the
+ * divider test is an equality — `'=======\r' === '======='` is false. The
+ * effect on Windows was not a crash: `<<<<<<<` still matched by prefix, so
+ * every hunk parsed, the divider was never seen, and *the entire conflict
+ * body was reported as "ours" with an empty "theirs"*. A reviewer would have
+ * been shown one side of a two-sided disagreement and told that was all of it.
+ */
+export function splitLines(content: string): string[] {
+  return content.split(/\r?\n/);
+}
+
 export function hasConflictMarkers(content: string): boolean {
-  return content
-    .split('\n')
-    .some(
-      (line) => line.startsWith(CONFLICT_MARKERS.ours) || line.startsWith(CONFLICT_MARKERS.theirs),
-    );
+  return splitLines(content).some(
+    (line) => line.startsWith(CONFLICT_MARKERS.ours) || line.startsWith(CONFLICT_MARKERS.theirs),
+  );
 }
 
 /**
@@ -80,7 +92,7 @@ export function hasConflictMarkers(content: string): boolean {
  * reports conflicts in files that have none.
  */
 export function parseConflicts(content: string): ConflictHunk[] {
-  const lines = content.split('\n');
+  const lines = splitLines(content);
   const hunks: ConflictHunk[] = [];
 
   let index = 0;
@@ -263,15 +275,13 @@ export function reviewResolution(
   const kinds: ResolutionKind[] = [];
   const byHunk = new Map(declared.map((entry) => [entry.hunk, entry]));
 
-  const context = originalContent
-    .split('\n')
-    .filter(
-      (line) =>
-        !line.startsWith(CONFLICT_MARKERS.ours) &&
-        !line.startsWith(CONFLICT_MARKERS.theirs) &&
-        !line.startsWith(CONFLICT_MARKERS.base) &&
-        line !== CONFLICT_MARKERS.divider,
-    );
+  const context = splitLines(originalContent).filter(
+    (line) =>
+      !line.startsWith(CONFLICT_MARKERS.ours) &&
+      !line.startsWith(CONFLICT_MARKERS.theirs) &&
+      !line.startsWith(CONFLICT_MARKERS.base) &&
+      line !== CONFLICT_MARKERS.divider,
+  );
 
   if (hasConflictMarkers(resolvedContent)) {
     findings.push({

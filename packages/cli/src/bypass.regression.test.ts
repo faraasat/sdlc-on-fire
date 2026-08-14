@@ -132,7 +132,13 @@ describe('bypass 2 — a verify command that runs nothing', () => {
 
     await writeCard('TASK-002', 'node empty-runner.js', 'done');
     const attested = await attestationOf('TASK-002');
-    expect(attested.attestation).toBe('unsupported');
+    // The report is in the message because the interesting failure is not
+    // "wrong attestation" but "the runner's output was never read" — those look
+    // identical from the attestation alone, and one is a platform problem.
+    expect(
+      attested.attestation,
+      `report=${verified.report} testsRun=${String(verified.testsRun)}`,
+    ).toBe('unsupported');
     expect(attested.concern).toMatch(/executed 0 tests/);
   }, 180_000);
 
@@ -432,7 +438,10 @@ describe('bypass 5 — a check that never ran anything (v007)', () => {
     await writeCard('TASK-401', 'node --test real.test.js', 'review');
 
     const verified = await verifyWorkItem(root, 'TASK-401');
-    expect(verified.report).toBe('parsed');
+    expect(
+      verified.report,
+      `testsRun=${String(verified.testsRun)} — 'exit-code-only' here means the runner ran and nothing could read what it printed`,
+    ).toBe('parsed');
     expect(verified.testsRun).toBeGreaterThan(0);
 
     const result = await advanceWorkItem(root, 'TASK-401');

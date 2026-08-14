@@ -6,6 +6,16 @@ import { applySchema, provisionPglite, type ProvisionedDatabase } from '@sdlc-on
 import { GENAI_SPANS, runSpans, TOKEN_USAGE_METRIC, tokenUsage } from './otel.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * OTel GenAI span adapter (P1-MET-01).
  *
  * The adapter's job is to be *thin* — a projection of what the DB already
@@ -36,7 +46,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.close();
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('run spans', () => {

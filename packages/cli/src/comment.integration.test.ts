@@ -8,6 +8,16 @@ import { commentsFor, directivesFor, postComment } from './comment.js';
 import { init, openWorkspaceDatabase } from './commands.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * P1-CMT-02 end to end, against a real PGlite.
  *
  * The immutability trigger is the piece that can only be tested here: it is a
@@ -51,7 +61,7 @@ beforeEach(async () => {
 }, 60_000);
 
 afterEach(async () => {
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('the effect is decided at insert', () => {

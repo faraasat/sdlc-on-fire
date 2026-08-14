@@ -4,6 +4,7 @@ import {
   evaluateTiers,
   extraTiers,
   formatTierReport,
+  relativePosix,
   REQUIRED_TIERS,
   tierOf,
   type TestTier,
@@ -48,10 +49,14 @@ export async function discoverTiers(root: string): Promise<TierInventory[]> {
         if (!SKIP.has(entry.name)) await walk(full);
         continue;
       }
-      const tier = tierOf(path.relative(root, full));
+      // The tier is decided by matching the path against suffix conventions
+      // (`.integration.test.ts`) and directory names, so it has to be the posix
+      // identity rather than whatever the local filesystem spells it as.
+      const relative = relativePosix(root, full);
+      const tier = tierOf(relative);
       if (tier === null) continue;
       const list = byTier.get(tier) ?? [];
-      list.push(path.relative(root, full));
+      list.push(relative);
       byTier.set(tier, list);
     }
   };

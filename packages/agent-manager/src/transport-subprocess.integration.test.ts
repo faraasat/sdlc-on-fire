@@ -6,6 +6,16 @@ import { claudeCodeTransport, dispatchSkill, OutputContractError } from './dispa
 import type { CanonicalSkill } from '@sdlc-on-fire/core';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * The transport, exercised through a real child process.
  *
  * Every other dispatch test injects a stub `AgentTransport`, which means the
@@ -21,12 +31,32 @@ import type { CanonicalSkill } from '@sdlc-on-fire/core';
 
 let dir: string;
 
-/** Writes an executable shim that behaves like `claude -p … --output-format json`. */
+/**
+ * Writes an executable shim that behaves like `claude -p … --output-format json`.
+ *
+ * A shebang plus `chmod +x` is how a posix system makes a script executable,
+ * and Windows has neither: `execFile` on a `.mjs` fails with `EFTYPE` before
+ * the transport gets to do anything, so all eight cases below reported a spawn
+ * error instead of what they were about. The shim is therefore the platform's
+ * own idea of an executable — a `.cmd` launcher that runs the same script
+ * through `node`. The production path is unchanged either way: the transport is
+ * still handed one path and still spawns it as a binary, which is what these
+ * tests exist to exercise.
+ */
 async function writeFakeCli(name: string, body: string): Promise<string> {
-  const file = path.join(dir, name);
-  await fs.writeFile(file, `#!/usr/bin/env node\n${body}\n`, 'utf8');
-  await fs.chmod(file, 0o755);
-  return file;
+  const script = path.join(dir, name);
+  await fs.writeFile(script, `#!/usr/bin/env node\n${body}\n`, 'utf8');
+
+  if (process.platform !== 'win32') {
+    await fs.chmod(script, 0o755);
+    return script;
+  }
+
+  // `%*` forwards the arguments; `@` keeps cmd.exe from echoing the line into
+  // the stdout these tests parse as JSON.
+  const launcher = path.join(dir, `${name}.cmd`);
+  await fs.writeFile(launcher, `@node "${script}" %*\r\n`, 'utf8');
+  return launcher;
 }
 
 /**
@@ -54,7 +84,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await fs.rm(dir, { recursive: true, force: true });
+  await fs.rm(dir, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('claudeCodeTransport over a real process', () => {

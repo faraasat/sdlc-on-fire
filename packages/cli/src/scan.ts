@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   EMPTY_ALLOWLIST,
   isAllowlistedPath,
+  joinPosix,
   isSecretPath,
   parseSecretAllowlist,
   scanForInjection,
@@ -109,7 +110,12 @@ async function* walk(root: string, relative = ''): AsyncGenerator<string> {
     .catch(() => []);
 
   for (const entry of entries) {
-    const next = relative === '' ? entry.name : path.join(relative, entry.name);
+    // `joinPosix`, not `path.join`: this value is matched against the globs in
+    // `.gitleaks.toml` and printed into every finding. Built with `path.join`
+    // it read `src\config.ts` on Windows, where no allowlist entry anyone wrote
+    // matches it — an exemption silently stopped applying, and each finding
+    // named a path that could not be pasted back into the config.
+    const next = joinPosix(relative, entry.name);
     if (entry.isDirectory()) {
       if (SKIP_DIRECTORIES.has(entry.name)) continue;
       yield* walk(root, next);

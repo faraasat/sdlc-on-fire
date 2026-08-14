@@ -32,6 +32,16 @@ import { init } from './commands.js';
 import { buildProgram } from './index.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * The v0.1 walking skeleton, end to end.
  *
  * Every other test in this repo proves one package works. This one proves they
@@ -76,7 +86,9 @@ beforeAll(async () => {
 afterAll(async () => {
   await sync?.stop().catch(() => undefined);
   await db?.close().catch(() => undefined);
-  await Promise.all(tempRoots.splice(0).map((d) => fs.rm(d, { recursive: true, force: true })));
+  await Promise.all(
+    tempRoots.splice(0).map((d) => fs.rm(d, { recursive: true, force: true, ...RM_RETRY })),
+  );
 });
 
 /** A test project the daemon can actually run `verify` against. */

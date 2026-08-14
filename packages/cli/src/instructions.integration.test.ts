@@ -6,6 +6,16 @@ import { init, instructions, findWorkItem, openWorkspaceDatabase } from './comma
 import { resolveWorkspaceLayout } from '@sdlc-on-fire/core';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * `sdlc instructions` (P0-CLI-02).
  *
  * The command's whole value is that the answer is *computed*, not suggested —
@@ -36,7 +46,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('finding the card', () => {
@@ -218,7 +228,7 @@ describe('init honours the config doc toggles (P0-CLI-03)', () => {
     const docs = await fs.readdir(path.join(fresh, 'docs'));
     expect(docs).toContain('TESTING.md');
     expect(docs).toContain('SCALING.md');
-    await fs.rm(fresh, { recursive: true, force: true });
+    await fs.rm(fresh, { recursive: true, force: true, ...RM_RETRY });
   });
 
   it('emits only the configured subset on a re-run', async () => {
@@ -242,7 +252,7 @@ describe('init honours the config doc toggles (P0-CLI-03)', () => {
       .filter((entry) => entry.endsWith('.md'))
       .sort();
     expect(docs).toEqual(['README.md', 'TESTING.md']);
-    await fs.rm(scaled, { recursive: true, force: true });
+    await fs.rm(scaled, { recursive: true, force: true, ...RM_RETRY });
   });
 });
 
@@ -265,6 +275,6 @@ describe('choosing a database mode (P0-DB-02)', () => {
   it('refuses to run before init rather than scaffolding silently', async () => {
     const empty = await fs.mkdtemp(path.join(os.tmpdir(), 'no-init-'));
     await expect(openWorkspaceDatabase(empty)).rejects.toThrow(/run `sdlc init` first/);
-    await fs.rm(empty, { recursive: true, force: true });
+    await fs.rm(empty, { recursive: true, force: true, ...RM_RETRY });
   });
 });

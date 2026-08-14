@@ -59,8 +59,10 @@ export async function runGuarded(
     const child = spawn(cmd, [...args], {
       cwd: options.cwd,
       ...(options.env === undefined ? {} : { env: { ...options.env } }),
-      // Its own process group, so a kill reaches the whole tree.
-      detached: true,
+      // Its own process group, so a kill reaches the whole tree. Windows has no
+      // process groups and `detached` there means "new console window" — see
+      // `killGroup` for how the tree is reached instead.
+      detached: platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -69,10 +71,38 @@ export async function runGuarded(
     let outcome: LimitOutcome = 'completed';
     let settled = false;
 
-    /** Signals the whole group. The negative pid is what makes it a group. */
+    /**
+     * Kills the command and everything it started.
+     *
+     * On posix the negative pid is what makes it a group, which is why the
+     * child was spawned `detached`.
+     *
+     * Windows has neither. `process.kill(-pid)` there throws — and this
+     * function used to swallow that throw, so on the platform ADR-0072 calls
+     * first-class the watchdog **reported a timeout and killed nothing**: the
+     * promise resolved with `outcome: 'timeout'` while `pnpm test` and every
+     * worker it spawned kept running, orphaned, for as long as they liked. A
+     * watchdog that reports having stopped something it did not stop is worse
+     * than no watchdog, because the report is believed.
+     *
+     * `taskkill /T /F` is the platform's equivalent — `/T` for the tree, `/F`
+     * because the escalation the caller asked for is a hard kill. Signals do
+     * not exist on Windows, so SIGTERM and SIGKILL both arrive here as the
+     * same forced termination; the two-stage escalation is a posix nicety, not
+     * a correctness requirement.
+     */
     const killGroup = (signal: NodeJS.Signals): void => {
+      if (child.pid === undefined) return;
       try {
-        if (child.pid !== undefined) process.kill(-child.pid, signal);
+        if (platform === 'win32') {
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+            stdio: 'ignore',
+          }).on('error', () => {
+            // taskkill missing is not something this run can act on.
+          });
+          return;
+        }
+        process.kill(-child.pid, signal);
       } catch {
         // Already gone, or the group was never created. Either way there is
         // nothing left to kill and nothing to report.

@@ -31,9 +31,22 @@ function readFromTarball(tarball, member) {
   });
 }
 
+/**
+ * The member paths inside a tarball, as posix strings.
+ *
+ * A tar archive stores `package/dist/index.js` and only ever that — the
+ * separator is part of the format. What varies is the *listing*: bsdtar on
+ * Windows prints the paths back with backslashes and CRLF line endings, so
+ * every `entries.includes('package/dist/index.js')` below answered `false` and
+ * the release gate reported a healthy package as missing its own entry points.
+ * On a Windows release host that is not a false alarm to shrug at — it is a
+ * gate that refuses every artifact, which is the failure mode that gets a gate
+ * switched off.
+ */
 function listTarball(tarball) {
   return execFileSync('tar', ['-tzf', tarball], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
-    .split('\n')
+    .split(/\r?\n/)
+    .map((entry) => entry.trim().replace(/\\/g, '/'))
     .filter(Boolean);
 }
 

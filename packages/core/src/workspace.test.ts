@@ -30,14 +30,17 @@ describe('gitignore', () => {
   });
 });
 
+/** Built the way the code builds it — see `packages/db/src/paths.test.ts`. */
+const expected = (...segments: string[]): string => path.resolve('/tmp/project', ...segments);
+
 describe('layout resolution', () => {
   it('resolves the default tree', () => {
     const layout = resolveWorkspaceLayout('/tmp/project');
-    expect(layout.kanbanDir).toBe('/tmp/project/kanban');
-    expect(layout.docsDir).toBe('/tmp/project/docs');
-    expect(layout.stateDir).toBe(path.join('/tmp/project', DEFAULT_STATE_DIR));
-    expect(layout.dataDir).toBe(path.join('/tmp/project', DEFAULT_STATE_DIR, 'db'));
-    expect(layout.configPath).toBe(path.join('/tmp/project', DEFAULT_STATE_DIR, 'config.yaml'));
+    expect(layout.kanbanDir).toBe(expected('kanban'));
+    expect(layout.docsDir).toBe(expected('docs'));
+    expect(layout.stateDir).toBe(expected(DEFAULT_STATE_DIR));
+    expect(layout.dataDir).toBe(expected(DEFAULT_STATE_DIR, 'db'));
+    expect(layout.configPath).toBe(expected(DEFAULT_STATE_DIR, 'config.yaml'));
   });
 
   it('honours path overrides', () => {
@@ -46,9 +49,9 @@ describe('layout resolution', () => {
       docs: 'documentation',
       state_dir: '.state',
     });
-    expect(layout.kanbanDir).toBe('/tmp/project/board');
-    expect(layout.docsDir).toBe('/tmp/project/documentation');
-    expect(layout.dataDir).toBe('/tmp/project/.state/db');
+    expect(layout.kanbanDir).toBe(expected('board'));
+    expect(layout.docsDir).toBe(expected('documentation'));
+    expect(layout.dataDir).toBe(expected('.state', 'db'));
   });
 
   it('absolutises a relative root', () => {

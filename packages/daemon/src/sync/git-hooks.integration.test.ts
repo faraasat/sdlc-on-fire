@@ -13,6 +13,16 @@ import {
 import { installGitHooks, syncChangedPaths, SYNC_HOOKS } from './git-hooks.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * Git-hook batch re-sync (P0-SYNC-02), against a real git repository.
  *
  * The watcher cannot be trusted to see a merge or a branch switch, so the whole
@@ -45,7 +55,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.close();
-  await fs.rm(root, { recursive: true, force: true });
+  await fs.rm(root, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('installing the hooks', () => {
@@ -56,9 +66,16 @@ describe('installing the hooks', () => {
     for (const hook of SYNC_HOOKS) {
       const file = path.join(root, '.git', 'hooks', hook);
       const stat = await fs.stat(file);
+      expect(stat.isFile()).toBe(true);
       // Git silently ignores a hook that is not executable — a hook installed
       // without the bit set is worse than none, because it looks installed.
-      expect(stat.mode & 0o111).toBeGreaterThan(0);
+      //
+      // NTFS has no execute bit, so `mode & 0o111` is 0 for every file on
+      // Windows and asserting otherwise would be asserting the filesystem's
+      // shape rather than ours. Git for Windows runs hooks through its bundled
+      // `sh` on the strength of the shebang instead, which the case above
+      // covers — so what is skipped here is the check, not the guarantee.
+      if (process.platform !== 'win32') expect(stat.mode & 0o111).toBeGreaterThan(0);
     }
   });
 
@@ -88,6 +105,10 @@ describe('installing the hooks', () => {
 });
 
 describe('batch syncing what git reports', () => {
+  // Timeouts are generous rather than default throughout this file: every case
+  // shells out to git several times, and on a Windows runner each of those
+  // spawns costs an order of magnitude more than it does on Linux. A 5s default
+  // was failing on wall-clock, not on behaviour.
   it('mirrors the paths a commit touched', async () => {
     const relative = 'kanban/_inbox/TASK-100.md';
     await fs.writeFile(path.join(root, relative), card('TASK-100', 'From a commit'), 'utf8');

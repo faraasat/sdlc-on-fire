@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { INITIATIVE_FILES, resolveWorkspaceLayout } from '@sdlc-on-fire/core';
+import { INITIATIVE_FILES, relativePosix, resolveWorkspaceLayout } from '@sdlc-on-fire/core';
 import {
   checkDiagram,
   checkDocHealth,
@@ -66,15 +66,15 @@ export async function createInitiative(
     const contents = template.replace('{title}', input.title);
     try {
       await fs.writeFile(file, contents, { flag: 'wx' });
-      created.push(path.relative(layout.root, file));
+      created.push(relativePosix(layout.root, file));
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code === 'EEXIST') {
-        skipped.push(path.relative(layout.root, file));
+        skipped.push(relativePosix(layout.root, file));
       } else throw cause;
     }
   }
 
-  return { dir: path.relative(layout.root, dir), created, skipped };
+  return { dir: relativePosix(layout.root, dir), created, skipped };
 }
 
 export interface DocHealthResult {
@@ -93,8 +93,11 @@ export async function docHealth(root: string): Promise<DocHealthResult> {
         path: doc.path,
         links: (doc.links ?? [])
           .filter((link) => link.resolves)
+          // Compared against the other nodes' `path`, so it must be spelled the
+          // same way they are — a native-separator edge points at no node and
+          // every doc reads as an orphan.
           .map((link) =>
-            path.relative(
+            relativePosix(
               layout.root,
               path.resolve(path.dirname(path.join(layout.root, doc.path)), link.target),
             ),

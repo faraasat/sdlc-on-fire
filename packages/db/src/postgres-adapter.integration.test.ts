@@ -7,6 +7,16 @@ import { provisionPglite, type ProvisionedDatabase } from './pglite.js';
 import { PostgresStorageAdapter, probeStorageCapabilities } from './postgres-adapter.js';
 
 /**
+ * Teardown retries, because Windows keeps a file locked while anything holds it.
+ *
+ * A child process that has just exited can still own its handles for a moment,
+ * and removing the directory then fails with EBUSY — which Vitest reports as a
+ * failed suite even though every assertion in it passed. Retrying is the
+ * documented remedy, and is a no-op on platforms without the problem.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+
+/**
  * The Postgres adapter behind `StoragePort` (ADR-0047, P0-DB-07).
  *
  * Run against a real PGlite: the adapter's whole job is to be the one place
@@ -26,7 +36,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.close();
-  await fs.rm(workspace, { recursive: true, force: true });
+  await fs.rm(workspace, { recursive: true, force: true, ...RM_RETRY });
 });
 
 describe('capability probe', () => {
@@ -55,7 +65,7 @@ describe('capability probe', () => {
     await expect(degraded.searchChunks('anything', 5)).resolves.toEqual([]);
 
     await other.close();
-    await fs.rm(bare, { recursive: true, force: true });
+    await fs.rm(bare, { recursive: true, force: true, ...RM_RETRY });
   }, 120_000);
 });
 

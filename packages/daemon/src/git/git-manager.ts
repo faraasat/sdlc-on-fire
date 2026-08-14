@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { toPosixPath } from '@sdlc-on-fire/core';
 import { simpleGit, type SimpleGit } from 'simple-git';
 import {
   classifyChanges,
@@ -157,7 +158,12 @@ export function parseWorktreePorcelain(output: string): Worktree[] {
   const flush = (): void => {
     if (current?.path !== undefined) {
       worktrees.push({
-        path: current.path,
+        // Posix, and said out loud rather than left to git. Git already reports
+        // `C:/Users/…` on Windows while a caller's own `path.join` produces
+        // `C:\\Users\\…`, so the two never compare equal and the main worktree
+        // reads as absent from its own list. Normalising here makes the shape a
+        // property of this function instead of a property of the platform.
+        path: toPosixPath(current.path),
         head: current.head ?? '',
         branch: current.branch,
       });

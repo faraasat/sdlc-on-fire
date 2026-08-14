@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { EvidenceEnvelopeSchema, resolveWorkspaceLayout } from '@sdlc-on-fire/core';
+import { EvidenceEnvelopeSchema, relativePosix, resolveWorkspaceLayout } from '@sdlc-on-fire/core';
 import { chunkMarkdown } from '@sdlc-on-fire/context';
 import { applySchema, PostgresStorageAdapter } from '@sdlc-on-fire/db';
 import { createGitManager } from '@sdlc-on-fire/daemon';
@@ -59,7 +59,9 @@ export async function citableChunks(root: string, cardPath: string): Promise<Cit
   for (const source of [...sources].sort()) {
     const text = await fs.readFile(source, 'utf8').catch(() => null);
     if (text === null) continue;
-    const relative = path.relative(layout.root, source);
+    // Chunk ids are `<path>#<index>` and are quoted back by the agent, matched
+    // against the retriever's ids, and stored. That makes them identities.
+    const relative = relativePosix(layout.root, source);
     for (const chunk of chunkMarkdown(text)) {
       chunks.push({ id: `${relative}#${String(chunk.index)}`, text: chunk.text });
     }
@@ -125,7 +127,7 @@ export async function verifyWorkItemClaims(
       title: typeof data['title'] === 'string' ? data['title'] : id,
       status: typeof data['status'] === 'string' ? data['status'] : 'In Progress',
       lifecycleState: typeof data['lifecycle_state'] === 'string' ? data['lifecycle_state'] : '',
-      filePath: path.relative(layout.root, found.filePath),
+      filePath: relativePosix(layout.root, found.filePath),
       contentHash: 'pending',
     });
 
