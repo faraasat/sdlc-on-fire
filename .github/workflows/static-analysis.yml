@@ -33,6 +33,13 @@ jobs:
   codeql:
     name: CodeQL
     runs-on: ubuntu-latest
+    # Uploading SARIF to the Security tab needs code scanning, which is free on
+    # public repositories and requires GitHub Advanced Security on private
+    # ones. On this repository today the analysis runs to completion and then
+    # fails on upload with "Code scanning is not enabled" — a clean scan
+    # reported as a broken job, which is how a red CI stops meaning anything.
+    # Lights up on its own the moment the repository is public.
+    if: github.event.repository.visibility == 'public'
     permissions:
       contents: read
       # Findings go to the Security tab, where they persist and can be triaged,
@@ -65,6 +72,13 @@ jobs:
   semgrep:
     name: Semgrep
     runs-on: ubuntu-latest
+    # Uploading SARIF to the Security tab needs code scanning, which is free on
+    # public repositories and requires GitHub Advanced Security on private
+    # ones. On this repository today the analysis runs to completion and then
+    # fails on upload with "Code scanning is not enabled" — a clean scan
+    # reported as a broken job, which is how a red CI stops meaning anything.
+    # Lights up on its own the moment the repository is public.
+    if: github.event.repository.visibility == 'public'
     permissions:
       contents: read
       security-events: write
@@ -89,8 +103,9 @@ jobs:
   dependency-review:
     name: Dependency review
     # PRs only: it compares the base to the head, and on a push to `main` there
-    # is nothing to compare against.
-    if: github.event_name == 'pull_request'
+    # is nothing to compare against. Also public-only — the dependency-review
+    # API is part of the same code-scanning feature set (see the CodeQL job).
+    if: github.event_name == 'pull_request' && github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
     permissions:
       contents: read
