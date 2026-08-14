@@ -283,12 +283,45 @@ function unwrapCliEnvelope(stdout: string): { text: string; failed: boolean; rea
  * reference (code.claude.com/docs/en/cli-reference) and against the real binary
  * (v2.1.226) on 2026-08-10.
  */
+/**
+ * How to spawn a binary that Windows will not spawn directly.
+ *
+ * npm installs a CLI's bin as a `.cmd` shim on Windows, so the `claude` on a
+ * Windows PATH *is* `claude.cmd` — and since the CVE-2024-27980 fix, Node
+ * refuses to spawn `.cmd`/`.bat` without a shell and throws `EINVAL`. So this
+ * transport could not invoke the Claude CLI on Windows at all: not a degraded
+ * result, an immediate spawn error on every dispatch.
+ *
+ * The fix routes those two extensions through `cmd.exe /d /s /c`, which is what
+ * Node's own `shell: true` does — but named here rather than switched on
+ * globally, because `shell: true` would hand the *prompt* to a command
+ * interpreter. The prompt is rendered skill text; it contains quotes,
+ * ampersands and newlines as a matter of course, and letting `cmd.exe` parse
+ * them is a quoting bug at best. Everything else is spawned directly, exactly
+ * as before.
+ *
+ * `/d` skips AutoRun registry commands, matching the reasoning in
+ * `sandbox/exec.ts`: a machine-local script silently prepended to every
+ * invocation would put a command nobody declared inside the dispatch.
+ */
+export function windowsSpawn(
+  binary: string,
+  args: readonly string[],
+  platform: string = process.platform,
+): { file: string; args: string[] } {
+  const shimmed = platform === 'win32' && /\.(cmd|bat)$/i.test(binary);
+  return shimmed
+    ? { file: process.env['ComSpec'] ?? 'cmd.exe', args: ['/d', '/s', '/c', binary, ...args] }
+    : { file: binary, args: [...args] };
+}
+
 export function claudeCodeTransport(binary = 'claude'): AgentTransport {
   return ({ prompt, cwd, timeoutMs }) =>
     new Promise((resolve) => {
+      const spawnAs = windowsSpawn(binary, ['-p', prompt, '--output-format', 'json']);
       const child = execFile(
-        binary,
-        ['-p', prompt, '--output-format', 'json'],
+        spawnAs.file,
+        spawnAs.args,
         { cwd, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
         (error, stdout, stderr) => {
           const unwrapped = unwrapCliEnvelope(stdout);

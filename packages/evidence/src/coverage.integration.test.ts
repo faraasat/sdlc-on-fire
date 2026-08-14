@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseCoverage, parseIstanbulSummary, parseLcov } from './coverage.js';
@@ -91,8 +92,16 @@ async function coveredProject(): Promise<{ lcov: string; summary: string }> {
     'utf8',
   );
 
-  const vitestBin = path.join(process.cwd(), 'node_modules', '.bin', 'vitest');
-  await run(vitestBin, ['run', '--coverage'], { cwd: root, timeout: 120_000 });
+  // Vitest's own entry through `node`, not the `node_modules/.bin` shim. On
+  // Windows pnpm writes that shim as `vitest.CMD` plus an extensionless shell
+  // script, so spawning the path directly is either ENOENT or — since the
+  // CVE-2024-27980 fix — EINVAL for the `.CMD`. Resolving the package's `bin`
+  // entry is what the shim would have run anyway, and it is the same file on
+  // every platform.
+  const require_ = createRequire(import.meta.url);
+  const manifest = require_.resolve('vitest/package.json');
+  const bin = path.join(path.dirname(manifest), 'vitest.mjs');
+  await run(process.execPath, [bin, 'run', '--coverage'], { cwd: root, timeout: 120_000 });
 
   return {
     lcov: await fs.readFile(path.join(root, 'coverage', 'lcov.info'), 'utf8'),

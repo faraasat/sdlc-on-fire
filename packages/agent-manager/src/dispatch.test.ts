@@ -5,6 +5,7 @@ import {
   extractToolOutput,
   FORBIDDEN_OUTPUT_FIELDS,
   OutputContractError,
+  windowsSpawn,
   type AgentTransport,
 } from './dispatch.js';
 import { IMPLEMENT_SKILL } from './skills/canonical.js';
@@ -168,5 +169,34 @@ describe('recursion depth at the spawn point (P1-AGENT-07)', () => {
 
   it('treats an unstated depth as a human-initiated spawn', async () => {
     await expect(dispatchSkill(request, transport)).resolves.toBeDefined();
+  });
+});
+
+describe('windowsSpawn (P2-QA-08)', () => {
+  it('routes a .cmd shim through cmd.exe, because Node will not spawn one', () => {
+    // npm installs a CLI's bin as `claude.cmd` on Windows, and since the
+    // CVE-2024-27980 fix Node throws EINVAL rather than running it. Without
+    // this the transport could not invoke the Claude CLI on Windows at all.
+    const spawnAs = windowsSpawn('C:\\bin\\claude.cmd', ['-p', 'hi'], 'win32');
+    expect(spawnAs.file.toLowerCase()).toContain('cmd');
+    expect(spawnAs.args).toEqual(['/d', '/s', '/c', 'C:\\bin\\claude.cmd', '-p', 'hi']);
+  });
+
+  it('skips AutoRun, so nothing machine-local joins the invocation', () => {
+    expect(windowsSpawn('x.cmd', [], 'win32').args[0]).toBe('/d');
+  });
+
+  it('spawns anything else directly, on every platform', () => {
+    // `shell: true` would fix the shim and hand the *prompt* to a command
+    // interpreter — and a rendered prompt contains quotes, ampersands and
+    // newlines as a matter of course.
+    expect(windowsSpawn('claude', ['-p', 'a & b'], 'win32')).toEqual({
+      file: 'claude',
+      args: ['-p', 'a & b'],
+    });
+    expect(windowsSpawn('/usr/bin/claude.cmd', ['-p'], 'linux')).toEqual({
+      file: '/usr/bin/claude.cmd',
+      args: ['-p'],
+    });
   });
 });
