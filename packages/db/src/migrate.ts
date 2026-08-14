@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_ROLE_PERMISSIONS,
+  dispatchTable,
   isTerminalStage,
   LIFECYCLE_STAGES,
   PERMISSION_KEYS,
@@ -220,6 +221,37 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      BEFORE UPDATE ON comments FOR EACH ROW
      EXECUTE FUNCTION comments_role_effect_immutable();`,
 
+  // ── The comment dispatch, as a table (P3-RBAC-02, ADR-0012) ───────────────
+  //
+  // The `(comment_type × author_role) → role_effect` mapping was already data
+  // rather than an `if` chain, but it was data in TypeScript — which means the
+  // rule an auditor can read and the rule the insert applies were the same
+  // thing only as long as one process was doing both. ADR-0012 calls this a
+  // lookup table; here it is one, seeded from `core`'s dispatch and *read* at
+  // insert, so the row is load-bearing rather than a copy nobody consults.
+  //
+  // `role_key` is NULL for the unroled case, and the uniqueness has to treat
+  // NULLs as equal or the total table can hold two answers for the same
+  // question — hence NULLS NOT DISTINCT rather than a sentinel string.
+  `CREATE TABLE IF NOT EXISTS comment_role_effects (
+     comment_type TEXT NOT NULL,
+     role_key     TEXT REFERENCES roles(key),
+     role_effect  TEXT NOT NULL,
+     UNIQUE NULLS NOT DISTINCT (comment_type, role_key)
+   );`,
+  // Immutable in the same sense `comments.role_effect` is. An UPDATE here would
+  // silently re-point every future insert, which is the injection vector moved
+  // one table over.
+  `CREATE OR REPLACE FUNCTION comment_role_effects_immutable() RETURNS trigger AS $$
+     BEGIN
+       RAISE EXCEPTION 'comment_role_effects is seeded, not edited (ADR-0012) — change the dispatch in core and re-seed';
+     END;
+   $$ LANGUAGE plpgsql;`,
+  'DROP TRIGGER IF EXISTS comment_role_effects_immutable_trg ON comment_role_effects;',
+  `CREATE TRIGGER comment_role_effects_immutable_trg
+     BEFORE UPDATE ON comment_role_effects FOR EACH ROW
+     EXECUTE FUNCTION comment_role_effects_immutable();`,
+
   // ── Traceability graph (P1-GATE-08, ADR-0032) ─────────────────────────────
   //
   // The Evidence Engine already produces every fact an edge needs — test
@@ -372,6 +404,27 @@ export async function seedRoles(db: SqlRunner): Promise<void> {
 }
 
 /**
+ * Seeds the comment dispatch (P3-RBAC-02, ADR-0012).
+ *
+ * Total by construction: every `(type × role)` pair including the unroled one,
+ * taken straight from `core`'s `dispatchTable()`. Totality is the property that
+ * matters — a missing row makes `postComment` refuse, and a dispatch with holes
+ * in it would turn "we have not decided about this combination" into an outage
+ * on a Tuesday rather than a decision anybody made.
+ *
+ * Runs after {@link seedRoles}, because `role_key` references `roles.key`.
+ */
+export async function seedCommentDispatch(db: SqlRunner): Promise<void> {
+  for (const row of dispatchTable()) {
+    await db.query(
+      `INSERT INTO comment_role_effects (comment_type, role_key, role_effect)
+       VALUES ($1, $2, $3) ON CONFLICT (comment_type, role_key) DO NOTHING;`,
+      [row.type, row.role, row.effect],
+    );
+  }
+}
+
+/**
  * Ledger of applied migrations.
  *
  * drizzle-kit emits bare `CREATE TABLE`, so replaying a migration fails rather
@@ -424,4 +477,5 @@ export async function applySchema(db: SqlRunner): Promise<void> {
 
   await seedLifecycleStates(db);
   await seedRoles(db);
+  await seedCommentDispatch(db);
 }

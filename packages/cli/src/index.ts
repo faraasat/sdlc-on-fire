@@ -1112,7 +1112,7 @@ export function buildProgram(): Command {
       'normal | agent-instruction | decision | blocker | bug-report | review | context-reference',
       'normal',
     )
-    .option('--role <role>', "the author's role, when the workspace has roles")
+    .option('--role <role>', "the author's role — must be one you actually hold (ADR-0012)")
     .option('--to <agent>', 'narrow an instruction to one agent or role')
     .option('--json', 'emit JSON')
     .action(
@@ -1129,7 +1129,8 @@ export function buildProgram(): Command {
         });
         emit(result, options.json === true, (r: typeof result) =>
           [
-            `${r.workItemId}: #${String(r.id)} recorded as ${r.type} → ${r.roleEffect}`,
+            `${r.workItemId}: #${String(r.id)} recorded as ${r.type}` +
+              `${r.authorRole === null ? '' : ` by a ${r.authorRole}`} → ${r.roleEffect}`,
             r.steers
               ? '  This will reach the next context pack — not the run in flight (ADR-0016).'
               : '  This changes nothing about what agents see; the effect says so, not the wording.',

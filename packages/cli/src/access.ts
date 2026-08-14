@@ -11,6 +11,7 @@ import {
   type CapabilityVerdict,
   type RoleKey,
 } from '@sdlc-on-fire/core';
+import { applySchema } from '@sdlc-on-fire/db';
 import { openWorkspaceDatabase } from './commands.js';
 
 /**
@@ -37,6 +38,12 @@ interface Db {
 async function withDb<T>(root: string, fn: (db: Db) => Promise<T>): Promise<T> {
   const { db } = await openWorkspaceDatabase(root);
   try {
+    // Applied here, not assumed. `sdlc init` provisions the schema, but it is
+    // allowed to fail without failing the init — the scaffold on disk is still
+    // valid — so a workspace can reach this command with an empty database, and
+    // "relation actors does not exist" is not an answer to "who am I".
+    // Idempotent, and it is what re-seeds the policy rows.
+    await applySchema(db);
     return await fn(db);
   } finally {
     await db.close();
@@ -352,4 +359,55 @@ export function formatAccessCheck(result: CheckResult): string {
     },
     result.verdict,
   );
+}
+
+export interface ResolvedAuthor {
+  readonly actorId: string;
+  readonly roleKey: string;
+}
+
+/**
+ * The actor behind a claimed role, or a refusal (P3-RBAC-02).
+ *
+ * `sdlc comment --role security` decides what the comment *does*, so taking the
+ * flag at face value would let anybody who can post a comment grant themselves
+ * a gate block. The role has to be one this actor actually holds, and holds
+ * now — an expired membership is refused with the reason, because "you never
+ * had this" would send somebody to the wrong place.
+ */
+export async function resolveAuthor(
+  db: Db,
+  root: string,
+  role: string,
+  now = new Date().toISOString(),
+): Promise<ResolvedAuthor> {
+  const email = await exec('git', ['config', 'user.email'], { cwd: root })
+    .then((result) => result.stdout.trim())
+    .catch(() => '');
+
+  const actor = email === '' ? null : await findActor(db, email);
+  if (actor === null) {
+    throw new Error(
+      `--role ${role} needs an actor to hold it, and this workspace has none for ` +
+        `${email === '' ? 'you (git config user.email is unset)' : email} — ` +
+        'run `sdlc access whoami`, then `sdlc access grant`',
+    );
+  }
+
+  const held = actor.roles.find((entry) => entry.key === role);
+  if (held === undefined) {
+    throw new Error(
+      `${actor.displayName} does not hold "${role}" — the comment's effect is computed from the ` +
+        'role, so a self-asserted role would be a self-granted effect (ADR-0012). ' +
+        `\`sdlc access grant ${email} ${role}\` if that is the intent`,
+    );
+  }
+  if (held.expiresAt !== null && !(Date.parse(held.expiresAt) > Date.parse(now))) {
+    throw new Error(
+      `${actor.displayName}'s "${role}" membership expired ${held.expiresAt} — a lapsed grant is ` +
+        'not a grant (ADR-0035)',
+    );
+  }
+
+  return { actorId: actor.id, roleKey: role };
 }

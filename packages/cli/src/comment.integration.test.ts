@@ -4,7 +4,10 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { commentsFor, directivesFor, postComment } from './comment.js';
+import { dispatchTable } from '@sdlc-on-fire/core';
+import { applySchema } from '@sdlc-on-fire/db';
+import { grantRole, whoami } from './access.js';
+import { commentsFor, directivesFor, dispatchedEffect, postComment } from './comment.js';
 import { init, openWorkspaceDatabase } from './commands.js';
 
 /**
@@ -162,5 +165,117 @@ describe('what reaches the next pack', () => {
     });
     expect(await directivesFor(root, 'FEAT-001', { agent: 'review' })).toContain('error paths');
     expect(await directivesFor(root, 'FEAT-001', { agent: 'implement' })).toBeUndefined();
+  }, 60_000);
+});
+
+describe('the role has to be held, not claimed (P3-RBAC-02)', () => {
+  it('refuses a role the author does not hold', async () => {
+    // The whole reason this check exists: the effect is computed from the role,
+    // so a self-asserted role is a self-granted effect. Anybody who could post
+    // a comment could otherwise post `--role security --type blocker` and gate
+    // the card.
+    await whoami(root);
+    await expect(
+      postComment(root, 'FEAT-001', { type: 'blocker', body: 'stop', role: 'security' }),
+    ).rejects.toThrow(/does not hold/);
+  }, 60_000);
+
+  it('refuses before any actor exists at all', async () => {
+    await expect(
+      postComment(root, 'FEAT-001', { type: 'decision', body: 'ship it', role: 'pm' }),
+    ).rejects.toThrow(/sdlc access whoami/);
+  }, 60_000);
+
+  it('accepts a role the author actually holds, and records it', async () => {
+    await whoami(root);
+    await grantRole(root, 't@e.com', 'pm');
+    const posted = await postComment(root, 'FEAT-001', {
+      type: 'decision',
+      body: 'cut the export',
+      role: 'pm',
+    });
+    // `pm` was spelled `product-manager` in the dispatch until the vocabularies
+    // were unified — under the old spelling this row resolved to the unroled
+    // default and a PM's decision silently stopped being a rescope.
+    expect(posted.roleEffect).toBe('RESCOPE');
+    expect(posted.authorRole).toBe('pm');
+
+    const [read] = await commentsFor(root, 'FEAT-001');
+    expect(read?.authorRole).toBe('pm');
+  }, 60_000);
+
+  it('refuses a membership that has lapsed', async () => {
+    await whoami(root);
+    await grantRole(root, 't@e.com', 'pm', '2020-01-01T00:00:00Z');
+    await expect(
+      postComment(root, 'FEAT-001', { type: 'decision', body: 'x', role: 'pm' }),
+    ).rejects.toThrow(/expired/);
+  }, 60_000);
+
+  it('still posts unroled comments without any of this', async () => {
+    // The solo case stays the easy one. A workspace with no roles set up is the
+    // normal state, and the dispatch is total over it.
+    const posted = await postComment(root, 'FEAT-001', { type: 'blocker', body: 'wait' });
+    expect(posted.authorRole).toBeNull();
+    expect(posted.roleEffect).toBe('GATE_BLOCK');
+  }, 60_000);
+});
+
+describe('the dispatch is a table, and it is the one consulted (P3-RBAC-02)', () => {
+  it('holds every (type x role) pair core knows about', async () => {
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      const rows = await db.query<{
+        comment_type: string;
+        role_key: string | null;
+        role_effect: string;
+      }>('SELECT comment_type, role_key, role_effect FROM comment_role_effects;');
+      const seeded = new Map(
+        rows.map((row) => [`${row.comment_type} ${row.role_key ?? ''}`, row.role_effect]),
+      );
+      expect(seeded.size).toBe(dispatchTable().length);
+      for (const row of dispatchTable()) {
+        expect(
+          seeded.get(`${row.type} ${row.role ?? ''}`),
+          `${row.type} / ${String(row.role)}`,
+        ).toBe(row.effect);
+      }
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it('refuses to be edited', async () => {
+    // Not a policy, a trigger. An UPDATE here would silently re-point every
+    // future insert — the injection vector moved one table over.
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      await expect(
+        db.query(
+          `UPDATE comment_role_effects SET role_effect = 'GATE_BLOCK' WHERE comment_type = 'normal';`,
+        ),
+      ).rejects.toThrow(/seeded, not edited/);
+    } finally {
+      await db.close();
+    }
+  }, 60_000);
+
+  it('refuses when the rule is missing rather than picking one', async () => {
+    // A hole in the table means an unseeded database or a deleted rule, and
+    // defaulting would turn either into a silently different security decision.
+    // `postComment` cannot reach this state on its own — it re-applies the
+    // schema, which re-seeds — so the refusal is exercised where it lives.
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      await db.query(
+        `DELETE FROM comment_role_effects WHERE comment_type = 'blocker' AND role_key IS NULL;`,
+      );
+      await expect(dispatchedEffect(db, 'blocker', null)).rejects.toThrow(/unseeded database/);
+    } finally {
+      await db.close();
+    }
   }, 60_000);
 });
