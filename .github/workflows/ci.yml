@@ -40,11 +40,21 @@ jobs:
       # Lockfile-enforced install. Fails rather than updating the lockfile.
       - run: pnpm install --frozen-lockfile
 
+      # Order matters, and it is the same order `pnpm check` uses. Each step
+      # produces what the next one needs:
+      #   typecheck emits the .d.ts files the type-aware lint rules resolve
+      #     against — without them every cross-package type is `error` and lint
+      #     reports ~72 phantom problems on a clean checkout;
+      #   build emits the dist/ the built-binary tests actually execute —
+      #     without it those tests have no binary, and with a stale one they
+      #     pass against an artifact the current source no longer produces.
+      # Locally this ran green for months because both artifacts were lying
+      # around from a previous run.
       - run: pnpm run format:check
-      - run: pnpm run lint
       - run: pnpm run typecheck
-      - run: pnpm run test
+      - run: pnpm run lint
       - run: pnpm run build
+      - run: pnpm run test
 
       # The built CLI must actually execute. A duplicate shebang once made
       # dist/index.js a syntax error while 320 unit tests stayed green, because
