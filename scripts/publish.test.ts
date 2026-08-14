@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { distTagFor } from './publish.mjs';
+import { distTagFor, publishFlags } from './publish.mjs';
 
 /**
  * The dist-tag rule (P0-META-03).
@@ -26,5 +26,30 @@ describe('distTagFor', () => {
     // `1.0.0+build.5` is a stable release carrying build metadata. Treating the
     // `+` as prerelease would hide a real release behind the `next` tag.
     expect(distTagFor('1.0.0+build.5')).toBe('latest');
+  });
+});
+
+describe('publishFlags', () => {
+  it('attaches provenance in CI, where npm can mint an OIDC attestation', () => {
+    expect(publishFlags({ GITHUB_ACTIONS: 'true' }).provenance).toBe(true);
+    expect(publishFlags({ GITHUB_ACTIONS: 'true' }).flags).toContain('--provenance');
+  });
+
+  it('omits provenance outside CI rather than failing the publish', () => {
+    // `--provenance` does not degrade on a laptop, it fails the publish. That
+    // matters for exactly one release: the first, which cannot come from CI
+    // because Trusted Publishing is configured on a package that does not
+    // exist yet.
+    const { provenance, flags } = publishFlags({});
+    expect(provenance).toBe(false);
+    expect(flags).not.toContain('--provenance');
+  });
+
+  it('always publishes with public access', () => {
+    // Scoped packages default to restricted, which for a free account is a
+    // publish error rather than a private package.
+    expect(publishFlags({}).flags).toContain('--access');
+    expect(publishFlags({}).flags).toContain('public');
+    expect(publishFlags({ CI: 'true' }).flags).toContain('public');
   });
 });

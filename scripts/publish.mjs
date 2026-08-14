@@ -74,6 +74,30 @@ export function distTagFor(version) {
   return String(version).includes('-') ? 'next' : 'latest';
 }
 
+/**
+ * The npm publish flags for this environment.
+ *
+ * `--provenance` needs a CI runner npm can get an OIDC token from; on a laptop
+ * it does not degrade, it **fails the publish**. That matters for exactly one
+ * release: the first. Trusted Publishing is configured per package on npmjs.com
+ * and a package that does not exist yet has no settings page, so the first
+ * publish cannot come from CI — it comes from a maintainer's machine, where
+ * `--provenance` cannot work.
+ *
+ * So provenance is attached when the environment can actually produce it, and
+ * omitted with a printed warning when it cannot. The warning is the point: a
+ * release silently missing its attestation looks exactly like one that has it,
+ * and ADR-0033 wants provenance on every published artifact rather than on
+ * every artifact anyone remembered to check.
+ */
+export function publishFlags(env = process.env) {
+  const inCI = env['GITHUB_ACTIONS'] === 'true' || env['CI'] === 'true';
+  return {
+    provenance: inCI,
+    flags: inCI ? ['--provenance', '--access', 'public'] : ['--access', 'public'],
+  };
+}
+
 function main() {
   const cwd = process.cwd();
   const packages = publishablePackages(cwd);
@@ -116,12 +140,11 @@ function main() {
         continue;
       }
 
-      // `--provenance` signs the build with this workflow. Under Trusted
-      // Publishing the OIDC identity also authenticates, so no token is read.
       // `--tag` is always passed: omitting it means `latest`, which would serve
       // a prerelease to every plain `npm install`.
       const tag = distTagFor(pkg.version);
-      run('npm', ['publish', pkg.tarball, '--provenance', '--access', 'public', '--tag', tag], {
+      const { provenance, flags } = publishFlags();
+      run('npm', ['publish', pkg.tarball, ...flags, '--tag', tag], {
         stdio: ['ignore', 'inherit', 'inherit'],
       });
 
@@ -129,6 +152,13 @@ function main() {
       // package is actually on the registry — never in advance.
       process.stdout.write(`New tag: ${pkg.name}@${pkg.version}\n`);
       process.stdout.write(`  published to dist-tag "${tag}"\n`);
+      if (!provenance) {
+        process.stdout.write(
+          '  ⚠ published WITHOUT provenance — not running in CI, so npm cannot mint an\n' +
+            '    OIDC attestation. Expected for the first release only; every release\n' +
+            '    after Trusted Publishing is configured runs in CI and is signed.\n',
+        );
+      }
       published.push(pkg);
     }
   } finally {
