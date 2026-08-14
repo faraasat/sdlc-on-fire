@@ -4,3 +4,4 @@ export declare function publishFlags(env?: Record<string, string | undefined>): 
   provenance: boolean;
   flags: string[];
 };
+export declare function publishStdio(dryRun: boolean): ('inherit' | 'ignore')[];

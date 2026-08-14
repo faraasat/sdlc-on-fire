@@ -98,6 +98,26 @@ export function publishFlags(env = process.env) {
   };
 }
 
+/**
+ * How `npm publish`'s streams are wired.
+ *
+ * **stdin must be inherited on a real publish.** An account with 2FA on
+ * publishing gets `EOTP` and npm offers to complete the flow interactively — a
+ * one-time password prompt, or a browser round-trip it waits on. With stdin
+ * ignored npm cannot ask, so the publish dies on the first package with an
+ * error that reads like a configuration problem and is actually a closed
+ * channel. Found the hard way: `--dry-run` needs no OTP and passed cleanly,
+ * then the real run failed on package one of nine.
+ *
+ * The rehearsal suppresses stdout because it prints a full tarball manifest
+ * nine times over, burying the one line per package that matters. The real run
+ * inherits everything. Stderr is inherited in both — a failure is never the
+ * quiet one.
+ */
+export function publishStdio(dryRun) {
+  return dryRun ? ['ignore', 'ignore', 'inherit'] : ['inherit', 'inherit', 'inherit'];
+}
+
 function main() {
   const cwd = process.cwd();
   // `--dry-run` rehearses the whole release: packs, verifies, and asks npm to
@@ -157,13 +177,7 @@ function main() {
       const publishArgs = dryRun
         ? ['publish', pkg.tarball, '--access', 'public', '--tag', tag, '--dry-run']
         : ['publish', pkg.tarball, ...flags, '--tag', tag];
-      // A real publish shows everything npm says; the rehearsal drops stdout
-      // because it prints the full tarball manifest nine times over, which
-      // buries the one line per package that actually matters. Stderr is
-      // inherited either way — a failure is never the quiet one.
-      run('npm', publishArgs, {
-        stdio: dryRun ? ['ignore', 'ignore', 'inherit'] : ['ignore', 'inherit', 'inherit'],
-      });
+      run('npm', publishArgs, { stdio: publishStdio(dryRun) });
 
       if (dryRun) {
         process.stdout.write(`✓ ${pkg.name}@${pkg.version} would publish to "${tag}"\n`);

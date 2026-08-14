@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { distTagFor, publishFlags } from './publish.mjs';
+import { distTagFor, publishFlags, publishStdio } from './publish.mjs';
 
 /**
  * The dist-tag rule (P0-META-03).
@@ -51,5 +51,29 @@ describe('publishFlags', () => {
     expect(publishFlags({}).flags).toContain('--access');
     expect(publishFlags({}).flags).toContain('public');
     expect(publishFlags({ CI: 'true' }).flags).toContain('public');
+  });
+});
+
+describe('publishStdio', () => {
+  it('inherits stdin on a real publish, so npm can ask for the OTP', () => {
+    // An account with 2FA on publishing gets EOTP and npm offers to complete
+    // the flow interactively. With stdin ignored it cannot ask, and the publish
+    // dies on the first package with an error that reads like a config problem
+    // and is actually a closed channel. `--dry-run` needs no OTP, so the
+    // rehearsal passes cleanly right before the real run fails.
+    expect(publishStdio(false)[0]).toBe('inherit');
+  });
+
+  it('inherits stderr in both modes', () => {
+    // A failure is never the quiet one.
+    expect(publishStdio(false)[2]).toBe('inherit');
+    expect(publishStdio(true)[2]).toBe('inherit');
+  });
+
+  it('suppresses only the rehearsal’s stdout', () => {
+    // The dry run prints a full tarball manifest nine times over, which buries
+    // the one line per package that matters.
+    expect(publishStdio(true)[1]).toBe('ignore');
+    expect(publishStdio(false)[1]).toBe('inherit');
   });
 });
