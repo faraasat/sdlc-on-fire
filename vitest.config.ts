@@ -36,6 +36,20 @@ export default defineConfig({
     // is sized for the platform rather than for the fastest one.
     testTimeout: process.platform === 'win32' ? 30_000 : 5_000,
 
+    // The hook budget was left at Vitest's 10s default while `testTimeout` was
+    // raised, and that asymmetry is what actually went red on Windows CI: a
+    // `beforeEach` that scaffolds a workspace, or an `afterEach` that removes
+    // one containing a PGlite data directory, does not fit in ten seconds
+    // there — file deletion is slow and the EBUSY retry loop adds to it.
+    //
+    // The tell was that the failure named a *passing* test ("lets the body be
+    // edited without touching the effect") and reported `Hook timed out in
+    // 10000ms`: nothing was wrong with the assertion, the fixture never
+    // finished. A per-file `beforeEach(..., 60_000)` did not help, because the
+    // teardown alongside it carried no timeout at all and inherited the
+    // default. Sized for the platform, for the same reason as above.
+    hookTimeout: process.platform === 'win32' ? 60_000 : 10_000,
+
     // `scripts/` is included deliberately. The release guard lives there
     // rather than in a package — it is repo tooling, not shipped code — and a
     // glob covering only `packages/` meant its test file was collected by
