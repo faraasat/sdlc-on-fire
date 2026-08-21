@@ -121,6 +121,7 @@ import {
   simulatePolicyChange,
 } from './gates.js';
 import { formatSimulation } from '@sdlc-on-fire/evidence';
+import { addHeldOut, criteriaStatus, formatCriteria } from './criteria.js';
 import { deriveRoles, formatRoles } from './roles.js';
 import { checkPilot, formatPilotCheck, writePilotTemplate } from './pilot.js';
 import {
@@ -1518,6 +1519,44 @@ export function buildProgram(): Command {
       // first run red.
       if (!result.ok) process.exitCode = 1;
     });
+
+  const criteria = program
+    .command('criteria')
+    .description('the held-out half of a work item’s acceptance (P3-GATE-09, ADR-0037)');
+
+  criteria
+    .command('hold-out')
+    .argument('<work-item-id>', 'the card')
+    .argument('<text>', 'what a realistic use of this would need to be true')
+    .description('record a criterion the implementing agent will not see')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, text: string, options: { json?: boolean }): Promise<void> => {
+      const result = await addHeldOut(root(), id, text);
+      emit(result, options.json === true, (r: typeof result) =>
+        [
+          `${r.workItemId}: ${String(r.count)} held-out criteri${r.count === 1 ? 'on' : 'a'}, latest by ${r.authorDisplayName}`,
+          '  Stored outside the working tree. There is no command that prints it back —',
+          '  a command that printed it would be a command an agent could run.',
+        ].join('\n'),
+      );
+    });
+
+  criteria
+    .command('status')
+    .argument('<work-item-id>', 'the card')
+    .description('how many are held out, and the visible-vs-held-out delta')
+    .option('--changed-lines <n>', 'size of the change, for the predicted gap', '0')
+    .option('--json', 'emit JSON')
+    .action(
+      async (id: string, options: { changedLines?: string; json?: boolean }): Promise<void> => {
+        const changed = Number.parseInt(options.changedLines ?? '0', 10);
+        const result = await criteriaStatus(root(), id, {
+          changedLines: Number.isNaN(changed) ? 0 : changed,
+        });
+        emit(result, options.json === true, formatCriteria);
+        if (!result.ok) process.exitCode = 1;
+      },
+    );
 
   const gates = program
     .command('gates')

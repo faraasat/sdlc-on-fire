@@ -252,6 +252,45 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      BEFORE UPDATE ON comment_role_effects FOR EACH ROW
      EXECUTE FUNCTION comment_role_effects_immutable();`,
 
+  // ── Held-out acceptance criteria (P3-GATE-09, ADR-0037) ───────────────────
+  //
+  // Deliberately **not** in the working tree. Anything in the tree is readable
+  // by whatever is working in it, and a criterion the authoring loop can read is
+  // not held out from anything.
+  //
+  // They sit here with `evidence`, `approvals` and `audit_log` — the records
+  // that are legitimately not rebuildable from git because they are artifacts of
+  // the review process rather than derivable from the card. `resetMirror` does
+  // not touch them, for the same reason it does not touch an approval.
+  //
+  // `author_actor_id` is NOT NULL because "a different actor" is the entire
+  // check, and a criterion whose author is unknown cannot satisfy it.
+  `CREATE TABLE IF NOT EXISTS held_out_criteria (
+     id              BIGSERIAL PRIMARY KEY,
+     work_item_id    TEXT NOT NULL REFERENCES work_items(id),
+     text            TEXT NOT NULL CHECK (length(trim(text)) > 0),
+     author_actor_id UUID NOT NULL REFERENCES actors(id),
+     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+   );`,
+  'CREATE INDEX IF NOT EXISTS held_out_work_item_idx ON held_out_criteria (work_item_id);',
+  // An agent cannot author one, structurally. The application layer refuses it
+  // too, and both stay for the same reason the approvals pair does: no single
+  // bug should be enough to defeat an invariant.
+  `CREATE OR REPLACE FUNCTION held_out_author_is_human() RETURNS trigger AS $$
+     DECLARE actor_kind TEXT;
+     BEGIN
+       SELECT kind INTO actor_kind FROM actors WHERE id = NEW.author_actor_id;
+       IF actor_kind = 'agent' THEN
+         RAISE EXCEPTION 'an agent cannot author a held-out criterion — it would be held out from nobody (ADR-0037)';
+       END IF;
+       RETURN NEW;
+     END;
+   $$ LANGUAGE plpgsql;`,
+  'DROP TRIGGER IF EXISTS held_out_author_is_human_trg ON held_out_criteria;',
+  `CREATE TRIGGER held_out_author_is_human_trg
+     BEFORE INSERT OR UPDATE ON held_out_criteria FOR EACH ROW
+     EXECUTE FUNCTION held_out_author_is_human();`,
+
   // ── Traceability graph (P1-GATE-08, ADR-0032) ─────────────────────────────
   //
   // The Evidence Engine already produces every fact an edge needs — test
