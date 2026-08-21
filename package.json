@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
-  "description": "Monorepo root for SDLC on Fire. Not published — the published surface is packages/cli (`sdlc-on-fire`).",
+  "description": "Monorepo root for SDLC on Fire. Not published \u2014 the published surface is packages/cli (`sdlc-on-fire`).",
   "license": "MIT",
   "packageManager": "pnpm@11.11.0",
   "engines": {
@@ -25,6 +25,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "verify:package": "node scripts/verify-package.mjs",
+    "release:harness": "node scripts/release-harness/run.mjs",
     "release:dry": "pnpm run build && node scripts/publish.mjs --dry-run"
   },
   "devDependencies": {
