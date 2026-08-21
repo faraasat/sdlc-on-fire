@@ -3,10 +3,14 @@ import type { DroppedLayer } from './metrics.js';
 import {
   ContextPackSchema,
   type ContextLayer,
-  type ContextLayerKind,
   type ContextPack,
   type ContextPackSpec,
   type EffortTier,
+  checkLayerProvenance,
+  type ProvenanceViolation,
+  checkPackProvenance,
+  LAYER_ORIGIN,
+  type ContextLayerKind,
 } from '@sdlc-on-fire/core';
 
 /**
@@ -95,6 +99,16 @@ export interface AssembledPack {
   readonly budget: number;
   /** Every layer not in the pack, and whether the budget or its absence is why. */
   readonly dropped: readonly DroppedLayer[];
+}
+
+export class ContextProvenanceError extends Error {
+  constructor(readonly violations: readonly ProvenanceViolation[]) {
+    super(
+      `context pack rejected — ${String(violations.length)} layer(s) are not attributable: ` +
+        violations.map((violation) => `${violation.label} (${violation.because})`).join('; '),
+    );
+    this.name = 'ContextProvenanceError';
+  }
 }
 
 export async function assembleContextPack(input: AssembleInput): Promise<AssembledPack> {
@@ -193,6 +207,22 @@ export async function assembleContextPack(input: AssembleInput): Promise<Assembl
 
   // Validated on the way out: the pack's own invariants (token sum, cache
   // boundary in range) are asserted rather than assumed.
+  // The firewall (P3-UI-02, ADR-0016), enforced on the way out.
+  //
+  // **This call site is unreachable through the typed API, and that is stated
+  // rather than hidden.** `LAYER_ORIGIN` is total over `CONTEXT_LAYER_KINDS`,
+  // so a layer without a declared origin is a compile error and no legal input
+  // to this function can fail here. A mutation removing this line survives every
+  // test — which is the honest situation, not a gap somebody should paper over
+  // with a contrived fixture. It is kept as defence in depth against a `never`
+  // cast, and it costs a handful of string comparisons.
+  //
+  // The reachable boundary is `validateContextPack`, for packs that arrive from
+  // outside this function — a cache, a file, another process — where the type
+  // system guarantees nothing. That one is tested directly.
+  const violations = checkLayerProvenance(pack.layers.map((layer) => layer.kind));
+  if (violations.length > 0) throw new ContextProvenanceError(violations);
+
   return { pack: ContextPackSchema.parse(pack), budget, dropped };
 }
 
@@ -207,4 +237,26 @@ export function stablePrefix(pack: ContextPack): string {
     .slice(0, pack.stableUpToIndex + 1)
     .map((layer) => layer.content)
     .join('\n\n');
+}
+
+/**
+ * Check a pack that came from outside this process (P3-UI-02).
+ *
+ * Assembly is type-safe; anything crossing a boundary is not. A pack read from
+ * a cache, a file, or a prior run has whatever layers were written into it,
+ * possibly by an older build with a layer kind this one does not know — and a
+ * layer nobody can attribute is exactly what the firewall exists to stop.
+ *
+ * Returns violations rather than throwing, because a caller loading a stale
+ * cache usually wants to discard the pack and rebuild rather than crash.
+ */
+export function validateContextPack(pack: {
+  readonly layers: readonly { readonly kind: string }[];
+}): readonly ProvenanceViolation[] {
+  return checkPackProvenance(
+    pack.layers.map((layer) => ({
+      origin: LAYER_ORIGIN[layer.kind as ContextLayerKind] ?? '',
+      label: layer.kind,
+    })),
+  );
 }

@@ -6,6 +6,7 @@ import {
   estimateTokens,
   renderPack,
   stablePrefix,
+  validateContextPack,
 } from './assemble.js';
 import { chunkText, toSearchQuery } from './retrieval.js';
 
@@ -173,5 +174,35 @@ describe('helpers', () => {
 
   it('keeps short text as one chunk', () => {
     expect(chunkText('short')).toEqual(['short']);
+  });
+});
+
+describe('validateContextPack (P3-UI-02)', () => {
+  it('accepts a pack whose layers are all attributable', () => {
+    expect(validateContextPack({ layers: [{ kind: 'card-core' }, { kind: 'retrieval' }] })).toEqual(
+      [],
+    );
+  });
+
+  it('rejects a layer kind it cannot attribute', () => {
+    // The reachable half of the firewall. A pack from a cache or an older build
+    // carries whatever layers were written into it, and a layer nobody can
+    // attribute is exactly what ADR-0016 exists to stop reaching an agent.
+    const violations = validateContextPack({
+      layers: [{ kind: 'card-core' }, { kind: 'ui-scratchpad' }],
+    });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.label).toBe('ui-scratchpad');
+  });
+
+  it('reports every bad layer, not just the first', () => {
+    expect(
+      validateContextPack({ layers: [{ kind: 'ui-draft' }, { kind: 'ui-filter' }] }),
+    ).toHaveLength(2);
+  });
+
+  it('returns violations rather than throwing, so a stale cache can be discarded', () => {
+    // A caller loading a stale pack wants to rebuild, not crash.
+    expect(() => validateContextPack({ layers: [{ kind: 'nonsense' }] })).not.toThrow();
   });
 });

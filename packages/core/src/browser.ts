@@ -22,3 +22,4 @@ export * from './change-event.js';
 export * from './test-tiers.js';
 export * from './test-knowledge.js';
 export * from './evidence.js';
+export * from './context-provenance.js';
