@@ -48,7 +48,7 @@ importers:
   packages/agent-manager:
     dependencies:
       '@sdlc-on-fire/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       yaml:
         specifier: 2.9.0
@@ -60,28 +60,28 @@ importers:
   packages/cli:
     dependencies:
       '@sdlc-on-fire/agent-manager':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../agent-manager
       '@sdlc-on-fire/context':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../context
       '@sdlc-on-fire/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@sdlc-on-fire/daemon':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../daemon
       '@sdlc-on-fire/db':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../db
       '@sdlc-on-fire/evidence':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../evidence
       '@sdlc-on-fire/importers':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../importers
       '@sdlc-on-fire/storage':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../storage
       commander:
         specifier: 15.0.0
@@ -93,7 +93,7 @@ importers:
   packages/context:
     dependencies:
       '@sdlc-on-fire/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
     devDependencies:
       '@sdlc-on-fire/db':
@@ -109,19 +109,19 @@ importers:
   packages/daemon:
     dependencies:
       '@sdlc-on-fire/context':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../context
       '@sdlc-on-fire/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@sdlc-on-fire/db':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../db
       '@sdlc-on-fire/evidence':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../evidence
       '@sdlc-on-fire/storage':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../storage
       chokidar:
         specifier: 5.0.0
@@ -143,7 +143,7 @@ importers:
         specifier: 0.0.5
         version: 0.0.5(@electric-sql/pglite@0.5.4)
       '@sdlc-on-fire/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       drizzle-orm:
         specifier: 0.45.2
@@ -168,10 +168,10 @@ importers:
   packages/evidence:
     dependencies:
       '@sdlc-on-fire/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@sdlc-on-fire/db':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../db
       zod:
         specifier: 4.4.3
@@ -180,10 +180,10 @@ importers:
   packages/importers:
     dependencies:
       '@sdlc-on-fire/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@sdlc-on-fire/storage':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../storage
       yaml:
         specifier: 2.9.0
@@ -195,7 +195,7 @@ importers:
   packages/storage:
     dependencies:
       '@sdlc-on-fire/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       yaml:
         specifier: 2.9.0

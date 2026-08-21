@@ -36,10 +36,12 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@sdlc-on-fire/core": "workspace:*",
-    "@sdlc-on-fire/storage": "workspace:*",
-    "zod": "4.4.3",
-    "yaml": "2.9.0"
+    "@sdlc-on-fire/storage": "workspace:^",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "peerDependencies": {
+    "@sdlc-on-fire/core": "workspace:^"
+  }
 }

@@ -127,7 +127,7 @@ describe('batch syncing what git reports', () => {
     const result = await syncChangedPaths(root, port, stdout.split('\n'));
     expect(result.outcomes.some((o) => o.action === 'upserted')).toBe(true);
     expect(await port.stageOf('TASK-100')).not.toBeNull();
-  });
+  }, 60_000);
 
   it('ignores paths outside the managed trees', async () => {
     // A merge touching a thousand source files should cost a thousand string

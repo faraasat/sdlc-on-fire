@@ -56,6 +56,21 @@ export default defineConfig({
     // default. Sized for the platform, for the same reason as above.
     hookTimeout: process.platform === 'win32' ? 60_000 : 10_000,
 
+    // Bounded parallelism, deliberately below core count. Twenty-one of these
+    // files provision a real PGlite — a whole Postgres compiled to wasm — and
+    // several spawn `git` on top of it. Left at the default (cores - 1), eleven
+    // of them ran at once and starved each other: a run would go red on five
+    // suites, a different five each time, always `Test timed out`, never an
+    // assertion. Run alone, those same five pass in 34s.
+    //
+    // The fix is the load, not the budget. A timeout is only evidence of a hang
+    // if the test was actually scheduled; raising every timeout until the
+    // starvation fits underneath it would keep the suite green and throw away
+    // the signal. Costs wall-clock, buys a red run that means something.
+    poolOptions: {
+      forks: { maxForks: 6 },
+    },
+
     // `scripts/` is included deliberately. The release guard lives there
     // rather than in a package — it is repo tooling, not shipped code — and a
     // glob covering only `packages/` meant its test file was collected by

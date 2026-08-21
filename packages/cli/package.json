@@ -39,15 +39,15 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@sdlc-on-fire/agent-manager": "workspace:*",
-    "@sdlc-on-fire/context": "workspace:*",
-    "@sdlc-on-fire/core": "workspace:*",
-    "@sdlc-on-fire/daemon": "workspace:*",
-    "@sdlc-on-fire/db": "workspace:*",
-    "@sdlc-on-fire/evidence": "workspace:*",
-    "@sdlc-on-fire/storage": "workspace:*",
+    "@sdlc-on-fire/agent-manager": "workspace:^",
+    "@sdlc-on-fire/context": "workspace:^",
+    "@sdlc-on-fire/core": "workspace:^",
+    "@sdlc-on-fire/daemon": "workspace:^",
+    "@sdlc-on-fire/db": "workspace:^",
+    "@sdlc-on-fire/evidence": "workspace:^",
+    "@sdlc-on-fire/storage": "workspace:^",
     "commander": "15.0.0",
     "yaml": "2.9.0",
-    "@sdlc-on-fire/importers": "workspace:*"
+    "@sdlc-on-fire/importers": "workspace:^"
   }
 }

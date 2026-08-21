@@ -36,7 +36,9 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@sdlc-on-fire/core": "workspace:*",
     "yaml": "2.9.0"
+  },
+  "peerDependencies": {
+    "@sdlc-on-fire/core": "workspace:^"
   }
 }

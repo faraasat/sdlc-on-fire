@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applySchema, provisionPglite, type ProvisionedDatabase } from '@sdlc-on-fire/db';
 import type { EmbedderPort } from '@sdlc-on-fire/core';
 import { DEFAULT_RRF_K, hybridSearch, rrf } from './hybrid.js';
@@ -16,7 +16,6 @@ import { DEFAULT_RRF_K, hybridSearch, rrf } from './hybrid.js';
  */
 
 let db: ProvisionedDatabase;
-const opened: ProvisionedDatabase[] = [];
 
 /**
  * A toy embedder: one dimension per keyword, so "similarity" is controllable and
@@ -77,13 +76,16 @@ async function seed(rows: { id: string; text: string }[], embedder: EmbedderPort
 beforeEach(async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sdlcof-hybrid-'));
   db = await provisionPglite({ workspaceRoot: root });
-  opened.push(db);
   await applySchema(db);
 }, 90_000);
 
-afterAll(async () => {
-  for (const handle of opened) await handle.close().catch(() => undefined);
-});
+// Closed per test, not collected and closed at the end. Every instance here is
+// a whole Postgres compiled to wasm; holding one open per test kept nine of
+// them resident and pushed the single closing loop past the hook budget, which
+// failed the suite on teardown while every assertion in it had passed.
+afterEach(async () => {
+  await db?.close().catch(() => undefined);
+}, 30_000);
 
 describe('rrf', () => {
   it('rewards agreement over a single first place', () => {

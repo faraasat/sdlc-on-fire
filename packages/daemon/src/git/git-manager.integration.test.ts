@@ -344,7 +344,7 @@ describe('provenance and squash-and-sign (P1-GIT-01)', () => {
     expect(message).toContain('feat(TASK-001): the thing');
     expect(message).toContain('Assisted-by: Claude-Code:claude-opus-4-5-20260101');
     expect(message).not.toContain('wip:');
-  });
+  }, 60_000);
 
   it('refuses to squash the base branch itself', async () => {
     const { root } = await newRepo();
