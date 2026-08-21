@@ -25,3 +25,4 @@ export * from './evidence.js';
 export * from './context-provenance.js';
 export * from './flow-metrics.js';
 export * from './dora.js';
+export * from './wip-limits.js';

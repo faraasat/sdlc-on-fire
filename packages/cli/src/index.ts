@@ -2213,6 +2213,9 @@ export function buildProgram(): Command {
             ? 'no built board found — API and socket only (run `pnpm --filter @sdlc-on-fire/ui build`)'
             : `serving the board from ${result.servingUi}`,
           `reconciled ${String(result.reconciled)} file(s) that changed while it was not running`,
+          result.budget === null
+            ? 'embedded database — no shared connection budget applies'
+            : `connection budget: ${String(result.budget.current)}/${String(result.budget.capacity)} daemon(s)`,
           result.watching
             ? 'watching the workspace — file changes reach the board without a refresh'
             : 'not watching: the board will not change until this restarts',

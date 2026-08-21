@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolveIdentity, type Actor, type ResolvedIdentity } from '@sdlc-on-fire/core';
 import { isAllowedOrigin, isLoopbackHost } from './guard.js';
 import { moveCard } from './move.js';
+import { wipLimits } from '@sdlc-on-fire/core';
 import type { LifecycleStage } from '@sdlc-on-fire/core';
 
 export interface ApiQueryCapable {
@@ -157,6 +158,41 @@ async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
             workItemId,
           ]);
     return { status: 200, body: rows };
+  }
+
+  if (path === '/api/wip-limits') {
+    // Derived from each column's own observed throughput and time-in-column,
+    // not chosen. A limit nobody can justify is a limit somebody removes the
+    // first time it is inconvenient (P3-KAN-05).
+    const windowDays = Number(url.searchParams.get('days') ?? '30');
+    const rows = await db.query<{
+      to_state: string;
+      completed: string;
+      mean_ms: string | null;
+    }>(
+      `WITH visits AS (
+         SELECT work_item_id, to_state, created_at,
+                lead(created_at) OVER (PARTITION BY work_item_id ORDER BY created_at) AS left_at
+           FROM lifecycle_transitions
+          WHERE created_at > now() - ($1 || ' days')::interval
+       )
+       SELECT to_state,
+              count(*) FILTER (WHERE left_at IS NOT NULL)::text AS completed,
+              (avg(EXTRACT(EPOCH FROM (left_at - created_at)) * 1000)
+                 FILTER (WHERE left_at IS NOT NULL))::text AS mean_ms
+         FROM visits GROUP BY to_state;`,
+      [String(Number.isFinite(windowDays) ? windowDays : 30)],
+    );
+
+    const limits = wipLimits(
+      rows.map((row) => ({
+        column: row.to_state,
+        completed: Number(row.completed),
+        meanTimeInColumnMs: Number(row.mean_ms ?? 0),
+        windowMs: (Number.isFinite(windowDays) ? windowDays : 30) * 86_400_000,
+      })),
+    );
+    return { status: 200, body: limits };
   }
 
   if (path === '/api/lifecycle-states') {

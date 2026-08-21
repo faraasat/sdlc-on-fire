@@ -21,12 +21,16 @@ import {
   type ProvisionedDatabase,
 } from '@sdlc-on-fire/db';
 import {
+  admitDaemon,
+  countDaemonConnections,
   createApiHandler,
+  readMaxConnections,
   createStaticHandler,
   LifecycleEngine,
   registerLifecycleInvariants,
   startRealtimeServer,
   SyncEngine,
+  type BudgetVerdict,
 } from '@sdlc-on-fire/daemon';
 
 const exec = promisify(execFile);
@@ -47,6 +51,8 @@ export interface ServeResult {
   readonly watching: boolean;
   /** Files reconciled at startup, catching up whatever changed while it was down. */
   readonly reconciled: number;
+  /** Shared-Postgres connection budget, or null when embedded (P3-META-01). */
+  readonly budget: BudgetVerdict | null;
   close(): Promise<void>;
 }
 
@@ -145,6 +151,21 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   const reconciled = await sync.reconcile();
   await sync.start();
 
+  // Connection budget (P3-META-01). PGlite is a single embedded process with no
+  // shared budget, so this reports "not applicable" rather than a number there —
+  // it matters when several developers' daemons share one Postgres, where the
+  // wall is `max_connections` and the last person to start one gets an error
+  // that reads like a broken install.
+  const maxConnections = await readMaxConnections(db);
+  const budget =
+    maxConnections === null
+      ? null
+      : admitDaemon({
+          maxConnections,
+          currentDaemons: (await countDaemonConnections(db)) ?? 0,
+        });
+  if (budget !== null && !budget.admitted) throw new Error(budget.because);
+
   const server = await startRealtimeServer({
     db,
     port: options.port ?? 4600,
@@ -160,6 +181,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     servingUi: uiDir,
     watching: true,
     reconciled: reconciled.length,
+    budget,
     close: async () => {
       await sync.stop().catch(() => undefined);
       await server.close();
