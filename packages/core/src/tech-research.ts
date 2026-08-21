@@ -1,3 +1,4 @@
+import { assessSources } from './source-tier.js';
 /**
  * The tech-research engine's vocabulary and its checker (P2-RES-01, ADR-0045).
  *
@@ -73,6 +74,7 @@ export const TECH_RESEARCH_STATUSES = [
   'incomplete',
   'undated',
   'unsourced',
+  'unsubstantiated',
   'template',
   'stale',
   'current',
@@ -154,6 +156,24 @@ export function evaluateTechResearch(
       'unsourced',
       unsourced.map(
         (doc) => `${tech}/${doc.file} cites no sources — "I recall it works this way" is not one`,
+      ),
+    );
+  }
+
+  // Cited is not the same as substantiated (P3-RES-02, ADR-0073 §6). A doc whose
+  // sources are all tier C rests entirely on pages that report a number without
+  // a method — often published by somebody selling the conclusion. That is a
+  // lead, not research, and the previous check could not tell the difference
+  // because it only counted citations.
+  const unsubstantiated = docs
+    .map((doc) => ({ doc, quality: assessSources(doc.sources, tech) }))
+    .filter((entry) => !entry.quality.substantiated);
+  if (unsubstantiated.length > 0) {
+    return verdict(
+      'unsubstantiated',
+      unsubstantiated.map(
+        (entry) =>
+          `${tech}/${entry.doc.file}: ${entry.quality.findings[0] ?? 'no substantiated source'}`,
       ),
     );
   }

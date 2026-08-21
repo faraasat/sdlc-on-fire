@@ -367,6 +367,15 @@ export function formatResearchScan(result: ResearchScanResult): string {
       `Start one with:  sdlc research new <tech>   (dated today, refresh-by +${String(DEFAULT_REFRESH_DAYS)} days)`,
       'The skeleton does not pass this check — it has no sources yet, and it says so.',
     );
+    if (result.verdicts.some((verdict) => verdict.status === 'unsubstantiated')) {
+      lines.push(
+        '',
+        '"unsubstantiated" is not "unsourced": those folders cite something, and what',
+        'they cite reports numbers without a method — often published by somebody',
+        'selling the conclusion. Find the primary record, or mark the claims',
+        'unverified. Both are honest; repeating the number is not (ADR-0073).',
+      );
+    }
   } else {
     lines.push('', 'Every detected technology has current, sourced research.');
   }
@@ -391,8 +400,12 @@ export function formatNewResearch(result: NewResearchResult): string {
   lines.push(
     '',
     'This folder does not yet count as research: no sources, and the bodies are prompts.',
-    'Fill it in from the official docs and reputable third-party sources, then re-run',
-    '`sdlc research check`.',
+    'Fill it in from live sources you consulted — not from recall — then re-run',
+    '`sdlc research check`. Sources are tiered (ADR-0073): a paper with a stated',
+    'method, the vendor’s own docs, a spec or the code itself is primary; an',
+    'engineering blog that publishes its method is secondary; marketing and',
+    'listicles are a lead, never a figure. A folder resting entirely on the last',
+    'kind is refused. Prefix a citation with [A], [B] or [C] to say so yourself.',
   );
   return lines.join('\n');
 }

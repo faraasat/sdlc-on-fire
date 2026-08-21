@@ -209,3 +209,37 @@ describe('staleRegistryEntries', () => {
     expect(staleRegistryEntries('2026-08-14', registry)).toContain('old');
   });
 });
+
+describe('cited is not the same as substantiated (P3-RES-02)', () => {
+  it('refuses a folder whose sources are all tier C', () => {
+    // The previous check counted citations and could not tell a paper from a
+    // page published by somebody selling the conclusion it reports.
+    const verdict = evaluateTechResearch(
+      'next',
+      complete({ sources: ['https://an-agency.example/ultimate-guide-in-2026'] }),
+      '2026-08-14',
+    );
+    expect(verdict.status).toBe('unsubstantiated');
+    expect(verdict.usable).toBe(false);
+    expect(verdict.detail[0]).toContain('never as a figure');
+  });
+
+  it('accepts a marketing page sitting beside the official docs', () => {
+    // The rule is about what the doc rests on, not about purity.
+    expect(
+      evaluateTechResearch(
+        'next',
+        complete({ sources: ['https://nextjs.org/docs', 'https://x.example/top-10'] }),
+        '2026-08-14',
+      ).status,
+    ).toBe('current');
+  });
+
+  it('still reports no sources as unsourced, not unsubstantiated', () => {
+    // Two different problems asking for different work: find a better source
+    // versus find any source. Collapsing them loses the instruction.
+    expect(evaluateTechResearch('next', complete({ sources: [] }), '2026-08-14').status).toBe(
+      'unsourced',
+    );
+  });
+});

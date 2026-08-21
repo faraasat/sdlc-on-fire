@@ -27,6 +27,7 @@ export * from './improvement.js';
 export * from './mcp-catalogue.js';
 export * from './mcp-client.js';
 export * from './capability.js';
+export * from './source-tier.js';
 export * from './pilot.js';
 export * from './posix-path.js';
 export * from './test-environment.js';
