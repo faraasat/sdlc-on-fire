@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import { useDraggable } from '@dnd-kit/core';
 import { isBlocked, needsHuman, type BoardCard } from '@sdlc-on-fire/core/browser';
+import { useUiStore } from '../state/ui.js';
 
 /**
  * One card (P3-KAN-01).
@@ -11,6 +12,8 @@ import { isBlocked, needsHuman, type BoardCard } from '@sdlc-on-fire/core/browse
  */
 export function Card({ card }: { card: BoardCard }): ReactElement {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: card.id });
+
+  const select = useUiStore((state) => state.select);
 
   const blocked = isBlocked(card);
   const human = needsHuman(card);
@@ -28,7 +31,20 @@ export function Card({ card }: { card: BoardCard }): ReactElement {
       aria-label={`${card.id}: ${card.title}`}
     >
       <header className="kcard__head">
-        <code>{card.id}</code>
+        {/* A separate control, not a click on the card itself: the card is a
+            drag handle, and a click that both drags and opens is a card you
+            cannot move without opening. */}
+        <button
+          type="button"
+          className="kcard__open"
+          // Belt and braces alongside the sensor's distance constraint: this
+          // button must never be the thing that starts a drag.
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => select(card.id)}
+          aria-label={`open details for ${card.id}`}
+        >
+          <code>{card.id}</code>
+        </button>
         {card.active_run != null ? (
           <span className="chip chip--live" title={`run ${card.active_run} is executing`}>
             <i aria-hidden="true" /> running

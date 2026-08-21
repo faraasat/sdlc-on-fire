@@ -29,3 +29,4 @@ export * from './wip-limits.js';
 export * from './contention.js';
 export * from './presence.js';
 export * from './board-move.js';
+export * from './card-progress.js';

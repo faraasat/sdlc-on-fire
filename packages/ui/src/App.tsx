@@ -8,6 +8,7 @@ import { ConnectionDot } from './components/ConnectionDot.js';
 import { BoardView } from './components/BoardView.js';
 import { TableView } from './components/TableView.js';
 import { RoadmapView } from './components/RoadmapView.js';
+import { CardDrawer } from './components/CardDrawer.js';
 import { GROUP_BY, type BoardCard, type GroupBy } from '@sdlc-on-fire/core/browser';
 
 /**
@@ -22,7 +23,7 @@ export function App(): ReactElement {
   const identity = useIdentity();
   const items = useWorkItems();
   const move = useMoveCard();
-  const { view, setView, filters, setFilters, clearFilters } = useUiStore();
+  const { view, setView, filters, setFilters, clearFilters, selectedId, select } = useUiStore();
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
   const [refusal, setRefusal] = useState<string | null>(null);
 
@@ -167,6 +168,8 @@ export function App(): ReactElement {
           )
         ) : null}
       </main>
+
+      {selectedId === null ? null : <CardDrawer cardId={selectedId} onClose={() => select(null)} />}
     </div>
   );
 }

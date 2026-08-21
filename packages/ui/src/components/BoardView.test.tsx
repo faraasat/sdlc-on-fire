@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BoardCard } from '@sdlc-on-fire/core/browser';
 import { BoardView } from './BoardView.js';
+import { useUiStore } from '../state/ui.js';
 
 /**
  * P3-KAN-01 — the board, rendered.
@@ -86,6 +87,19 @@ describe('BoardView', () => {
     const item = screen.getByRole('button', { name: 'FEAT-7: Add auth' });
     expect(item.getAttribute('tabindex')).toBe('0');
     expect(item.getAttribute('aria-roledescription')).toBe('draggable card');
+  });
+
+  it('opens the drawer on a plain click instead of starting a drag', async () => {
+    // The defect this closes, found by clicking the running board. Without a
+    // distance constraint the pointer sensor claims mousedown anywhere in the
+    // card — including the nested button — so a click started a drag and
+    // immediately dropped it back, showing "already in that column" instead of
+    // opening the card.
+    useUiStore.setState({ selectedId: null });
+    renderBoard([card({ id: 'FEAT-7' })]);
+
+    await userEvent.click(screen.getByRole('button', { name: /open details for FEAT-7/i }));
+    expect(useUiStore.getState().selectedId).toBe('FEAT-7');
   });
 
   it('offers a way out when a filter hides everything', async () => {

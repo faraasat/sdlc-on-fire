@@ -40,7 +40,16 @@ export function BoardView({
   onMove: (cardId: string, column: string, optimisticStage: string | undefined) => void;
   onClearFilters: () => void;
 }): ReactElement {
-  const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor));
+  // The distance constraint is not a nicety. Without it, `PointerSensor` claims
+  // the pointer on mousedown anywhere in the card — including on the nested
+  // "open details" button — so clicking a card's id started a drag and
+  // immediately dropped it back, producing "already in that column" instead of
+  // opening the drawer. Found by clicking it, not by a test. Eight pixels of
+  // movement distinguishes a drag from a click without making dragging sticky.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
 
   const board = useMemo(() => projectBoard(cards, { groupBy, filter }), [cards, groupBy, filter]);
   const stranded = useMemo(() => unplaceable(cards), [cards]);

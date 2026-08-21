@@ -116,9 +116,12 @@ describe('useMoveCard', () => {
     // the drag, resolving *after* the optimistic write, overwrites it with
     // pre-move data — and the card snaps back for a reason that has nothing to
     // do with the daemon's answer, which is indistinguishable from a refusal.
-    let releaseRefetch: (() => void) | null = null;
+    // A deferred, rather than assigning into a `let` from inside the executor —
+    // TypeScript's control-flow analysis cannot see that assignment and narrows
+    // the variable to `null`.
+    let releaseRefetch = (): void => undefined;
     const slowRefetch = new Promise<BoardCard[]>((resolve) => {
-      releaseRefetch = () => resolve(cards);
+      releaseRefetch = (): void => resolve(cards);
     });
 
     // In flight before the mutation starts, deliberately not awaited.
@@ -134,7 +137,7 @@ describe('useMoveCard', () => {
     await waitFor(() => expect(stateOf('FEAT-1')).toBe('decompose'));
 
     // Now let the stale refetch land. Cancelled, it must not resurrect 'spec'.
-    releaseRefetch?.();
+    releaseRefetch();
     await inFlight.catch(() => undefined);
     expect(stateOf('FEAT-1')).toBe('decompose');
   });
