@@ -51,6 +51,7 @@ import {
   treeContext,
   type InstructionsResult,
 } from './commands.js';
+import { discoverPlugins, formatPlugins, projectRootFromArgv, registerPlugins } from './plugins.js';
 import { advanceWorkItem } from './advance.js';
 import { reopenWorkItem, verifyWorkItem } from './advance.js';
 import { auditDependencies } from './audit.js';
@@ -2177,6 +2178,19 @@ export function buildProgram(): Command {
       );
     });
 
+  program
+    .command('plugins')
+    .description('list the layers this project has installed, and any that would not load')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }) => {
+      const discovery = await discoverPlugins({ projectRoot: root() });
+      // Reported without registering. `sdlc plugins` has to be usable *because*
+      // a layer is misbehaving, so it must not be the command that loads it
+      // into the running program.
+      emit(discovery, options.json === true, formatPlugins);
+      if (discovery.refused.length > 0) process.exitCode = 1;
+    });
+
   return program;
 }
 
@@ -2210,8 +2224,23 @@ function invokedAsBinary(): boolean {
 }
 
 if (invokedAsBinary()) {
-  buildProgram()
-    .parseAsync(process.argv)
+  const program = buildProgram();
+
+  // Layers are registered before parse, so a plugin's command exists by the
+  // time the argument naming it is resolved. Discovery never throws: a broken
+  // third-party layer becomes a row in `sdlc plugins`, not a CLI that will not
+  // start.
+  discoverPlugins({ projectRoot: projectRootFromArgv(process.argv.slice(2), process.cwd()) })
+    .then((discovery) => {
+      const registered = registerPlugins(program, discovery);
+      for (const entry of registered.refused) {
+        process.stderr.write(
+          `sdlc: layer ${entry.package} not loaded [${entry.refusal}] ${entry.because}\n`,
+        );
+      }
+    })
+    .catch(() => undefined)
+    .then(() => program.parseAsync(process.argv))
     .catch((error: unknown) => {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       process.exitCode = 1;

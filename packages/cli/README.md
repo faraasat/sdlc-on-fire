@@ -104,6 +104,41 @@ Every command has a `--json` twin.
 - **Markdown in git is the source of truth.** The database is a rebuildable mirror — `sdlc db:rebuild` reconstructs it from the files alone.
 - **Agents are actors, never approvers.** Where a human sign-off is required, the check is on the actor's _kind_. A role can be granted to a service account; "is this a human" cannot be argued with.
 
+## Adding a command without waiting for a release
+
+A package the project depends on can add commands to `sdlc`. Declare it in your own `package.json`:
+
+```json
+{
+  "type": "module",
+  "sdlc-on-fire": { "api": 1, "plugin": "./dist/plugin.js" },
+  "peerDependencies": { "@sdlc-on-fire/core": "^0.1.0" }
+}
+```
+
+and export a `register` that gets the commander program:
+
+```js
+export const plugin = {
+  name: 'demo',
+  register(program) {
+    program.command('demo').action(() => console.log('from an installed layer'));
+  },
+};
+```
+
+`npm install` is the whole adoption step — there is no list to add yourself to. `sdlc plugins` shows what loaded and, more importantly, what did not:
+
+```
+Loaded 1 layer(s):
+  ✓ @acme/demo-layer — Demo layer
+
+Refused 1:
+  ✗ @acme/from-the-future [api-mismatch] plugin targets API 99, this host speaks 1
+```
+
+Two things are worth knowing before you rely on it. **Only declared dependencies are loaded** — a package sitting in `node_modules` that nothing depends on is ignored, deliberately, so that cloning a repository and running `sdlc` cannot execute code you never installed. And an **API mismatch refuses rather than warns**, in both directions: a layer built against a different API reports on a contract this host does not implement, and wrong evidence is worse here than a missing layer.
+
 ## Not built yet
 
 No UI — the Kanban board is a directory of Markdown files. No long-running background daemon; the CLI does the work in-process. Skills compile to Claude Code and MCP, and nothing else. Metrics (DORA, cycle time) are planned and unbuilt. And it has not been validated by anyone outside its own repository, which is a release gate it has not passed.
