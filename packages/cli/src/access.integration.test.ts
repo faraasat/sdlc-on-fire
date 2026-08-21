@@ -77,17 +77,35 @@ describe('sdlc access policy', () => {
 });
 
 describe('sdlc access whoami', () => {
-  it('bootstraps the human actor from git config', async () => {
+  it('resolves the human actor from git config', async () => {
+    // `created` is no longer asserted true here. `sdlc init` now bootstraps the
+    // actor eagerly (P3-UI-01) because the UI resolves identity without ever
+    // running `whoami`, and a board on a fresh workspace was answering
+    // "nobody". So by the time `whoami` runs, the actor usually exists — and
+    // pinning `created: true` was pinning the old lazy timing rather than any
+    // property of the command. What must hold is the identity itself.
     const { stdout, code } = await sdlc('access', 'whoami', '--json');
     expect(code).toBe(0);
     const result = JSON.parse(stdout) as {
       created: boolean;
       actor: { kind: string; displayName: string; roles: unknown[] };
     };
-    expect(result.created).toBe(true);
     expect(result.actor.kind).toBe('human');
     expect(result.actor.displayName).toBe('Ada Lovelace');
     expect(result.actor.roles).toEqual([]);
+  }, 60_000);
+
+  it('mints exactly one actor however many times it is asked', async () => {
+    // The property the old `created: true` assertion was reaching for, stated
+    // in a way that does not depend on who bootstrapped first.
+    const first = JSON.parse((await sdlc('access', 'whoami', '--json')).stdout) as {
+      actor: { id?: string; displayName: string };
+    };
+    const second = JSON.parse((await sdlc('access', 'whoami', '--json')).stdout) as {
+      actor: { id?: string; displayName: string };
+    };
+    expect(second.actor.displayName).toBe(first.actor.displayName);
+    if (first.actor.id !== undefined) expect(second.actor.id).toBe(first.actor.id);
   }, 60_000);
 
   it('finds the same actor the second time rather than minting another', async () => {

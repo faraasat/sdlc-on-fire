@@ -28,6 +28,7 @@ export default defineConfig({
       // `importers` was missing from this list, so nothing could import it by
       // package name in a test — it only ever got reached by relative path from
       // inside its own package, which hid the gap.
+      '@sdlc-on-fire/ui': fileURLToPath(new URL('./packages/ui/src', import.meta.url)),
       '@sdlc-on-fire/importers': fileURLToPath(
         new URL('./packages/importers/src/index.ts', import.meta.url),
       ),
@@ -76,7 +77,11 @@ export default defineConfig({
     // glob covering only `packages/` meant its test file was collected by
     // nothing and reported by nothing. A test that silently never runs is worse
     // than no test, because the file's presence reads as coverage.
-    include: ['packages/*/src/**/*.test.ts', 'scripts/**/*.test.ts'],
+    // `.tsx` is included, not only `.ts`. The UI package's component tests are
+    // all .tsx, and a glob that missed them would collect nothing while the
+    // files' presence read as coverage — the same silent-nothing failure the
+    // `scripts/` note below describes.
+    include: ['packages/*/src/**/*.test.{ts,tsx}', 'scripts/**/*.test.ts'],
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],

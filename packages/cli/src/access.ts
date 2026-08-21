@@ -11,7 +11,7 @@ import {
   type CapabilityVerdict,
   type RoleKey,
 } from '@sdlc-on-fire/core';
-import { applySchema, PostgresStorageAdapter } from '@sdlc-on-fire/db';
+import { applySchema, ensureHumanActor, PostgresStorageAdapter } from '@sdlc-on-fire/db';
 import { openWorkspaceDatabase } from './commands.js';
 
 /**
@@ -233,17 +233,15 @@ export async function whoami(root: string): Promise<WhoamiResult> {
   }
 
   return withDb(root, async (db) => {
-    const existing = await findActor(db, email);
-    if (existing !== null) {
-      return { actor: existing, created: false, source: `git config user.email (${email})` };
-    }
-    await db.query(`INSERT INTO actors (kind, display_name, email) VALUES ('human', $1, $2);`, [
-      name === '' ? email : name,
-      email,
-    ]);
-    const created = await findActor(db, email);
-    if (created === null) throw new Error('actor was inserted but could not be read back');
-    return { actor: created, created: true, source: `git config user.email (${email})` };
+    // Shared with `sdlc init` and `sdlc serve` rather than inlined here. This
+    // function grew its own INSERT first, and once `init` also needed to
+    // bootstrap — the UI resolves identity without ever running `whoami` — two
+    // implementations of "make sure this human exists" would have had to agree
+    // forever about matching, casing and the display-name fallback.
+    const outcome = await ensureHumanActor(db, email, name);
+    const actor = await findActor(db, email);
+    if (actor === null) throw new Error('actor was inserted but could not be read back');
+    return { actor, created: outcome.created, source: `git config user.email (${email})` };
   });
 }
 

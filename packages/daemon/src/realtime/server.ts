@@ -8,7 +8,7 @@
  * subscription message, and closing down.
  */
 
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { z } from 'zod';
 import type { ChangeEvent, Subscription } from '@sdlc-on-fire/core';
@@ -34,6 +34,12 @@ const ClientMessageSchema = z.discriminatedUnion('type', [
 
 export interface RealtimeServerOptions {
   readonly db: ListenCapable & QueryCapable;
+  /**
+   * Optional HTTP handler, tried before the WebSocket upgrade. Returns whether
+   * it took the request. Lets the API and the socket share one port — and one
+   * loopback guard.
+   */
+  readonly onRequest?: (request: IncomingMessage, response: ServerResponse) => boolean;
   /** 0 asks the OS for a free port — what tests should use. */
   readonly port?: number;
   readonly host?: string;
@@ -57,7 +63,11 @@ function send(socket: WebSocket, frame: Frame): void {
 }
 
 export async function startRealtimeServer(options: RealtimeServerOptions): Promise<RealtimeServer> {
-  const http: Server = createServer();
+  const http: Server = createServer((request, response) => {
+    if (options.onRequest?.(request, response) === true) return;
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'not found' }));
+  });
   const wss = new WebSocketServer({ server: http });
   const fanout = new FanOut();
   let nextId = 0;

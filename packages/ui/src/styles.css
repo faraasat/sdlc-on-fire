@@ -1,0 +1,145 @@
+:root {
+  --bg: #0f1115;
+  --panel: #161a22;
+  --line: #232936;
+  --ink: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #f0803c;
+  --ok: #4ec9a5;
+  --warn: #e0b341;
+  --bad: #e56b6b;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font:
+    14px/1.5 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+.app__bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+}
+
+.app__brand {
+  color: var(--accent);
+}
+.app__views {
+  display: flex;
+  gap: 4px;
+}
+
+.app__views button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.app__views button[aria-pressed='true'] {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.app__search {
+  margin-left: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 10px;
+  min-width: 220px;
+}
+
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.conn i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.conn--live i {
+  background: var(--ok);
+}
+.conn--reconnecting i {
+  background: var(--warn);
+}
+.conn--offline i {
+  background: var(--bad);
+}
+
+.identity {
+  font-size: 12px;
+  color: var(--muted);
+}
+.identity--strong {
+  color: var(--ink);
+}
+.identity--weak em {
+  color: var(--warn);
+  font-style: normal;
+}
+.identity--none {
+  color: var(--bad);
+}
+
+.app__main {
+  padding: 16px;
+}
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: var(--bad);
+}
+
+.cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--panel);
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.card code {
+  color: var(--accent);
+}
+.card small {
+  margin-left: auto;
+  color: var(--muted);
+}

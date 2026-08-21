@@ -28,6 +28,7 @@ export * from './lifecycle/engine.js';
 export * from './lifecycle/invariants.js';
 export * from './pr/generate.js';
 export * from './realtime/index.js';
+export * from './server/index.js';
 
 /**
  * Identity of the `@sdlc-on-fire/daemon` package. The daemon owns the Git Manager

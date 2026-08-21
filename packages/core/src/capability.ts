@@ -132,6 +132,15 @@ export interface Actor {
   readonly id: string;
   readonly kind: 'human' | 'agent';
   readonly displayName: string;
+  /**
+   * Humans: bootstrapped from `git config user.email`, and the key the UI
+   * resolves a browser session against (P3-UI-01). On the shared `Actor` rather
+   * than on a second identity-only type, so that the actor an identity resolves
+   * to is the same one {@link capability} takes — two Actor shapes would let
+   * "who you are" and "what you may do" drift apart, which is the failure this
+   * whole module exists to prevent.
+   */
+  readonly email?: string | null | undefined;
 }
 
 export interface Membership {

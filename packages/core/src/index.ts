@@ -74,6 +74,7 @@ export * from './merge-conflict.js';
 export * from './test-tiers.js';
 export * from './plugin-manifest.js';
 export * from './change-event.js';
+export * from './identity.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report

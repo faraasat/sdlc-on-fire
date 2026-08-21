@@ -16,6 +16,7 @@ export * from './schema.js';
 export * from './migrate.js';
 export * from './postgres-adapter.js';
 export * from './connected.js';
+export * from './actors.js';
 
 /** Identity of the `@sdlc-on-fire/db` package. */
 export const dbPackage: PackageInfo = {

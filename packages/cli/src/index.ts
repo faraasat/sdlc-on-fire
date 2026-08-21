@@ -52,6 +52,7 @@ import {
   type InstructionsResult,
 } from './commands.js';
 import { discoverPlugins, formatPlugins, projectRootFromArgv, registerPlugins } from './plugins.js';
+import { serve } from './serve.js';
 import { advanceWorkItem } from './advance.js';
 import { reopenWorkItem, verifyWorkItem } from './advance.js';
 import { auditDependencies } from './audit.js';
@@ -2189,6 +2190,45 @@ export function buildProgram(): Command {
       // into the running program.
       emit(discovery, options.json === true, formatPlugins);
       if (discovery.refused.length > 0) process.exitCode = 1;
+    });
+
+  program
+    .command('serve')
+    .description('serve the board, the read API and the live socket on one loopback port')
+    .option('-p, --port <number>', 'port to listen on', '4600')
+    .option('--host <host>', 'interface to bind', '127.0.0.1')
+    .option('--ui <dir>', 'a built board to serve instead of the bundled one')
+    .action(async (options: { port: string; host: string; ui?: string }) => {
+      const result = await serve({
+        root: root(),
+        port: Number(options.port),
+        host: options.host,
+        ...(options.ui === undefined ? {} : { uiDir: options.ui }),
+      });
+      process.stdout.write(
+        [
+          `daemon listening on ${result.url}`,
+          result.servingUi === null
+            ? 'no built board found — API and socket only (run `pnpm --filter @sdlc-on-fire/ui build`)'
+            : `serving the board from ${result.servingUi}`,
+          `reconciled ${String(result.reconciled)} file(s) that changed while it was not running`,
+          result.watching
+            ? 'watching the workspace — file changes reach the board without a refresh'
+            : 'not watching: the board will not change until this restarts',
+          // PGlite is single-connection. Saying so here saves the user
+          // discovering it from a lock error on their next command.
+          'while this runs it owns the database — other `sdlc` commands that need it will wait',
+          'press ctrl-c to stop',
+        ].join('\n') + '\n',
+      );
+      // Held open deliberately: a server that returns is a server that exits.
+      await new Promise<void>((resolve) => {
+        const stop = (): void => {
+          void result.close().then(resolve);
+        };
+        process.once('SIGINT', stop);
+        process.once('SIGTERM', stop);
+      });
     });
 
   return program;

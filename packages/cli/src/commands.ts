@@ -43,6 +43,7 @@ import { attestAll, attestItem, type Attestation, type TreeContext } from './att
 import { currentDirtyTreeHash } from './verify.js';
 import {
   applySchema,
+  ensureHumanActor,
   connectToPostgres,
   provisionPglite,
   PostgresStorageAdapter,
@@ -133,6 +134,17 @@ export interface InitOptions {
    * a Postgres it does not use.
    */
   readonly database?: 'provision' | 'skip' | undefined;
+}
+
+/** One `git config` value, or undefined. Never throws: identity degrades, it does not fail. */
+async function gitConfig(root: string, key: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync('git', ['config', key], { cwd: root });
+    const value = stdout.trim();
+    return value === '' ? undefined : value;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function init(root: string, options: InitOptions = {}): Promise<InitResult> {
@@ -241,7 +253,25 @@ export async function init(root: string, options: InitOptions = {}): Promise<Ini
     const handle = await provisionPglite({ workspaceRoot: layout.root });
     try {
       await applySchema(handle);
-      database = { ready: true, detail: 'PGlite provisioned and schema applied' };
+
+      // Bootstrap the human. The schema has always said actors are seeded from
+      // `git config user.email` and nothing did it, which was invisible from
+      // the CLI — an agent arrives with its actor — and broke the UI's solo
+      // mode outright: identity resolved to "nobody" on a workspace that had
+      // just been created for exactly one person. Idempotent, and a missing
+      // git email is not an error.
+      // The name as well as the email: bootstrapping with the email alone left
+      // the person labelled by their address on every screen that shows an
+      // actor, which a later `whoami` then had no reason to correct.
+      const bootstrapped = await ensureHumanActor(
+        handle,
+        await gitConfig(layout.root, 'user.email'),
+        await gitConfig(layout.root, 'user.name'),
+      );
+      database = {
+        ready: true,
+        detail: `PGlite provisioned and schema applied; ${bootstrapped.because}`,
+      };
     } finally {
       await handle.close().catch(() => undefined);
     }
