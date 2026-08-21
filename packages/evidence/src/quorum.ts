@@ -333,3 +333,100 @@ export function formatQuorum(requirement: QuorumRequirement, verdict: QuorumVerd
   }
   return lines.join('\n');
 }
+
+/* ------------------------------------------------- decision provenance */
+
+/**
+ * The resolved policy values a decision was actually taken against
+ * (P3-RBAC-06, ADR-0035, FEAT-RBAC-016).
+ *
+ * ADR-0035 names the gap precisely: an approval's audit entry records the card,
+ * the actor and the action, but not *which `gate_policies` values were the basis
+ * for the required-role and min-approvals determination at the time*. Edit the
+ * policy row afterwards — raise `min_approvals`, add a required role, close the
+ * override path — and the historical record can no longer explain itself. "Why
+ * did this seem reasonable then" becomes a reconstruction job, and reconstruction
+ * from a table that has since changed is guesswork wearing an audit trail's
+ * clothes.
+ *
+ * So the snapshot is taken **at decision time and stored by value**. Not a
+ * `policy_id` pointing at a row that will move: the row is expected to move, and
+ * a reference that follows it is a record of the present pretending to be a
+ * record of the past ([ADR-0013](../../../docs/.plan/decisions/ADR-0013-immutable-completed-work.md)'s
+ * immutability, applied to the reasoning rather than to the work).
+ *
+ * The verdict is included alongside the requirement because the two together are
+ * what a reader needs: the rule that applied, and what it concluded. Either one
+ * alone leaves the other to be re-derived.
+ */
+export interface DecisionProvenance {
+  /** The policies that matched, by name, most specific first. */
+  readonly policies: readonly string[];
+  /** The normalised requirement, by value. */
+  readonly requirement: QuorumRequirement;
+  /** What it concluded, and on what grounds. */
+  readonly verdict: QuorumVerdict;
+  /** `solo` or `team` — it changes the answer, so it is part of the answer. */
+  readonly mode: 'solo' | 'team';
+  /** Who the roster held at the time, and as what. Sizes the deadlock finding. */
+  readonly roster: readonly { readonly actorId: string; readonly roles: readonly string[] }[];
+  /** The commit the card was at. Binds the decision to a tree, as evidence is. */
+  readonly atCommit?: string | undefined;
+}
+
+/**
+ * Captures the provenance of a quorum decision.
+ *
+ * Pure, and deliberately takes everything by value — nothing here reads a table,
+ * so what it returns cannot change afterwards.
+ */
+export function decisionProvenance(
+  requirement: QuorumRequirement,
+  verdict: QuorumVerdict,
+  ctx: QuorumContext,
+  atCommit?: string,
+): DecisionProvenance {
+  return {
+    policies: [...requirement.from],
+    requirement,
+    verdict,
+    mode: ctx.mode,
+    roster: ctx.eligible.map((person) => ({ actorId: person.actorId, roles: [...person.roles] })),
+    atCommit,
+  };
+}
+
+/**
+ * Whether a stored provenance still describes today's policy.
+ *
+ * The point is not to *invalidate* anything — a decision taken under an old rule
+ * was correctly taken under that rule, and rewriting history to match the
+ * present is the failure this whole module exists to prevent. The point is that
+ * a reader looking at an old approval should be told the ground has moved, so
+ * they can judge whether it still stands. Silence there reads as agreement.
+ */
+export function provenanceDrift(stored: DecisionProvenance, current: QuorumRequirement): string[] {
+  const drift: string[] = [];
+  const was = new Set(stored.requirement.requiredRoles);
+  const now = new Set(current.requiredRoles);
+
+  for (const role of now) {
+    if (!was.has(role)) drift.push(`"${role}" is required now and was not when this was decided`);
+  }
+  for (const role of was) {
+    if (!now.has(role)) drift.push(`"${role}" was required when this was decided and is not now`);
+  }
+  if (stored.requirement.minApprovals !== current.minApprovals) {
+    drift.push(
+      `the approval floor moved ${String(stored.requirement.minApprovals)} → ${String(current.minApprovals)}`,
+    );
+  }
+  const wasOverridable = stored.requirement.overridableBy.join(',');
+  const nowOverridable = current.overridableBy.join(',');
+  if (wasOverridable !== nowOverridable) {
+    drift.push(
+      `the override path changed [${wasOverridable || 'none'}] → [${nowOverridable || 'none'}]`,
+    );
+  }
+  return drift;
+}

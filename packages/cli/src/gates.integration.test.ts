@@ -6,7 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { grantRole, whoami } from './access.js';
-import { checkQuorum, listGates } from './gates.js';
+import {
+  approveGate,
+  checkQuorum,
+  listGates,
+  revokeApproval,
+  simulatePolicyChange,
+} from './gates.js';
 import { init, openWorkspaceDatabase } from './commands.js';
 import { applySchema } from '@sdlc-on-fire/db';
 
@@ -199,4 +205,170 @@ describe('the built binary', () => {
     expect(stdout).toContain('FEAT-001');
     expect(stdout).toContain('solo mode');
   }, 120_000);
+});
+
+describe('approve, revoke, simulate against the real database', () => {
+  beforeEach(async () => {
+    await seedCard();
+    await whoami(root);
+    await grantRole(root, 'ada@example.test', 'eng-lead');
+  }, 90_000);
+
+  it('records the policy values the approval was taken under', async () => {
+    // P3-RBAC-06. Without this, editing the policy row afterwards leaves the
+    // approval unable to explain itself.
+    await writePolicy(
+      'std',
+      'name: std\napprovals: { required_roles: ["eng-lead"], min_approvals: 1 }\noverridable_by: ["eng-lead"]',
+    );
+    const result = await approveGate(root, 'FEAT-001', 'review', 'eng-lead');
+    expect(result.provenance.requirement.requiredRoles).toEqual(['eng-lead']);
+    expect(result.provenance.requirement.minApprovals).toBe(1);
+    expect(result.provenance.policies).toEqual(['std']);
+    expect(result.satisfied).toBe(true);
+  }, 120_000);
+
+  it('the snapshot survives the policy changing underneath it', async () => {
+    // The whole point of storing by value. The row is expected to move.
+    await writePolicy('std', 'name: std\napprovals: { required_roles: ["eng-lead"] }');
+    await approveGate(root, 'FEAT-001', 'review', 'eng-lead');
+    await writePolicy(
+      'std',
+      'name: std\napprovals: { required_roles: ["eng-lead", "security"], min_approvals: 2 }',
+    );
+
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      const rows = await db.query<{
+        detail: { provenance: { requirement: { requiredRoles: string[] } } };
+      }>(`SELECT detail FROM audit_log WHERE action = 'GATE_APPROVED' ORDER BY id DESC LIMIT 1;`);
+      // Still the rule as it stood, not the rule as it stands.
+      expect(rows[0]?.detail.provenance.requirement.requiredRoles).toEqual(['eng-lead']);
+    } finally {
+      await db.close();
+    }
+  }, 120_000);
+
+  it('withdrawing an approval re-opens the gate', async () => {
+    // P3-RBAC-08. A retraction that leaves the gate green is a retraction in
+    // name only.
+    await writePolicy('std', 'name: std\napprovals: { required_roles: ["eng-lead"] }');
+    const approved = await approveGate(root, 'FEAT-001', 'review', 'eng-lead');
+
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      const before = await db.query<{ result: string }>('SELECT result FROM gates WHERE id = $1;', [
+        approved.gateId,
+      ]);
+      expect(before[0]?.result).toBe('pass');
+    } finally {
+      await db.close();
+    }
+
+    await revokeApproval(root, approved.approvalId, 'eng-lead', 'I misread the diff');
+
+    const { db: db2 } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db2);
+      const after = await db2.query<{ result: string; revoked_at: Date | null }>(
+        `SELECT g.result, a.revoked_at FROM gates g JOIN approvals a ON a.gate_id = g.id
+          WHERE a.id = $1;`,
+        [approved.approvalId],
+      );
+      expect(after[0]?.result).toBe('pending');
+      // Marked, not deleted: "approved then withdrawn" and "never approved" are
+      // different histories.
+      expect(after[0]?.revoked_at).not.toBeNull();
+    } finally {
+      await db2.close();
+    }
+  }, 120_000);
+
+  it('refuses to withdraw the same approval twice', async () => {
+    await writePolicy('std', 'name: std\napprovals: { required_roles: ["eng-lead"] }');
+    const approved = await approveGate(root, 'FEAT-001', 'review', 'eng-lead');
+    await revokeApproval(root, approved.approvalId, 'eng-lead', 'first');
+    await expect(revokeApproval(root, approved.approvalId, 'eng-lead', 'again')).rejects.toThrow(
+      /already revoked/,
+    );
+  }, 120_000);
+
+  it('writes an APPROVAL_REVOKED row carrying what was withdrawn', async () => {
+    await writePolicy('std', 'name: std\napprovals: { required_roles: ["eng-lead"] }');
+    const approved = await approveGate(root, 'FEAT-001', 'review', 'eng-lead');
+    await revokeApproval(root, approved.approvalId, 'eng-lead', 'wrong branch');
+
+    const { db } = await openWorkspaceDatabase(root);
+    try {
+      await applySchema(db);
+      const rows = await db.query<{ detail: { reason: string; kind: string } }>(
+        `SELECT detail FROM audit_log WHERE action = 'APPROVAL_REVOKED' ORDER BY id DESC LIMIT 1;`,
+      );
+      expect(rows[0]?.detail.reason).toBe('wrong branch');
+      expect(rows[0]?.detail.kind).toBe('self');
+    } finally {
+      await db.close();
+    }
+  }, 120_000);
+
+  it('simulates a proposed policy directory against the live one', async () => {
+    // P3-RBAC-05, reachable by a person and against real files.
+    await writePolicy('std', 'name: std\napprovals: { required_roles: [] }');
+    const proposedDir = path.join(root, 'proposed');
+    await fs.mkdir(proposedDir, { recursive: true });
+    await fs.writeFile(
+      path.join(proposedDir, 'std.yaml'),
+      'name: std\napprovals: { required_roles: ["security"], min_approvals: 1 }',
+      'utf8',
+    );
+
+    const result = await simulatePolicyChange(root, 'proposed');
+    expect(result.deltas.length).toBeGreaterThan(0);
+    expect(result.deltas[0]?.changes).toContain('now requires "security"');
+    expect(result.deltas[0]?.direction).toBe('stricter');
+  }, 120_000);
+
+  it('reports no difference against an unchanged copy, with a probe count', async () => {
+    await writePolicy('std', 'name: std\napprovals: { required_roles: ["qa"] }');
+    const proposedDir = path.join(root, 'proposed');
+    await fs.mkdir(proposedDir, { recursive: true });
+    await fs.copyFile(
+      path.join(root, 'docs', 'gates', 'std.yaml'),
+      path.join(proposedDir, 'std.yaml'),
+    );
+    const result = await simulatePolicyChange(root, 'proposed');
+    expect(result.identical).toBe(true);
+    expect(result.probed).toBeGreaterThan(0);
+  }, 120_000);
+});
+
+describe('the built binary reaches all of it', () => {
+  it('approves, then revokes, and says what happened both times', async () => {
+    await seedCard();
+    await whoami(root);
+    await grantRole(root, 'ada@example.test', 'eng-lead');
+    await writePolicy('std', 'name: std\napprovals: { required_roles: ["eng-lead"] }');
+
+    const approved = await run(
+      'node',
+      [CLI, '-C', root, 'gates', 'approve', 'FEAT-001', 'review', '--json'],
+      { cwd: root },
+    );
+    const id = (JSON.parse(approved.stdout) as { approvalId: number }).approvalId;
+
+    const revoked = await run(
+      'node',
+      [CLI, '-C', root, 'gates', 'revoke', String(id), '--reason', 'misread'],
+      { cwd: root },
+    );
+    expect(revoked.stdout).toContain('re-opened');
+  }, 180_000);
+
+  it('refuses a revocation with no reason at the CLI boundary', async () => {
+    await expect(
+      run('node', [CLI, '-C', root, 'gates', 'revoke', '1'], { cwd: root }),
+    ).rejects.toThrow();
+  }, 90_000);
 });

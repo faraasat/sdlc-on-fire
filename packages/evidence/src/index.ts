@@ -13,6 +13,8 @@ export * from './runner.js';
 export * from './evaluate-gate.js';
 export * from './quorum.js';
 export * from './gate-policy-source.js';
+export * from './revocation.js';
+export * from './simulate-policy.js';
 export * from './gate-record.js';
 export * from './constitution-compile.js';
 export * from './install-gate.js';

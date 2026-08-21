@@ -111,7 +111,16 @@ import {
   showPolicy,
   whoami,
 } from './access.js';
-import { checkQuorum, formatGates, formatQuorumCheck, listGates } from './gates.js';
+import {
+  approveGate,
+  checkQuorum,
+  formatGates,
+  formatQuorumCheck,
+  listGates,
+  revokeApproval,
+  simulatePolicyChange,
+} from './gates.js';
+import { formatSimulation } from '@sdlc-on-fire/evidence';
 import { deriveRoles, formatRoles } from './roles.js';
 import { checkPilot, formatPilotCheck, writePilotTemplate } from './pilot.js';
 import {
@@ -1536,6 +1545,71 @@ export function buildProgram(): Command {
       const result = await checkQuorum(root(), id, { paths: options.path ?? [] });
       emit(result, options.json === true, formatQuorumCheck);
       if (!result.ok) process.exitCode = 1;
+    });
+
+  gates
+    .command('approve')
+    .argument('<work-item-id>', 'the card')
+    .argument('<gate>', 'the gate name, e.g. review')
+    .description('record an approval, with the policy values it was taken under (ADR-0035)')
+    .option('--role <role>', 'the role you are approving as — must be one you hold', 'eng-lead')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        gate: string,
+        options: { role?: string; json?: boolean },
+      ): Promise<void> => {
+        const result = await approveGate(root(), id, gate, options.role ?? 'eng-lead');
+        emit(result, options.json === true, (r: typeof result) =>
+          [
+            `${r.workItemId} / ${gate}: approval #${String(r.approvalId)} as ${r.role}`,
+            `  ${r.satisfied ? 'the gate now passes' : 'the gate is still waiting on somebody'}`,
+            '  The policy values in force were snapshotted onto the audit row — by value, because',
+            '  the policy will change and what was decided today should not change with it.',
+          ].join('\n'),
+        );
+      },
+    );
+
+  gates
+    .command('revoke')
+    .argument('<approval-id>', 'the approval to withdraw')
+    .description('withdraw an approval and re-open the gate; an append, never an erase')
+    .requiredOption('--reason <text>', 'why — an unexplained retraction cannot be read later')
+    .option('--role <role>', 'the role you are acting as', 'eng-lead')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        options: { reason: string; role?: string; json?: boolean },
+      ): Promise<void> => {
+        const result = await revokeApproval(
+          root(),
+          Number.parseInt(id, 10),
+          options.role ?? 'eng-lead',
+          options.reason,
+        );
+        emit(result, options.json === true, (r: typeof result) =>
+          [
+            `approval #${String(r.approvalId)} withdrawn (${r.kind}); gate ${String(r.gateId)} re-opened`,
+            `  ${r.impact.summary}`,
+          ].join('\n'),
+        );
+      },
+    );
+
+  gates
+    .command('simulate')
+    .argument(
+      '<proposed-dir>',
+      'a directory of proposed policy YAML to compare against docs/gates/',
+    )
+    .description('which cards start or stop being blocked, before the change lands')
+    .option('--json', 'emit JSON')
+    .action(async (dir: string, options: { json?: boolean }): Promise<void> => {
+      const result = await simulatePolicyChange(root(), dir);
+      emit(result, options.json === true, formatSimulation);
     });
 
   const access = program
