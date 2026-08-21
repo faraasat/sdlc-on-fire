@@ -26,3 +26,4 @@ export * from './context-provenance.js';
 export * from './flow-metrics.js';
 export * from './dora.js';
 export * from './wip-limits.js';
+export * from './contention.js';

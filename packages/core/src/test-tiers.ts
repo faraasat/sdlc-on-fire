@@ -27,6 +27,7 @@ export const TEST_TIERS = [
   'smoke',
   'regression',
   'property',
+  'concurrency',
   'e2e',
 ] as const;
 export type TestTier = (typeof TEST_TIERS)[number];
@@ -68,6 +69,15 @@ export const TIER_DEFINITIONS: readonly TierDefinition[] = [
       'a claim that must hold across generated inputs the author did not choose — ' +
       'much harder to satisfy vacuously than an example, and derived from the ' +
       'signature rather than from the implementation body (P3-QA-11)',
+  },
+  {
+    tier: 'concurrency',
+    kind: 'test',
+    markers: ['.concurrency.test.', '.concurrency.spec.', '/concurrency/'],
+    purpose:
+      'a claim that must hold under contention, run repeatedly against a recorded ' +
+      'seed — every race found in this codebase so far was found by accident, ' +
+      'which is not a strategy (P3-QA-12)',
   },
   {
     tier: 'integration',
@@ -130,7 +140,7 @@ export const REQUIRED_TIERS: Readonly<Record<string, readonly TestTier[]>> = {
   // approximation of a held-out check (it asserts what the signature promised,
   // not what the body does), and requiring it below strict would make every
   // existing project red on upgrade.
-  strict: ['unit', 'integration', 'regression', 'smoke', 'property', 'e2e'],
+  strict: ['unit', 'integration', 'regression', 'smoke', 'property', 'concurrency', 'e2e'],
 };
 
 export interface TierRun {

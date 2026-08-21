@@ -100,3 +100,4 @@ export const corePackage: PackageInfo = {
 export * from './flow-metrics.js';
 export * from './dora.js';
 export * from './wip-limits.js';
+export * from './contention.js';
