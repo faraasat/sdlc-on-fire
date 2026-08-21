@@ -16,15 +16,29 @@
 # analyzer trusted.
 name: static-analysis
 
+# ─── Automatic runs disabled 2026-08-22 ──────────────────────────────────────
+#
+# The account's Actions minutes are exhausted, so every automatic trigger below
+# was queueing runs that could never start — which is worse than no CI, because
+# a permanently-pending check reads as "in progress" rather than as "not run".
+# `release.yml` is deliberately left on its own triggers: publishing is the one
+# pipeline whose absence would be silently destructive.
+#
+# The original triggers are preserved directly beneath, commented, so restoring
+# is uncommenting rather than reconstructing. To restore: delete
+# `workflow_dispatch:` and uncomment the block under it.
 on:
-  pull_request:
-  push:
-    branches: [main]
-  schedule:
-    # Weekly, because the code stops changing but the rules do not. A scan that
-    # only runs on push cannot find the vulnerability disclosed after the last
-    # commit — which, for a repository that has gone quiet, is most of them.
-    - cron: '27 5 * * 1'
+  workflow_dispatch:
+#
+# Original triggers:
+# pull_request:
+# push:
+#   branches: [main]
+# schedule:
+#   # Weekly, because the code stops changing but the rules do not. A scan
+#   # that only runs on push cannot find the vulnerability disclosed after
+#   # the last commit — which, for a quiet repository, is most of them.
+#   - cron: '27 5 * * 1'
 
 permissions:
   contents: read

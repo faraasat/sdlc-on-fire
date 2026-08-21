@@ -15,12 +15,26 @@
 # we assert.
 name: scorecard
 
+# ─── Automatic runs disabled 2026-08-22 ──────────────────────────────────────
+#
+# The account's Actions minutes are exhausted, so every automatic trigger below
+# was queueing runs that could never start — which is worse than no CI, because
+# a permanently-pending check reads as "in progress" rather than as "not run".
+# `release.yml` is deliberately left on its own triggers: publishing is the one
+# pipeline whose absence would be silently destructive.
+#
+# The original triggers are preserved directly beneath, commented, so restoring
+# is uncommenting rather than reconstructing. To restore: delete
+# `workflow_dispatch:` and uncomment the block under it.
 on:
-  branch_protection_rule:
-  schedule:
-    - cron: '19 6 * * 2'
-  push:
-    branches: [main]
+  workflow_dispatch:
+#
+# Original triggers:
+#   branch_protection_rule:
+#   schedule:
+#     - cron: '19 6 * * 2'
+#   push:
+#     branches: [main]
 
 permissions:
   contents: read
