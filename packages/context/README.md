@@ -1,22 +1,38 @@
 # @sdlc-on-fire/context
 
-**Assembles task-scoped context packs instead of dumping files into the prompt.**
+Assembles what an agent is allowed to see. 71 exports, 20 files, **zero runtime dependencies**.
 
-> **Internal package, prerelease.** Published so that `sdlc-on-fire` installs resolve. It carries **no stability guarantee** before `0.1.0` — exports move and disappear between alpha releases. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
+> **Internal package, prerelease `0.1.0-alpha.0`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
 
-Retrieval is hybrid: BM25 over Postgres tsvector, vector search over pgvector HNSW, fused with reciprocal rank fusion and reranked. Chunking is structure-aware — heading-aware for Markdown, fence-aware so a code block is never split down the middle.
+## Retrieval is hybrid and fused, not picked
 
-Packs are assembled with a **stable prefix and a variable tail**, so the expensive, unchanging part of a prompt sits where a provider's cache can reuse it. Per-stage token budgets are enforced at assembly time, and the work item's own card is never truncated to fit — a budget too small to hold it fails loudly instead of quietly dropping the thing the task is about.
+```ts
+import { hybridSearch, rerank, rrf, DEFAULT_PREFETCH } from '@sdlc-on-fire/context';
 
-Also implements corrective retrieval: deterministic signals decide first, a model is consulted only in the genuinely ambiguous middle band, and the action taken for each verdict is fixed rather than chosen.
-
-## Install
-
-```bash
-npm install @sdlc-on-fire/context@next
+const fused = await hybridSearch(query, { prefetch: DEFAULT_PREFETCH }); // fused by `rrf`
 ```
 
-Node 20 or newer. Part of [SDLC on Fire](https://github.com/faraasat/sdlc-on-fire) — a daemon that will not let the agent lie.
+Lexical (Postgres `tsvector`) and semantic (pgvector) legs run independently and are fused by reciprocal rank. Each leg **prefetches deeper than the result set**, because fusing two top-10s throws away exactly the documents fusion exists to rescue.
+
+The cross-encoder reranker is optional, reorders but never admits, and degrades to the fused order on failure — a reranker that is down should cost you ordering, not recall.
+
+## Freshness is not a heuristic
+
+A vector produced by a different embedding model is stale in exactly the way a vector produced from different text is stale. The semantic leg is dropped on a model mismatch rather than blended in, and a width mismatch throws instead of returning a number that happens to compute. `evaluateRetrieval` and `packMetrics` report what a pack actually cost and covered — `assembleContextPack` refuses a budget too small to hold the required sections rather than silently truncating them.
+
+## The firewall
+
+Human input reaches agents through the **resolved effect** of a typed comment — never through its body text, and never through UI state. A comment's meaning is computed server-side from `(type × role)` at insert and stored in a column a trigger refuses to change.
+
+```ts
+import { renderCommentDirectives } from '@sdlc-on-fire/context';
+
+renderCommentDirectives(comments, { agent: 'implementer' });
+// reads comment.roleEffect; the body is content an agent may be *shown*,
+// never evidence of what the comment is for
+```
+
+That signature is the defence: a caller cannot pass text that was never a parameter.
 
 ## Licence
 

@@ -1,24 +1,36 @@
 # @sdlc-on-fire/storage
 
-**The typed Markdown reader and writer — the only sanctioned way work-item files are written.**
+Reads and writes work-item Markdown. 21 exports, 6 files, one dependency (`yaml`). Small on purpose: it is the only sanctioned writer, so everything it does is a rule everything else inherits.
 
-> **Internal package, prerelease.** Published so that `sdlc-on-fire` installs resolve. It carries **no stability guarantee** before `0.1.0` — exports move and disappear between alpha releases. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
+> **Internal package, prerelease `0.1.0-alpha.0`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
 
-Two guarantees live here and nowhere else.
+## Two guarantees, and they live nowhere else
 
-**Nothing reaches disk without validating against the object model.** A file that would fail the schema is refused before it is written, rather than discovered later by whatever tries to read it.
+**Nothing reaches disk without validating against the object model.** A file that would fail `WorkItemSchema` is refused before it is written, not discovered later by whatever tries to read it.
 
-**A work item at a terminal stage is never edited in place.** The check reads the frontmatter _about to be overwritten_, not the incoming object — an agent that sets `lifecycle_state: implement` on a finished task does not thereby unlock it. Writing a finished item requires verifiable grounds (an approved insertion whose blast radius reaches it, or an attestation that its own evidence contradicts the claim), and even then the write may only touch operational fields; content and body must come through byte-identical.
+**A work item at a terminal stage is never edited in place.** The check reads the frontmatter _about to be overwritten_, not the incoming object:
 
-Frontmatter round-trips deterministically, so a one-field change produces a one-line diff.
+```ts
+import { writeWorkItem } from '@sdlc-on-fire/storage';
 
-## Install
-
-```bash
-npm install @sdlc-on-fire/storage@next
+// TASK-001 is on disk with lifecycle_state: done
+await writeWorkItem(path, { ...item, lifecycleState: 'implement' });
+// → throws: refuses to write a terminal item
 ```
 
-Node 20 or newer. Part of [SDLC on Fire](https://github.com/faraasat/sdlc-on-fire) — a daemon that will not let the agent lie.
+That ordering is the whole guarantee. An agent that sets `lifecycle_state: implement` on a finished task does not thereby unlock it — the incoming object is what is being _checked_, so it cannot also be the thing that authorises the check.
+
+Writing a finished item at all requires verifiable grounds — an approved insertion whose blast radius reaches it, or an attestation that its own evidence contradicts the claim — and even then only operational fields may move. The body must come through byte-identical, which is checked rather than asked for.
+
+## Frontmatter round-trips
+
+```ts
+import { parseFrontmatter, serializeFrontmatter } from '@sdlc-on-fire/storage';
+
+const { data, body } = parseFrontmatter(await fs.readFile(file, 'utf8'));
+```
+
+Key order and formatting survive a read/write cycle, so a tool-written file does not produce a diff against a hand-written one that says the same thing.
 
 ## Licence
 

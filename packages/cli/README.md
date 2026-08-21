@@ -1,6 +1,6 @@
 # sdlc-on-fire
 
-**A daemon that will not let the agent lie.**
+A tool that will not let a coding agent mark its own work done.
 
 Coding agents mark their own work done. They report that tests pass, that the change is complete, that the edge case is handled — and the report comes from the same process that wrote the code, with the same blind spots. When it is wrong, nothing downstream can tell.
 
@@ -96,7 +96,7 @@ Every command has a `--json` twin.
 | `sdlc conflicts`          | Lay out both sides of a merge conflict; check a resolution       |
 | `sdlc instructions <id>`  | The next step, its skill prompt, and the assembled context       |
 
-`sdlc --help` lists all of them — roughly forty.
+`sdlc --help` lists all 46.
 
 ## Design rules it actually enforces
 
@@ -106,7 +106,9 @@ Every command has a `--json` twin.
 
 ## Not built yet
 
-No UI (Kanban is a directory of Markdown files). No RBAC enforcement. No long-running background daemon — the CLI does the work in-process. Skills compile to Claude Code only so far. And it has not been validated outside its own repository.
+No UI — the Kanban board is a directory of Markdown files. No long-running background daemon; the CLI does the work in-process. Skills compile to Claude Code and MCP, and nothing else. Metrics (DORA, cycle time) are planned and unbuilt. And it has not been validated by anyone outside its own repository, which is a release gate it has not passed.
+
+Roles and gate policies _are_ enforced as of `0.1.0-alpha.0`: `sdlc access` and `sdlc gates` are real, agents structurally cannot hold a role, and approval quorum is checked per required role rather than as a count.
 
 Full detail, including the roadmap: [github.com/faraasat/sdlc-on-fire](https://github.com/faraasat/sdlc-on-fire).
 

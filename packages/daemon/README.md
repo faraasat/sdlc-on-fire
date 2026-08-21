@@ -1,22 +1,40 @@
 # @sdlc-on-fire/daemon
 
-**Git manager, file watcher, sandboxing, and the security scanners.**
+Git operations, the file watcher, process sandboxing, and the security adapters. Two runtime dependencies: `chokidar` and `simple-git`.
 
-> **Internal package, prerelease.** Published so that `sdlc-on-fire` installs resolve. It carries **no stability guarantee** before `0.1.0` — exports move and disappear between alpha releases. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
+> **Internal package, prerelease `0.1.0-alpha.0`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
 
-The git manager handles branch-per-work-item naming, worktree isolation, evidence-bearing commits, and the squash-and-sign pre-merge step. The watcher keeps the database mirror current with a content-hash guard, so the tool's own writes cannot trigger a sync loop.
+## The watcher cannot chase its own tail
 
-Security adapters query the live OSV.dev advisory database and shell out to gitleaks where it is installed. Both distinguish "found nothing" from "could not reach the source" — an unreachable advisory API returning silence is indistinguishable from good news, and reading it as good news is how an outage becomes a false all-clear.
+The mirror is kept current by watching the tree, which means the tool's own writes would re-trigger it. A content-hash guard compares what changed against what was written, so a self-write is a no-op rather than a sync loop.
 
-Tool output crossing into agent context is scanned, redacted, and fenced with a nonce, in that order.
+## Sandboxing kills the group, not the process
 
-## Install
+```ts
+import { runGuarded } from '@sdlc-on-fire/daemon';
 
-```bash
-npm install @sdlc-on-fire/daemon@next
+await runGuarded('pnpm', ['test'], { timeoutMs: 300_000, maxOutputBytes: 5_000_000 });
 ```
 
-Node 20 or newer. Part of [SDLC on Fire](https://github.com/faraasat/sdlc-on-fire) — a daemon that will not let the agent lie.
+`pnpm test` spawns Vitest, which spawns workers. Killing only the process you launched leaves the real work running with its parent gone — a timeout that does not stop the runaway is not a timeout. On POSIX this is `process.kill(-pid)` against a detached group; on Windows, `taskkill /T /F`, because process groups do not exist there and the POSIX call fails silently.
+
+## Security adapters that distinguish silence from good news
+
+```ts
+import { createOsvIntel, runGitleaks } from '@sdlc-on-fire/daemon';
+```
+
+Both return "could not reach the source" as a distinct state from "found nothing". An advisory API that is down returns an empty list, and reading that as an all-clear is how an outage becomes a false pass.
+
+## Checkpoint and resume do not trust the log
+
+A daemon dies mid-run — laptop sleep, OOM, `kill -9`. The question on restart is not _where did we get to_, which the log answers, but **is the log telling the truth**: a checkpoint saying step 7 committed is a claim written by the process that then crashed.
+
+Resume reconciles the log against the worktree's actual HEAD, and a step whose claimed effect is not in the world is re-run rather than skipped. Checkpoints are semantic rather than per-turn — only a step that mutated state is a valid recovery point, so `mutates_state` is a column and recovery selects on it.
+
+## Tool output crossing into agent context
+
+Scanned, redacted, then fenced with a nonce — in that order. Redacting after fencing would fence the secret in.
 
 ## Licence
 

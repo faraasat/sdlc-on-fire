@@ -1,22 +1,40 @@
 # @sdlc-on-fire/agent-manager
 
-**Canonical skills, the agent adapters they compile to, and tier routing.**
+Canonical skills, the agent surfaces they compile to, and tier routing. 112 exports across 32 files.
 
-> **Internal package, prerelease.** Published so that `sdlc-on-fire` installs resolve. It carries **no stability guarantee** before `0.1.0` — exports move and disappear between alpha releases. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
+> **Internal package, prerelease `0.1.0-alpha.0`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
 
-One canonical skill definition compiles to each agent surface's native format. Editing a compiled `.claude/skills/**` file is editing build output.
+## One skill definition, many targets
 
-Every skill declares exactly one trigger: a lifecycle `stage`, or a `situation` for work that is not a stage at all — a merge conflict happens partway through `implement` and arrives without the stage changing.
+A skill is authored once as a canonical IR and compiled out. Claude Code and MCP are implemented; nothing else is.
 
-Each skill carries a default capability tier resolved to a concrete model at dispatch, never a hardcoded model ID that goes stale on the next provider release. Subagent dispatch is isolated: the parent receives a bounded summary and a pointer to the full output on disk, so a subagent's context saving is not immediately spent pasting its transcript back.
+```ts
+import { ClaudeCodeAdapter, McpAdapter, CANONICAL_SKILLS } from '@sdlc-on-fire/agent-manager';
 
-## Install
-
-```bash
-npm install @sdlc-on-fire/agent-manager@next
+new McpAdapter().compileServer(CANONICAL_SKILLS);
+// tools/list per MCP 2025-11-25 — inputSchema is always a JSON Schema object,
+// even for a no-argument tool, because the spec says MUST and clients enforce it
 ```
 
-Node 20 or newer. Part of [SDLC on Fire](https://github.com/faraasat/sdlc-on-fire) — a daemon that will not let the agent lie.
+The compiled output is not hand-edited. A skill that needs a Claude-Code-specific field carries it in the IR, so the two surfaces cannot drift into disagreeing about what the skill does.
+
+## Tier routing, and the rule about who may not use it
+
+```ts
+import { resolveTier, dispatchSkill, verifyLowTierOutput } from '@sdlc-on-fire/agent-manager';
+```
+
+Work is routed by cost and risk: low tier for high-volume verifiable narrow work, medium by default, high rarely. `MAX_CONCURRENCY` (8) and `MAX_RECURSION_DEPTH` (2) are enforced in `@sdlc-on-fire/daemon`'s governor, and `verifyLowTierOutput` schema- or rubric-checks cheap output before it is trusted — the point of a cheap tier is that it is cheap _and verified_, not cheap and believed.
+
+## Trajectory evaluation, where the judge is not the disposer
+
+Every other gate judges an artifact. `trajectory-eval` judges the **path** — whether the orchestrator decomposed sensibly, whether the reviewer looked where the bug was.
+
+The obvious harness for that is an LLM judge, and it is the harness this project is least entitled to trust. So a human-labelled **golden set** is the disposer: the judge is run against it first, and its agreement rate is its licence. Below the floor, its verdicts on unseen trajectories are not reported as verdicts at all. Disagreements are mined into the set rather than discarded, which is the only way it gets harder instead of staler.
+
+## Windows spawning
+
+`windowsSpawn()` exists because Node has refused to spawn `.cmd` and `.bat` without a shell since CVE-2024-27980, which meant the Claude CLI could not be invoked on Windows at all. It routes through `cmd.exe /d /s /c` explicitly rather than setting `shell: true`, which would hand the prompt to a command interpreter.
 
 ## Licence
 
