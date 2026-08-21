@@ -97,3 +97,5 @@ export const corePackage: PackageInfo = {
   name: '@sdlc-on-fire/core',
   dependsOn: [],
 };
+export * from './flow-metrics.js';
+export * from './dora.js';

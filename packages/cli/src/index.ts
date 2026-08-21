@@ -53,6 +53,7 @@ import {
 } from './commands.js';
 import { discoverPlugins, formatPlugins, projectRootFromArgv, registerPlugins } from './plugins.js';
 import { serve } from './serve.js';
+import { doraFromWorkspace, flowReport, formatDora, formatFlow } from './metrics.js';
 import { advanceWorkItem } from './advance.js';
 import { reopenWorkItem, verifyWorkItem } from './advance.js';
 import { auditDependencies } from './audit.js';
@@ -2229,6 +2230,29 @@ export function buildProgram(): Command {
         process.once('SIGINT', stop);
         process.once('SIGTERM', stop);
       });
+    });
+
+  const metrics = program
+    .command('metrics')
+    .description('flow and delivery-performance metrics, read from what actually happened');
+
+  metrics
+    .command('flow')
+    .description('per-stage time, the binding constraint, flow efficiency and rework')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }) => {
+      const report = await flowReport(root());
+      emit(report, options.json === true, formatFlow);
+    });
+
+  metrics
+    .command('dora')
+    .description("DORA's five metrics — reported together, never one at a time")
+    .option('--days <n>', 'window in days', '30')
+    .option('--json', 'emit JSON')
+    .action(async (options: { days: string; json?: boolean }) => {
+      const report = await doraFromWorkspace(root(), Number(options.days));
+      emit(report, options.json === true, formatDora);
     });
 
   return program;
