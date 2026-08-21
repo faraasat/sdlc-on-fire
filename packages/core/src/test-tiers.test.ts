@@ -142,8 +142,11 @@ describe('evaluateTiers', () => {
   });
 
   it('reports every unmet tier, not the first', () => {
+    // Asserted against the preset rather than a hard-coded count, so adding a
+    // tier to `strict` changes what this checks instead of what it expects.
     const report = evaluateTiers('strict', [passing('unit')]);
-    expect(report.findings.filter((f) => f.status !== 'passed')).toHaveLength(4);
+    const required = REQUIRED_TIERS['strict'] ?? [];
+    expect(report.findings.filter((f) => f.status !== 'passed')).toHaveLength(required.length - 1);
   });
 
   it('falls back to standard for an unknown preset rather than requiring nothing', () => {
@@ -240,5 +243,42 @@ describe('discovery mode (P2-QA-07)', () => {
     const report = evaluateTiers('standard', files, 'discovery');
     const integration = report.findings.find((finding) => finding.tier === 'integration');
     expect(integration?.detail).toBe('no integration test files found');
+  });
+});
+
+describe('the property tier (P3-QA-11)', () => {
+  it('recognises the naming convention', () => {
+    expect(tierOf('packages/core/src/parse.property.test.ts')).toBe('property');
+    expect(tierOf('packages/core/src/parse.prop.test.ts')).toBe('property');
+    expect(tierOf('test/property/parse.test.ts')).toBe('property');
+  });
+
+  it('does not swallow an ordinary unit test', () => {
+    // Same hazard as smoke-vs-unit: `x.property.test.ts` also ends in
+    // `.test.ts`, so order matters and a plain unit file must stay unit.
+    expect(tierOf('packages/core/src/parse.test.ts')).toBe('unit');
+  });
+
+  it('is required at strict and nowhere below it', () => {
+    // Requiring it below strict would make every existing project red on
+    // upgrade, which is how a check gets turned off rather than satisfied.
+    expect(REQUIRED_TIERS['strict']).toContain('property');
+    expect(REQUIRED_TIERS['standard']).not.toContain('property');
+    expect(REQUIRED_TIERS['lite']).not.toContain('property');
+  });
+
+  it('keeps the required sets additive across presets', () => {
+    // A preset that dropped a tier the level below demanded would make
+    // "stricter" a claim rather than a fact.
+    for (const tier of REQUIRED_TIERS['standard'] ?? []) {
+      expect(REQUIRED_TIERS['strict']).toContain(tier);
+    }
+  });
+
+  it('produces an ordinary `test` envelope', () => {
+    // A property run is still a test run; a separate evidence kind would need a
+    // parser nobody has written and a policy nobody can express yet.
+    const definition = TIER_DEFINITIONS.find((entry) => entry.tier === 'property');
+    expect(definition?.kind).toBe('test');
   });
 });

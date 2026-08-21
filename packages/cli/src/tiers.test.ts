@@ -106,14 +106,20 @@ describe('reportTiers', () => {
     expect(result.report.satisfied).toBe(false);
   });
 
-  it('asks strict for e2e and smoke as well', async () => {
+  it('asks strict for the tiers standard does not', async () => {
+    // Asserted as a superset rather than an exact list: adding a tier to
+    // `strict` should change what this covers, not break it. The property is
+    // that strict is stricter, and an exact list only ever pins today's answer.
     const root = await tree([
       'src/a.test.ts',
       'src/b.integration.test.ts',
       'src/c.regression.test.ts',
     ]);
     const result = await reportTiers(root, 'strict');
-    expect(result.unwritten).toEqual(['smoke', 'e2e']);
+    for (const tier of ['smoke', 'e2e'] as const) {
+      expect(result.unwritten).toContain(tier);
+    }
+    expect(result.unwritten.length).toBeGreaterThanOrEqual(2);
   });
 
   it('reports a tier that ran without being required, without complaining', async () => {

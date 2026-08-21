@@ -21,7 +21,14 @@
 
 import type { EvidenceKind } from './evidence.js';
 
-export const TEST_TIERS = ['unit', 'integration', 'smoke', 'regression', 'e2e'] as const;
+export const TEST_TIERS = [
+  'unit',
+  'integration',
+  'smoke',
+  'regression',
+  'property',
+  'e2e',
+] as const;
 export type TestTier = (typeof TEST_TIERS)[number];
 
 export interface TierDefinition {
@@ -52,6 +59,15 @@ export const TIER_DEFINITIONS: readonly TierDefinition[] = [
     kind: 'e2e',
     markers: ['.e2e.test.', '.e2e.spec.', '/e2e/'],
     purpose: 'a full flow through the real system, no mocked seams',
+  },
+  {
+    tier: 'property',
+    kind: 'test',
+    markers: ['.property.test.', '.property.spec.', '.prop.test.', '/property/'],
+    purpose:
+      'a claim that must hold across generated inputs the author did not choose — ' +
+      'much harder to satisfy vacuously than an example, and derived from the ' +
+      'signature rather than from the implementation body (P3-QA-11)',
   },
   {
     tier: 'integration',
@@ -110,7 +126,11 @@ export function tierOf(filePath: string): TestTier | null {
 export const REQUIRED_TIERS: Readonly<Record<string, readonly TestTier[]>> = {
   lite: ['unit'],
   standard: ['unit', 'integration', 'regression'],
-  strict: ['unit', 'integration', 'regression', 'smoke', 'e2e'],
+  // `property` is required only at strict: a property test is the cheapest
+  // approximation of a held-out check (it asserts what the signature promised,
+  // not what the body does), and requiring it below strict would make every
+  // existing project red on upgrade.
+  strict: ['unit', 'integration', 'regression', 'smoke', 'property', 'e2e'],
 };
 
 export interface TierRun {
