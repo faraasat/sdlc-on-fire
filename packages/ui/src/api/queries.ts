@@ -11,7 +11,7 @@
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { api, type LifecycleStateRow, type WorkItemDetail, type WorkItemRow } from './client.js';
-import type { ResolvedIdentity } from '@sdlc-on-fire/core';
+import type { ResolvedIdentity } from '@sdlc-on-fire/core/browser';
 
 export const queryKeys = {
   identity: ['identity'] as const,

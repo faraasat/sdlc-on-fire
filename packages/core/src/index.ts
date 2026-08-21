@@ -75,6 +75,7 @@ export * from './test-tiers.js';
 export * from './plugin-manifest.js';
 export * from './change-event.js';
 export * from './identity.js';
+export * from './board.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report

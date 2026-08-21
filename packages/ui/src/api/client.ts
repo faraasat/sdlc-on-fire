@@ -7,7 +7,7 @@
  * served by the daemon itself, same origin, same port.
  */
 
-import type { ResolvedIdentity } from '@sdlc-on-fire/core';
+import type { ResolvedIdentity } from '@sdlc-on-fire/core/browser';
 
 export class ApiError extends Error {
   constructor(
@@ -62,7 +62,26 @@ export interface LifecycleStateRow {
   readonly sort_order: number;
 }
 
+export interface MoveOutcome {
+  readonly moved: boolean;
+  readonly from: string;
+  readonly to: string | null;
+  readonly because: string;
+}
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new ApiError(response.status, response.statusText);
+  return (await response.json()) as T;
+}
+
 export const api = {
+  move: (id: string, column: string) =>
+    post<MoveOutcome>(`/api/work-items/${encodeURIComponent(id)}/move`, { column }),
   health: () => get<{ ok: boolean; version: string }>('/api/health'),
   identity: () => get<ResolvedIdentity>('/api/identity'),
   workItems: () => get<WorkItemRow[]>('/api/work-items'),

@@ -35,7 +35,7 @@ const items = [
     type: 'bug',
     title: 'Fix the parser',
     status: 'inbox',
-    lifecycle_state: 'build',
+    lifecycle_state: 'implement',
     risk_level: 'low',
     parent_id: null,
     claimed_by: null,

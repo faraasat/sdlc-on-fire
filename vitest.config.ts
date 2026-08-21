@@ -8,6 +8,12 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
+      // Longest-prefix first: '@sdlc-on-fire/core' would otherwise also match
+      // '@sdlc-on-fire/core/browser' and resolve it to the Node barrel, which
+      // is the exact separation the browser entry exists to enforce.
+      '@sdlc-on-fire/core/browser': fileURLToPath(
+        new URL('./packages/core/src/browser.ts', import.meta.url),
+      ),
       '@sdlc-on-fire/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
       '@sdlc-on-fire/db': fileURLToPath(new URL('./packages/db/src/index.ts', import.meta.url)),
       '@sdlc-on-fire/storage': fileURLToPath(

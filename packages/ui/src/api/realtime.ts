@@ -14,7 +14,7 @@
 
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import type { ChangeEvent } from '@sdlc-on-fire/core';
+import type { ChangeEvent } from '@sdlc-on-fire/core/browser';
 import { keysForTable } from './queries.js';
 import { useUiStore } from '../state/ui.js';
 

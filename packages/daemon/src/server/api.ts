@@ -12,6 +12,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolveIdentity, type Actor, type ResolvedIdentity } from '@sdlc-on-fire/core';
 import { isAllowedOrigin, isLoopbackHost } from './guard.js';
+import { moveCard } from './move.js';
+import type { LifecycleStage } from '@sdlc-on-fire/core';
 
 export interface ApiQueryCapable {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
@@ -19,6 +21,12 @@ export interface ApiQueryCapable {
 
 export interface ApiOptions {
   readonly db: ApiQueryCapable;
+  /**
+   * Performs a lifecycle transition. Injected rather than constructed here, so
+   * the API cannot become a second transition path — whatever `sdlc advance`
+   * drives is what a board drag drives, guards and all.
+   */
+  readonly transition?: ((id: string, to: LifecycleStage) => Promise<void>) | undefined;
   /** `git config user.email`, resolved once by the caller. */
   readonly gitEmail?: string | undefined;
   readonly version?: string;
@@ -43,6 +51,21 @@ function json(response: ServerResponse, status: number, body: unknown, origin?: 
   }
   response.writeHead(status, headers);
   response.end(JSON.stringify(body));
+}
+
+/** Reads and parses a JSON body, capped so a large POST cannot exhaust memory. */
+async function readBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = chunk as Buffer;
+    size += buffer.length;
+    if (size > 64 * 1024) throw new Error('request body too large');
+    chunks.push(buffer);
+  }
+  if (chunks.length === 0) return {};
+  const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {};
 }
 
 async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
@@ -77,11 +100,28 @@ async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
   }
 
   if (path === '/api/work-items') {
+    // `gate_state` and `active_run` are aggregated here rather than fetched per
+    // card. A board of 200 cards asking for its own gates is 200 requests, and
+    // the derived values are two joins the database does far better than the
+    // browser does. Worst-result-wins on gates: any fail is a fail, else any
+    // pending is pending — a card with one failing gate is blocked whatever the
+    // others say.
     const rows = await db.query(
-      `SELECT id, type, title, status, lifecycle_state, work_type, preset, risk_level,
-              parent_id, file_path, claimed_by, claim_kind, lease_expires_at,
-              created_at, updated_at
-         FROM work_items ORDER BY updated_at DESC LIMIT 1000;`,
+      `SELECT w.id, w.type, w.title, w.status, w.lifecycle_state, w.work_type, w.preset,
+              w.risk_level, w.parent_id, w.file_path, w.claimed_by, w.claim_kind,
+              w.lease_expires_at, w.created_at, w.updated_at,
+              (SELECT CASE
+                        WHEN bool_or(g.result = 'fail') THEN 'fail'
+                        WHEN bool_or(g.result = 'pending') THEN 'pending'
+                        WHEN count(g.id) > 0 THEN 'pass'
+                        ELSE NULL
+                      END
+                 FROM gates g WHERE g.work_item_id = w.id) AS gate_state,
+              (SELECT r.id FROM runs r
+                WHERE r.work_item_id = w.id AND r.status = 'running'
+                ORDER BY r.started_at DESC NULLS LAST LIMIT 1) AS active_run
+         FROM work_items w
+        ORDER BY w.updated_at DESC LIMIT 1000;`,
     );
     return { status: 200, body: rows };
   }
@@ -158,7 +198,7 @@ export function createApiHandler(
           ? {}
           : {
               'access-control-allow-origin': allowedOrigin,
-              'access-control-allow-methods': 'GET, OPTIONS',
+              'access-control-allow-methods': 'GET, POST, OPTIONS',
               'access-control-allow-headers': 'content-type',
               vary: 'Origin',
             }),
@@ -167,11 +207,58 @@ export function createApiHandler(
       return true;
     }
 
+    const move = /^\/api\/work-items\/([^/]+)\/move$/.exec(path);
+    if (request.method === 'POST' && move !== null) {
+      if (options.transition === undefined) {
+        json(
+          response,
+          501,
+          { error: 'this server was started without a transition path' },
+          allowedOrigin,
+        );
+        return true;
+      }
+      const transition = options.transition;
+      void (async () => {
+        try {
+          const body = await readBody(request);
+          const column = typeof body['column'] === 'string' ? body['column'] : '';
+          const outcome = await moveCard(
+            {
+              currentStage: async (id) => {
+                const rows = await options.db.query<{ lifecycle_state: string }>(
+                  `SELECT lifecycle_state FROM work_items WHERE id = $1;`,
+                  [id],
+                );
+                return rows[0]?.lifecycle_state ?? null;
+              },
+              transition,
+            },
+            decodeURIComponent(move[1] ?? ''),
+            column,
+          );
+          // A refused move is 200 with `moved: false`, not an error status. The
+          // gate saying no is the product working, and rendering it as a failed
+          // request would put "something went wrong" in front of a user whose
+          // move was correctly declined for a reason they need to read.
+          json(response, 200, outcome, allowedOrigin);
+        } catch (error) {
+          json(
+            response,
+            500,
+            { error: error instanceof Error ? error.message : String(error) },
+            allowedOrigin,
+          );
+        }
+      })();
+      return true;
+    }
+
     if (request.method !== 'GET') {
       json(
         response,
         405,
-        { error: 'the API is read-only; write through the CLI or daemon' },
+        { error: 'the API is read-mostly; the only write is a board move' },
         allowedOrigin,
       );
       return true;

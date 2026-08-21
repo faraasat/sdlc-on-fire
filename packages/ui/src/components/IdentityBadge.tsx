@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import type { ResolvedIdentity } from '@sdlc-on-fire/core';
+import type { ResolvedIdentity } from '@sdlc-on-fire/core/browser';
 
 /**
  * Who the board thinks you are, and how sure it is (P3-UI-01).

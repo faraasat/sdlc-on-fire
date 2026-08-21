@@ -1,30 +1,38 @@
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { useIdentity, useWorkItems } from './api/queries.js';
+import { useMoveCard } from './api/mutations.js';
 import { useRealtime } from './api/realtime.js';
 import { isFiltered, useUiStore } from './state/ui.js';
 import { IdentityBadge } from './components/IdentityBadge.js';
 import { ConnectionDot } from './components/ConnectionDot.js';
+import { BoardView } from './components/BoardView.js';
+import { TableView } from './components/TableView.js';
+import { RoadmapView } from './components/RoadmapView.js';
+import { GROUP_BY, type BoardCard, type GroupBy } from '@sdlc-on-fire/core/browser';
 
 /**
- * The app shell (P3-UI-01).
+ * The app shell (P3-UI-01) and the three views (P3-KAN-01).
  *
- * Deliberately thin. What this task delivers is the *seams* — server state
- * behind TanStack Query, UI state behind Zustand, identity resolved and shown
- * with its ground, and a live connection whose status is never hidden. The
- * board itself is [P3-KAN-01] and lands on top of these.
+ * The projection lives in core's `projectBoard`, not in this render, so what a
+ * board *claims* about the state of work is testable without a browser.
  */
 export function App(): ReactElement {
   useRealtime();
 
   const identity = useIdentity();
   const items = useWorkItems();
+  const move = useMoveCard();
   const { view, setView, filters, setFilters, clearFilters } = useUiStore();
+  const [groupBy, setGroupBy] = useState<GroupBy>('none');
+  const [refusal, setRefusal] = useState<string | null>(null);
 
-  const visible = (items.data ?? []).filter((item) => {
+  const cards = (items.data ?? []) as unknown as BoardCard[];
+
+  // The table and roadmap filter on text only; the board's own projection
+  // applies the full filter set, so applying it twice here would double-filter.
+  const textFiltered = cards.filter((card) => {
     const text = filters.text.trim().toLowerCase();
-    if (text !== '' && !`${item.id} ${item.title}`.toLowerCase().includes(text)) return false;
-    if (filters.risk !== null && item.risk_level !== filters.risk) return false;
-    return true;
+    return text === '' || `${card.id} ${card.title}`.toLowerCase().includes(text);
   });
 
   return (
@@ -43,6 +51,24 @@ export function App(): ReactElement {
             </button>
           ))}
         </nav>
+
+        {view === 'board' ? (
+          <label className="app__group">
+            group
+            <select
+              value={groupBy}
+              onChange={(event) => setGroupBy(event.target.value as GroupBy)}
+              aria-label="group cards into swimlanes"
+            >
+              {GROUP_BY.map((candidate) => (
+                <option key={candidate} value={candidate}>
+                  {candidate}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
         <input
           className="app__search"
           type="search"
@@ -51,6 +77,22 @@ export function App(): ReactElement {
           onChange={(event) => setFilters({ text: event.target.value })}
           aria-label="filter work items"
         />
+        <button
+          type="button"
+          className={filters.blockedOnly ? 'toggle toggle--on' : 'toggle'}
+          aria-pressed={filters.blockedOnly}
+          onClick={() => setFilters({ blockedOnly: !filters.blockedOnly })}
+        >
+          blocked
+        </button>
+        <button
+          type="button"
+          className={filters.needsHumanOnly ? 'toggle toggle--on' : 'toggle'}
+          aria-pressed={filters.needsHumanOnly}
+          onClick={() => setFilters({ needsHumanOnly: !filters.needsHumanOnly })}
+        >
+          needs a human
+        </button>
         <ConnectionDot />
         <IdentityBadge identity={identity.data} />
       </header>
@@ -64,7 +106,18 @@ export function App(): ReactElement {
           </p>
         ) : null}
 
-        {items.isSuccess && visible.length === 0 ? (
+        {refusal !== null ? (
+          // The gate's own words, on screen. A refused move is the product
+          // working; the user needs the reason, not a generic failure.
+          <p className="warn" role="alert">
+            {refusal}{' '}
+            <button type="button" onClick={() => setRefusal(null)}>
+              dismiss
+            </button>
+          </p>
+        ) : null}
+
+        {items.isSuccess && cards.length === 0 ? (
           <p className="muted">
             {isFiltered(filters) ? (
               <>
@@ -74,23 +127,44 @@ export function App(): ReactElement {
                 </button>
               </>
             ) : (
-              // Distinguished from a filtered-empty board on purpose: "you have
-              // no work items" and "your filter hides all of them" ask for
-              // opposite next actions.
               <>no work items yet — run `sdlc capture` to add one</>
             )}
           </p>
         ) : null}
 
-        {visible.length > 0 ? (
-          <ul className="cards">
-            {visible.map((item) => (
-              <li key={item.id} className={`card card--${item.lifecycle_state}`}>
-                <code>{item.id}</code> <span>{item.title}</span>
-                <small>{item.lifecycle_state}</small>
-              </li>
-            ))}
-          </ul>
+        {items.isSuccess && cards.length > 0 && textFiltered.length === 0 && view !== 'board' ? (
+          <p className="muted">
+            nothing matches this filter.{' '}
+            <button type="button" onClick={clearFilters}>
+              clear it
+            </button>
+          </p>
+        ) : null}
+
+        {items.isSuccess && cards.length > 0 ? (
+          view === 'board' ? (
+            <BoardView
+              cards={cards}
+              groupBy={groupBy}
+              filter={filters}
+              onMove={(id, column) => {
+                move.mutate(
+                  { id, column },
+                  {
+                    onSuccess: (outcome) => {
+                      setRefusal(outcome.moved ? null : outcome.because);
+                    },
+                    onError: (error) => setRefusal(error.message),
+                  },
+                );
+              }}
+              onClearFilters={clearFilters}
+            />
+          ) : view === 'table' ? (
+            <TableView cards={textFiltered} />
+          ) : (
+            <RoadmapView cards={textFiltered} />
+          )
         ) : null}
       </main>
     </div>

@@ -23,6 +23,8 @@ import {
 import {
   createApiHandler,
   createStaticHandler,
+  LifecycleEngine,
+  registerLifecycleInvariants,
   startRealtimeServer,
   SyncEngine,
 } from '@sdlc-on-fire/daemon';
@@ -100,7 +102,20 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   // own board would be a migration note for a problem we created. Idempotent.
   await ensureHumanActor(db, email);
 
-  const api = createApiHandler({ db, gitEmail: email, version: 'dev' });
+  // The same engine `sdlc advance` uses, invariants and all. A board drag is a
+  // proposal; these guards dispose of it. A second transition path would make
+  // the board the way around the gates rather than a view of them.
+  const lifecycle = new LifecycleEngine(db);
+  registerLifecycleInvariants(lifecycle);
+
+  const api = createApiHandler({
+    db,
+    gitEmail: email,
+    version: 'dev',
+    transition: async (id, to) => {
+      await lifecycle.transition({ workItemId: id, to });
+    },
+  });
 
   const uiDir = await findUi(options.uiDir);
   const statics = uiDir === null ? null : createStaticHandler(uiDir);

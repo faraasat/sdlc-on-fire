@@ -55,7 +55,8 @@ describe('useUiStore', () => {
     // connection, none of which are content.
     useUiStore.getState().setFilters({ text: 'a secret note a human typed' });
     const keys = Object.keys(useUiStore.getState()).filter(
-      (key) => typeof (useUiStore.getState() as Record<string, unknown>)[key] !== 'function',
+      (key) =>
+        typeof (useUiStore.getState() as unknown as Record<string, unknown>)[key] !== 'function',
     );
     expect(keys.sort()).toEqual(['connection', 'filters', 'selectedId', 'view']);
   });

@@ -97,6 +97,54 @@ describe('the read API', () => {
     expect(body.comments).toEqual([]);
   });
 
+  it('aggregates gate state so a board does not ask per card', async () => {
+    // 200 cards each fetching their own gates is 200 requests. Worst result
+    // wins: one failing gate blocks the card whatever the others say.
+    await seedItem('AGG-1');
+    await db.query(
+      `INSERT INTO gates (work_item_id, gate_name, result)
+       VALUES ('AGG-1','build','pass'), ('AGG-1','test','fail');`,
+    );
+    await seedItem('AGG-2');
+    await db.query(
+      `INSERT INTO gates (work_item_id, gate_name, result) VALUES ('AGG-2','build','pass');`,
+    );
+    await seedItem('AGG-3');
+
+    const rows = (await (await fetch(`${base}/api/work-items`)).json()) as {
+      id: string;
+      gate_state: string | null;
+      active_run: string | null;
+    }[];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get('AGG-1')?.gate_state).toBe('fail');
+    expect(byId.get('AGG-2')?.gate_state).toBe('pass');
+    // No gates at all is null, not 'pass'. A card nothing has checked has not
+    // passed anything, which is the distinction this whole product is about.
+    expect(byId.get('AGG-3')?.gate_state).toBeNull();
+  });
+
+  it('reports a running agent, and only a running one', async () => {
+    await seedItem('RUN-1');
+    await db.query(
+      `INSERT INTO runs (id, work_item_id, status) VALUES ('done-run','RUN-1','pass');`,
+    );
+    let rows = (await (await fetch(`${base}/api/work-items`)).json()) as {
+      id: string;
+      active_run: string | null;
+    }[];
+    expect(rows.find((row) => row.id === 'RUN-1')?.active_run).toBeNull();
+
+    await db.query(
+      `INSERT INTO runs (id, work_item_id, status) VALUES ('live-run','RUN-1','running');`,
+    );
+    rows = (await (await fetch(`${base}/api/work-items`)).json()) as {
+      id: string;
+      active_run: string | null;
+    }[];
+    expect(rows.find((row) => row.id === 'RUN-1')?.active_run).toBe('live-run');
+  });
+
   it('404s a work item that does not exist, rather than an empty card', async () => {
     const response = await fetch(`${base}/api/work-items/NOPE`);
     expect(response.status).toBe(404);

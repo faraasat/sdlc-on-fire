@@ -143,3 +143,266 @@ body {
   margin-left: auto;
   color: var(--muted);
 }
+
+/* ── board (P3-KAN-01) ─────────────────────────────────────────────── */
+
+.app__group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.app__group select {
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.toggle {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.toggle--on {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.warn {
+  color: var(--warn);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.kboard {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(240px, 1fr);
+  gap: 10px;
+  align-items: start;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.kcol {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 140px;
+}
+.kcol--over {
+  border-color: var(--accent);
+}
+.kcol__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.kcol__head h2 {
+  font-size: 12px;
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.kcol__count {
+  font-size: 12px;
+  color: var(--muted);
+}
+.kcol__scroll {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+.kcol__empty {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 4px 2px;
+}
+
+.klane {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 6px 2px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.klane--overflow {
+  color: var(--warn);
+}
+
+.kcard {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: grab;
+  display: grid;
+  gap: 6px;
+}
+.kcard:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.kcard--dragging {
+  opacity: 0.5;
+}
+.kcard--blocked {
+  border-left: 3px solid var(--bad);
+}
+.kcard__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kcard__head code {
+  color: var(--accent);
+  font-size: 12px;
+}
+.kcard__title {
+  margin: 0;
+  font-size: 13px;
+}
+.kcard__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  font-size: 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  color: var(--muted);
+}
+.chip--pass {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.chip--fail {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.chip--pending {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.chip--blocked {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.chip--human {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.chip--live {
+  color: var(--ok);
+  border-color: var(--ok);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.chip--live i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chip--live i {
+    animation: none;
+  }
+}
+
+.ktable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.ktable th,
+.ktable td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.ktable thead th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.ktable tbody th code {
+  color: var(--accent);
+}
+
+.kroadmap__row {
+  margin: 14px 0;
+}
+.kroadmap__row h3 {
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+.kroadmap__row small {
+  color: var(--muted);
+  font-weight: 400;
+}
+.kroadmap__bar {
+  display: flex;
+  height: 22px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.kroadmap__seg {
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--bg);
+  background: var(--muted);
+  min-width: 22px;
+}
+.kroadmap__seg--done {
+  background: var(--ok);
+}
+.kroadmap__seg--in-progress {
+  background: var(--accent);
+}
+.kroadmap__seg--review {
+  background: var(--warn);
+}
