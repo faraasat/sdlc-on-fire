@@ -73,6 +73,7 @@ export * from './gate-reopen.js';
 export * from './merge-conflict.js';
 export * from './test-tiers.js';
 export * from './plugin-manifest.js';
+export * from './change-event.js';
 
 /**
  * Package identity, surfaced by `sdlc doctor` so a running install can report

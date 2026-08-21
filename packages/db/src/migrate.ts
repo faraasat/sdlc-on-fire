@@ -202,8 +202,14 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
                          'UX_ACCEPTANCE_UPDATE','CONTEXT_INJECTION','BUG_CREATION')),
      target_gate_key  TEXT,
      addressed_to     TEXT,
-     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+     -- Realtime watermark (contract 01 §3.11). A comment body is editable —
+     -- only role_effect is frozen — so created_at cannot serve as one.
+     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
    );`,
+  // For databases created before the watermark existed.
+  `ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();`,
+  `CREATE INDEX IF NOT EXISTS comments_updated_at_idx ON comments (updated_at);`,
   'CREATE INDEX IF NOT EXISTS comments_work_item_idx ON comments (work_item_id, created_at);',
   // Immutable once written. A settable effect would let an edit convert an
   // ordinary comment into an instruction after the fact, which is the injection
@@ -420,6 +426,79 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
   `CREATE TRIGGER gate_evidence_agent_claim_guard_trg
      BEFORE INSERT ON gate_evidence FOR EACH ROW
      EXECUTE FUNCTION gate_evidence_agent_claim_guard();`,
+
+  // ── Realtime change notification (P3-RT-01, contract 01 §3.11) ──
+  //
+  // One function, one channel, every watched table. The payload is an
+  // identifier and a watermark — never the row — because NOTIFY caps payloads
+  // at 8000 bytes, collapses identical payloads within a transaction, and
+  // delivers only on commit to sessions that are listening at that moment. A
+  // consumer that treats the event as data would be wrong on all three counts;
+  // a consumer that treats it as "look again" is wrong on none.
+  //
+  // The watermark column differs per table and arrives as a trigger argument:
+  // append-only tables have no `updated_at` and their `created_at` *is* the
+  // watermark, since a row that never changes cannot have a later one.
+  `CREATE OR REPLACE FUNCTION sdlcof_notify_change() RETURNS trigger AS $$
+     DECLARE
+       row_data jsonb;
+     BEGIN
+       IF TG_OP = 'DELETE' THEN row_data := to_jsonb(OLD); ELSE row_data := to_jsonb(NEW); END IF;
+       PERFORM pg_notify('sdlcof_change', json_build_object(
+         'table',      TG_TABLE_NAME,
+         'op',         TG_OP,
+         'id',         row_data->>'id',
+         'updated_at', row_data->>(TG_ARGV[0])
+       )::text);
+       -- AFTER triggers ignore the return value; NULL is the conventional
+       -- answer and avoids implying the row was rewritten.
+       RETURN NULL;
+     END; $$ LANGUAGE plpgsql;`,
+
+  // Watermark maintenance, in the database rather than in callers. Every
+  // current writer already sets `updated_at = now()` by hand, so this agrees
+  // with them; what it adds is the case nobody writes a test for — a writer
+  // that *forgets*, producing a row that is invisible to catch-up. A missed
+  // update that no assertion on the write itself would ever notice.
+  `CREATE OR REPLACE FUNCTION sdlcof_touch_updated_at() RETURNS trigger AS $$
+     BEGIN
+       NEW.updated_at := now();
+       RETURN NEW;
+     END; $$ LANGUAGE plpgsql;`,
+
+  `DROP TRIGGER IF EXISTS work_items_notify ON work_items;`,
+  `CREATE TRIGGER work_items_notify AFTER INSERT OR UPDATE OR DELETE ON work_items
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_notify_change('updated_at');`,
+  `DROP TRIGGER IF EXISTS work_items_touch ON work_items;`,
+  `CREATE TRIGGER work_items_touch BEFORE UPDATE ON work_items
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_touch_updated_at();`,
+  `DROP TRIGGER IF EXISTS docs_notify ON docs;`,
+  `CREATE TRIGGER docs_notify AFTER INSERT OR UPDATE OR DELETE ON docs
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_notify_change('updated_at');`,
+  `DROP TRIGGER IF EXISTS docs_touch ON docs;`,
+  `CREATE TRIGGER docs_touch BEFORE UPDATE ON docs
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_touch_updated_at();`,
+  `DROP TRIGGER IF EXISTS gates_notify ON gates;`,
+  `CREATE TRIGGER gates_notify AFTER INSERT OR UPDATE OR DELETE ON gates
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_notify_change('updated_at');`,
+  `DROP TRIGGER IF EXISTS gates_touch ON gates;`,
+  `CREATE TRIGGER gates_touch BEFORE UPDATE ON gates
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_touch_updated_at();`,
+  `DROP TRIGGER IF EXISTS runs_notify ON runs;`,
+  `CREATE TRIGGER runs_notify AFTER INSERT OR UPDATE OR DELETE ON runs
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_notify_change('updated_at');`,
+  `DROP TRIGGER IF EXISTS runs_touch ON runs;`,
+  `CREATE TRIGGER runs_touch BEFORE UPDATE ON runs
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_touch_updated_at();`,
+  `DROP TRIGGER IF EXISTS comments_notify ON comments;`,
+  `CREATE TRIGGER comments_notify AFTER INSERT OR UPDATE OR DELETE ON comments
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_notify_change('updated_at');`,
+  `DROP TRIGGER IF EXISTS comments_touch ON comments;`,
+  `CREATE TRIGGER comments_touch BEFORE UPDATE ON comments
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_touch_updated_at();`,
+  `DROP TRIGGER IF EXISTS lifecycle_transitions_notify ON lifecycle_transitions;`,
+  `CREATE TRIGGER lifecycle_transitions_notify AFTER INSERT OR UPDATE OR DELETE ON lifecycle_transitions
+     FOR EACH ROW EXECUTE FUNCTION sdlcof_notify_change('created_at');`,
 ];
 
 /**

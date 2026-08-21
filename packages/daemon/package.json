@@ -41,12 +41,17 @@
     "@sdlc-on-fire/evidence": "workspace:^",
     "@sdlc-on-fire/storage": "workspace:^",
     "chokidar": "5.0.0",
-    "simple-git": "3.36.0"
+    "simple-git": "3.36.0",
+    "ws": "8.21.3",
+    "zod": "4.4.3"
   },
   "optionalDependencies": {
     "@huggingface/transformers": "4.2.0"
   },
   "peerDependencies": {
     "@sdlc-on-fire/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

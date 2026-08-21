@@ -238,9 +238,12 @@ export const gates = pgTable(
     policyId: integer('policy_id').references(() => gatePolicies.id),
     result: text('result'),
     evaluatedAt: timestamp('evaluated_at', { withTimezone: true }),
+    /** Realtime watermark (contract 01 §3.11). Maintained by trigger, not by callers. */
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index('gates_work_item_idx').on(table.workItemId),
+    index('gates_updated_at_idx').on(table.updatedAt),
     check('gates_result_check', sql`${table.result} IN ('pending','pass','fail')`),
   ],
 );
@@ -338,9 +341,16 @@ export const runs = pgTable(
     prUrl: text('pr_url'),
     startedAt: timestamp('started_at', { withTimezone: true }),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
+    /**
+     * Realtime watermark (contract 01 §3.11). Without it a client that missed a
+     * `runs` update while disconnected could not discover it by any query — and
+     * `runs` is the table a live board watches most closely.
+     */
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     index('runs_work_item_idx').on(table.workItemId),
+    index('runs_updated_at_idx').on(table.updatedAt),
     check('runs_status_check', sql`${table.status} IN ('pending','running','pass','fail','error')`),
   ],
 );

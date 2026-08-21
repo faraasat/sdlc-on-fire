@@ -82,6 +82,19 @@ export interface ProvisionedDatabase {
       query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
     }) => Promise<T>,
   ): Promise<T>;
+  /**
+   * Subscribe to a Postgres `NOTIFY` channel; resolves to an unsubscribe.
+   *
+   * On the port rather than reached around (ADR-0047), because realtime is a
+   * data concern and the daemon must not hold a raw driver handle to get it.
+   *
+   * PGlite is a single connection, so this listener shares the session every
+   * query uses. That is fine in-process and is *not* fine against a server
+   * Postgres, where a dedicated `LISTEN` connection is the documented shape —
+   * the connected adapter therefore opens its own, and [P3-META-01] budgets
+   * them.
+   */
+  listen(channel: string, callback: (payload: string) => void): Promise<() => Promise<void>>;
   /** Releases the lock and shuts the database down. Idempotent. */
   close(): Promise<void>;
 }
@@ -241,6 +254,15 @@ export async function provisionPglite(
           () => undefined,
         );
         return result;
+      },
+      async listen(
+        channel: string,
+        callback: (payload: string) => void,
+      ): Promise<() => Promise<void>> {
+        const unsubscribe = await db.listen(channel, callback);
+        return async () => {
+          await unsubscribe();
+        };
       },
       async close(): Promise<void> {
         if (closed) return;
