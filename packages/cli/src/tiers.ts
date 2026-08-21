@@ -1,7 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
+  evaluateKnowledgeMix,
   evaluateTiers,
+  formatKnowledgeMix,
+  knowledgeOf,
   extraTiers,
   formatTierReport,
   relativePosix,
@@ -9,6 +12,8 @@ import {
   tierOf,
   type TestTier,
   type TierReport,
+  type KnowledgeDeclaration,
+  type KnowledgeMix,
   type TierRun,
 } from '@sdlc-on-fire/core';
 
@@ -69,6 +74,8 @@ export async function discoverTiers(root: string): Promise<TierInventory[]> {
 
 export interface TiersResult {
   readonly preset: string;
+  /** How much the suite *knew* — orthogonal to how much it exercises. */
+  readonly knowledge: KnowledgeMix;
   readonly inventory: readonly TierInventory[];
   /** Required tiers this repository has no files for at all. */
   readonly unwritten: readonly TestTier[];
@@ -105,8 +112,19 @@ export async function reportTiers(root: string, preset = 'standard'): Promise<Ti
     failed: 0,
   }));
 
+  // The knowledge axis (P3-QA-08). Read from the files rather than the runs,
+  // because it is a property of how a test was written and no run reports it.
+  const declarations: KnowledgeDeclaration[] = [];
+  for (const entry of inventory) {
+    for (const relative of entry.files) {
+      const contents = await fs.readFile(path.join(root, relative), 'utf8').catch(() => '');
+      declarations.push(knowledgeOf(relative, contents));
+    }
+  }
+
   return {
     preset,
+    knowledge: evaluateKnowledgeMix(declarations),
     inventory,
     unwritten,
     // Counts *files*, not tests: this command reports what exists, and whether
@@ -125,6 +143,7 @@ export function formatTiers(result: TiersResult): string {
   if (result.inventory.length === 0) lines.push('  no test files found');
 
   lines.push('', formatTierReport(result.preset, result.report, result.extra));
+  lines.push('', formatKnowledgeMix(result.knowledge));
 
   if (result.unwritten.length > 0) {
     lines.push(
