@@ -12,49 +12,11 @@
  * "In Progress" — so a drop names a column and the daemon picks the stage.
  */
 
-import {
-  KANBAN_COLUMNS,
-  kanbanColumnForStage,
-  LIFECYCLE_STAGES,
-  type KanbanColumn,
-  type LifecycleStage,
-} from '@sdlc-on-fire/core';
+import { isNoOpMove, stageForDrop, type LifecycleStage } from '@sdlc-on-fire/core';
 
-/** The stages a column projects from, in lifecycle order. */
-export function stagesInColumn(column: string): readonly LifecycleStage[] {
-  if (!(KANBAN_COLUMNS as readonly string[]).includes(column)) return [];
-  return LIFECYCLE_STAGES.filter(
-    (stage) => kanbanColumnForStage(stage) === (column as KanbanColumn),
-  );
-}
-
-/**
- * Which stage a drop onto a column means.
- *
- * The *earliest* stage of the target column, always — never the latest and
- * never "whichever is legal". Dropping a card on "In Progress" means it is
- * starting that phase, and resolving to the last stage would let a drag skip
- * `implement` and land straight on `test`, which is exactly the kind of quiet
- * stage-skipping the lifecycle exists to prevent.
- *
- * Returns null for a column that is not a column, rather than guessing.
- */
-export function stageForDrop(column: string): LifecycleStage | null {
-  return stagesInColumn(column)[0] ?? null;
-}
-
-/**
- * Whether a drop is a no-op — the card is already somewhere in that column.
- *
- * Worth its own answer. Dragging a card two pixels inside its own column is the
- * most common accidental gesture on a board, and treating it as a transition
- * would write a lifecycle_transitions row saying work moved when it did not,
- * into a table this project treats as history rather than as a mirror.
- */
-export function isNoOpMove(currentStage: string, column: string): boolean {
-  if (!(LIFECYCLE_STAGES as readonly string[]).includes(currentStage)) return false;
-  return kanbanColumnForStage(currentStage as LifecycleStage) === column;
-}
+// Re-exported so existing importers keep working; the definitions live in core
+// because the browser needs the identical answer for its optimistic paint.
+export { isNoOpMove, stageForDrop, stagesInColumn } from '@sdlc-on-fire/core';
 
 export interface MoveOutcome {
   readonly moved: boolean;

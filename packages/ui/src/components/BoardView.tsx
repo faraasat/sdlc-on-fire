@@ -9,6 +9,7 @@ import {
 } from '@dnd-kit/core';
 import {
   projectBoard,
+  stageForDrop,
   unplaceable,
   type BoardCard,
   type GroupBy,
@@ -36,7 +37,7 @@ export function BoardView({
   cards: readonly BoardCard[];
   groupBy: GroupBy;
   filter: { text: string; risk: string | null; blockedOnly: boolean; needsHumanOnly: boolean };
-  onMove: (cardId: string, column: string) => void;
+  onMove: (cardId: string, column: string, optimisticStage: string | undefined) => void;
   onClearFilters: () => void;
 }): ReactElement {
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor));
@@ -63,7 +64,10 @@ export function BoardView({
         onDragEnd={(event: DragEndEvent) => {
           const cardId = String(event.active.id);
           const column = event.over === null ? null : String(event.over.id);
-          if (column !== null) onMove(cardId, column);
+          // The stage the daemon will resolve this column to, computed with the
+          // same function the daemon uses, so the optimistic paint and the real
+          // outcome cannot disagree about where the card should land.
+          if (column !== null) onMove(cardId, column, stageForDrop(column) ?? undefined);
         }}
       >
         <div className="kboard">

@@ -147,9 +147,9 @@ export function App(): ReactElement {
               cards={cards}
               groupBy={groupBy}
               filter={filters}
-              onMove={(id, column) => {
+              onMove={(id, column, optimisticStage) => {
                 move.mutate(
-                  { id, column },
+                  { id, column, ...(optimisticStage === undefined ? {} : { optimisticStage }) },
                   {
                     onSuccess: (outcome) => {
                       setRefusal(outcome.moved ? null : outcome.because);

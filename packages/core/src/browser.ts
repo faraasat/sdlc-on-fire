@@ -27,3 +27,5 @@ export * from './flow-metrics.js';
 export * from './dora.js';
 export * from './wip-limits.js';
 export * from './contention.js';
+export * from './presence.js';
+export * from './board-move.js';

@@ -11,13 +11,25 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { z } from 'zod';
-import type { ChangeEvent, Subscription } from '@sdlc-on-fire/core';
+import {
+  Presence,
+  type ChangeEvent,
+  type PresenceEntry,
+  type Subscription,
+} from '@sdlc-on-fire/core';
 import { FanOut } from './fanout.js';
 import { catchUp, newestWatermark, type QueryCapable } from './catchup.js';
 import { subscribeToChanges, type ListenCapable } from './subscriber.js';
 
 /** What a client may send. Anything else is answered with an error frame. */
 const ClientMessageSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('presence'),
+    /** Card being looked at, or null for the board. */
+    cardId: z.string().nullable().optional(),
+    displayName: z.string().min(1).optional(),
+    actorId: z.string().nullable().optional(),
+  }),
   z.object({
     type: z.literal('subscribe'),
     tables: z.array(z.string()).optional(),
@@ -49,11 +61,14 @@ export interface RealtimeServerOptions {
 export interface RealtimeServer {
   readonly port: number;
   readonly clients: number;
+  /** Who is currently connected. Ephemeral — never read from a table. */
+  readonly presence: readonly PresenceEntry[];
   close(): Promise<void>;
 }
 
 type Frame =
   | { type: 'ready'; watermark: string | null }
+  | { type: 'presence'; here: readonly PresenceEntry[] }
   | { type: 'change'; event: ChangeEvent }
   | { type: 'catchup'; table: string; rows: readonly Record<string, unknown>[] }
   | { type: 'error'; because: string };
@@ -70,6 +85,10 @@ export async function startRealtimeServer(options: RealtimeServerOptions): Promi
   });
   const wss = new WebSocketServer({ server: http });
   const fanout = new FanOut();
+  // In memory, never written to Postgres (P3-RT-02). A persisted presence row
+  // outlives the laptop that closed, and a presence list that lies is worse
+  // than none because people act on it — they wait, or they avoid a card.
+  const presence = new Presence();
   let nextId = 0;
 
   const subscription = await subscribeToChanges({
@@ -109,9 +128,27 @@ export async function startRealtimeServer(options: RealtimeServerOptions): Promi
         return;
       }
 
+      // Bound to a local so the discriminated union narrows: TypeScript does not
+      // carry a narrowing across repeated `message.data` property accesses.
+      const payload = message.data;
+
+      if (payload.type === 'presence') {
+        presence.seen({
+          clientId: id,
+          actorId: payload.actorId ?? null,
+          displayName: payload.displayName ?? id,
+          cardId: payload.cardId ?? null,
+        });
+        // Broadcast to everyone, including the sender: a presence list that
+        // shows others but not yourself reads as "you are not connected".
+        const here = presence.list();
+        for (const socket of wss.clients) send(socket, { type: 'presence', here });
+        return;
+      }
+
       const next: Subscription = {
-        ...(message.data.tables === undefined ? {} : { tables: message.data.tables }),
-        ...(message.data.ids === undefined ? {} : { ids: message.data.ids }),
+        ...(payload.tables === undefined ? {} : { tables: payload.tables }),
+        ...(payload.ids === undefined ? {} : { ids: payload.ids }),
       };
       fanout.resubscribe(id, next);
 
@@ -120,18 +157,18 @@ export async function startRealtimeServer(options: RealtimeServerOptions): Promi
       // a window in which it believes it is current and is not.
       void (async () => {
         let watermark: string | null = null;
-        if (message.data.since !== undefined) {
+        if (payload.since !== undefined) {
           try {
             const missed = await catchUp({
               db: options.db,
-              since: message.data.since,
+              since: payload.since,
               ...(options.catchUpLimit === undefined ? {} : { limit: options.catchUpLimit }),
-              ...(message.data.tables === undefined ? {} : { tables: message.data.tables }),
+              ...(payload.tables === undefined ? {} : { tables: payload.tables }),
             });
             for (const result of missed) {
               send(socket, { type: 'catchup', table: result.table, rows: result.rows });
             }
-            watermark = newestWatermark(missed) ?? message.data.since;
+            watermark = newestWatermark(missed) ?? payload.since;
           } catch (error) {
             send(socket, {
               type: 'error',
@@ -145,9 +182,13 @@ export async function startRealtimeServer(options: RealtimeServerOptions): Promi
 
     socket.on('close', () => {
       fanout.remove(id);
+      presence.leave(id);
+      const here = presence.list();
+      for (const other of wss.clients) send(other, { type: 'presence', here });
     });
     socket.on('error', () => {
       fanout.remove(id);
+      presence.leave(id);
     });
   });
 
@@ -160,6 +201,9 @@ export async function startRealtimeServer(options: RealtimeServerOptions): Promi
 
   return {
     port,
+    get presence() {
+      return presence.list();
+    },
     get clients() {
       return fanout.size;
     },

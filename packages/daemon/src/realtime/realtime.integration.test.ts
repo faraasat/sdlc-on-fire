@@ -307,6 +307,52 @@ describe('the WebSocket server', () => {
     await server.close();
   }, 90_000);
 
+  it('tracks presence in memory and tells everyone, including the sender', async () => {
+    // A presence list that shows others but not yourself reads as "you are not
+    // connected", which is the opposite of what presence is for.
+    const server = await startRealtimeServer({ db });
+    const a = await connect(server.port);
+    const b = await connect(server.port);
+
+    a.socket.send(JSON.stringify({ type: 'presence', displayName: 'Ada', cardId: 'FEAT-1' }));
+    await settle(300);
+
+    for (const client of [a, b]) {
+      const frames = client.frames.filter(
+        (frame) => (frame as { type: string }).type === 'presence',
+      );
+      const last = frames.at(-1) as { here: { displayName: string; cardId: string | null }[] };
+      expect(last.here.map((entry) => entry.displayName)).toContain('Ada');
+      expect(last.here.find((entry) => entry.displayName === 'Ada')?.cardId).toBe('FEAT-1');
+    }
+
+    a.socket.close();
+    b.socket.close();
+    await server.close();
+  }, 90_000);
+
+  it('drops presence when a client disconnects, without persisting anything', async () => {
+    // The ephemerality that makes presence honest. Nothing is written to
+    // Postgres, so a closed laptop cannot leave a row saying somebody is here.
+    const server = await startRealtimeServer({ db });
+    const a = await connect(server.port);
+    a.socket.send(JSON.stringify({ type: 'presence', displayName: 'Ada' }));
+    await settle(300);
+    expect(server.presence.map((entry) => entry.displayName)).toEqual(['Ada']);
+
+    a.socket.close();
+    await settle(400);
+    expect(server.presence).toEqual([]);
+
+    // And there is no table it could have leaked into.
+    const tables = await db.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';`,
+    );
+    expect(tables.map((row) => row.table_name)).not.toContain('presence');
+
+    await server.close();
+  }, 90_000);
+
   it('forgets a client when it disconnects', async () => {
     const server = await startRealtimeServer({ db });
     const { socket } = await connect(server.port);
