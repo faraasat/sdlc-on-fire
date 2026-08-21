@@ -16,7 +16,7 @@
 
 import { create } from 'zustand';
 
-export const BOARD_VIEWS = ['board', 'table', 'roadmap'] as const;
+export const BOARD_VIEWS = ['board', 'table', 'roadmap', 'metrics'] as const;
 export type BoardView = (typeof BOARD_VIEWS)[number];
 
 export interface BoardFilters {

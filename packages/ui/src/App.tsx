@@ -9,6 +9,7 @@ import { BoardView } from './components/BoardView.js';
 import { TableView } from './components/TableView.js';
 import { RoadmapView } from './components/RoadmapView.js';
 import { CardDrawer } from './components/CardDrawer.js';
+import { MetricsView } from './components/MetricsView.js';
 import { GROUP_BY, type BoardCard, type GroupBy } from '@sdlc-on-fire/core/browser';
 
 /**
@@ -41,7 +42,7 @@ export function App(): ReactElement {
       <header className="app__bar">
         <strong className="app__brand">SDLC on Fire</strong>
         <nav className="app__views">
-          {(['board', 'table', 'roadmap'] as const).map((candidate) => (
+          {(['board', 'table', 'roadmap', 'metrics'] as const).map((candidate) => (
             <button
               key={candidate}
               type="button"
@@ -142,7 +143,9 @@ export function App(): ReactElement {
           </p>
         ) : null}
 
-        {items.isSuccess && cards.length > 0 ? (
+        {view === 'metrics' ? <MetricsView /> : null}
+
+        {view !== 'metrics' && items.isSuccess && cards.length > 0 ? (
           view === 'board' ? (
             <BoardView
               cards={cards}

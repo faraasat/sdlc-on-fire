@@ -13,7 +13,17 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolveIdentity, type Actor, type ResolvedIdentity } from '@sdlc-on-fire/core';
 import { isAllowedOrigin, isLoopbackHost } from './guard.js';
 import { moveCard } from './move.js';
-import { wipLimits } from '@sdlc-on-fire/core';
+import {
+  bottleneck,
+  cycleTime,
+  flowEfficiency,
+  leadTime,
+  rework,
+  stageStats,
+  visitsByCard,
+  wipLimits,
+  type TransitionRow,
+} from '@sdlc-on-fire/core';
 import type { LifecycleStage } from '@sdlc-on-fire/core';
 
 export interface ApiQueryCapable {
@@ -158,6 +168,66 @@ async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
             workItemId,
           ]);
     return { status: 200, body: rows };
+  }
+
+  if (path === '/api/metrics') {
+    // One request for the whole dashboard. Five charts each fetching their own
+    // slice is five round trips for data that all comes from two tables, and a
+    // dashboard that paints in five stages looks broken while it is loading.
+    const windowDays = Number(url.searchParams.get('days') ?? '30');
+    const days = Number.isFinite(windowDays) && windowDays > 0 ? windowDays : 30;
+
+    const [transitions, gates, runs, items] = await Promise.all([
+      db.query<TransitionRow>(
+        `SELECT work_item_id, from_state, to_state, created_at::text AS created_at
+           FROM lifecycle_transitions ORDER BY created_at ASC;`,
+      ),
+      db.query<{ gate_name: string; result: string | null; count: string }>(
+        `SELECT gate_name, result, count(*)::text AS count FROM gates GROUP BY gate_name, result;`,
+      ),
+      db.query<{ status: string | null; count: string }>(
+        `SELECT status, count(*)::text AS count FROM runs GROUP BY status;`,
+      ),
+      db.query<{ id: string; created_at: string; lifecycle_state: string }>(
+        `SELECT id, created_at::text AS created_at, lifecycle_state FROM work_items;`,
+      ),
+    ]);
+
+    const byCard = visitsByCard(transitions);
+    const all = [...byCard.values()].flat();
+    const createdAt = new Map(items.map((row) => [row.id, row.created_at]));
+
+    return {
+      status: 200,
+      body: {
+        windowDays: days,
+        stages: stageStats(all),
+        bottleneck: bottleneck(all),
+        flowEfficiency: flowEfficiency(all),
+        rework: rework(byCard),
+        cycleTimes: [...byCard.entries()]
+          .map(([id, visits]) => ({
+            id,
+            cycleTimeMs: cycleTime(visits),
+            leadTimeMs: leadTime(visits, createdAt.get(id) ?? ''),
+          }))
+          .filter((entry) => entry.cycleTimeMs !== null),
+        // Cumulative flow: how many cards sit in each column right now. A true
+        // CFD needs a daily snapshot series, which nothing records yet — so
+        // this is the current distribution and is labelled as such rather than
+        // drawn as a time series with one point.
+        cumulative: items.reduce<Record<string, number>>((acc, row) => {
+          acc[row.lifecycle_state] = (acc[row.lifecycle_state] ?? 0) + 1;
+          return acc;
+        }, {}),
+        gates: gates.map((row) => ({
+          gate: row.gate_name,
+          result: row.result ?? 'unrecorded',
+          count: Number(row.count),
+        })),
+        runs: runs.map((row) => ({ status: row.status ?? 'unrecorded', count: Number(row.count) })),
+      },
+    };
   }
 
   if (path === '/api/wip-limits') {
