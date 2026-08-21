@@ -241,3 +241,81 @@ export function formatRepairJudgement(judgement: RepairJudgement): string {
     'for review to notice.',
   ].join('\n');
 }
+
+/* ------------------------------- security after a repair (P3-QA-09) */
+
+export interface SecurityPosture {
+  /** Findings by identifier — advisory ids, rule ids, CWE references. */
+  readonly findings: readonly string[];
+  /** False when the scan could not run. Distinct from "found nothing". */
+  readonly scanned: boolean;
+}
+
+export interface SecurityRegression {
+  readonly ok: boolean;
+  /** Findings the repair introduced. */
+  readonly introduced: readonly string[];
+  readonly because: string;
+}
+
+/**
+ * Whether a repair fixed the failing check and opened a security finding
+ * (P3-QA-09, `.research/techniques/43` §5).
+ *
+ * `repairIsLegitimate` asks whether the *suite* shrank. This asks a different
+ * question the loop never asked at all: the repair loop re-runs the check that
+ * failed, and nothing re-runs the security surface — so a repair that turns a
+ * red test green and introduces a CWE passes every gate we have.
+ *
+ * That is not a hypothetical shape. *Security Degradation in Iterative AI Code
+ * Generation* ([arXiv 2506.11022](https://arxiv.org/abs/2506.11022)) reports
+ * that repeatedly prompting a model to improve generated code makes its security
+ * characteristics **worse**, across multiple models and both prompting
+ * strategies — and a repair loop is exactly that, bounded on attempts rather
+ * than on security. (The paper's specific figures could not be extracted and are
+ * recorded as unverified; the direction is the citable claim.)
+ *
+ * **An unrunnable scan is not a pass.** If the scan could not run after the
+ * repair, this refuses — for the same reason the OSV adapter distinguishes an
+ * outage from an all-clear. The absence of a finding and the absence of a look
+ * are different facts, and only one of them is reassuring.
+ */
+export function securityHeldAfterRepair(
+  before: SecurityPosture,
+  after: SecurityPosture,
+): SecurityRegression {
+  if (!after.scanned) {
+    return {
+      ok: false,
+      introduced: [],
+      because:
+        'the security surface was not re-scanned after the repair — no finding and no look are ' +
+        'different facts, and only one of them is reassuring (P3-QA-09)',
+    };
+  }
+
+  if (!before.scanned) {
+    // Nothing to compare against. Reported rather than silently treated as a
+    // clean baseline, which would make the first repair on any project free.
+    return {
+      ok: after.findings.length === 0,
+      introduced: [...after.findings],
+      because:
+        after.findings.length === 0
+          ? 'no baseline scan, and the post-repair scan is clean'
+          : `no baseline to compare against, and the post-repair scan has ${String(after.findings.length)} finding(s) — treated as introduced`,
+    };
+  }
+
+  const known = new Set(before.findings);
+  const introduced = after.findings.filter((finding) => !known.has(finding));
+
+  return {
+    ok: introduced.length === 0,
+    introduced,
+    because:
+      introduced.length === 0
+        ? 'the repair introduced no new security findings'
+        : `the repair turned the check green and introduced ${String(introduced.length)} finding(s): ${introduced.join(', ')}`,
+  };
+}

@@ -7,6 +7,7 @@ import {
   repairExhausted,
   repairIsLegitimate,
   type TestInventory,
+  securityHeldAfterRepair,
 } from './ci-repair.js';
 
 /**
@@ -215,5 +216,53 @@ describe('the ways a suite shrinks with no count falling (P3-GATE-10)', () => {
       matchedFiles: 0,
     });
     expect(verdict.reasons.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe('the security surface after a repair (P3-QA-09)', () => {
+  const clean = { findings: [], scanned: true };
+
+  it('passes a repair that introduced nothing', () => {
+    expect(securityHeldAfterRepair(clean, clean).ok).toBe(true);
+  });
+
+  it('refuses a repair that turned the check green and opened a finding', () => {
+    // The gap this closes: the loop re-runs the check that failed, and nothing
+    // re-runs the security surface.
+    const verdict = securityHeldAfterRepair(clean, { findings: ['CWE-89'], scanned: true });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.introduced).toEqual(['CWE-89']);
+  });
+
+  it('ignores a finding that was already there', () => {
+    // A pre-existing finding is somebody else's work item, not this repair's.
+    expect(
+      securityHeldAfterRepair(
+        { findings: ['CWE-79'], scanned: true },
+        { findings: ['CWE-79'], scanned: true },
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('refuses when the scan did not run afterwards', () => {
+    // No finding and no look are different facts, and only one is reassuring —
+    // the same distinction the OSV adapter makes for an outage.
+    const verdict = securityHeldAfterRepair(clean, { findings: [], scanned: false });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.because).toContain('different facts');
+  });
+
+  it('treats a missing baseline as no free pass', () => {
+    // Otherwise the first repair on any project is exempt.
+    const verdict = securityHeldAfterRepair(
+      { findings: [], scanned: false },
+      { findings: ['CWE-22'], scanned: true },
+    );
+    expect(verdict.ok).toBe(false);
+    expect(verdict.because).toContain('no baseline');
+  });
+
+  it('allows a clean post-repair scan with no baseline', () => {
+    expect(securityHeldAfterRepair({ findings: [], scanned: false }, clean).ok).toBe(true);
   });
 });
