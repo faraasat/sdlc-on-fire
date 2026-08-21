@@ -119,6 +119,26 @@ export interface TestInventory {
   readonly cases: number;
   /** How many assertions ran, where the runner reports it. */
   readonly assertions?: number | undefined;
+  /**
+   * Cases the runner reported as skipped, `.only`-scoped or otherwise not run
+   * (P3-GATE-10).
+   *
+   * Counted separately from `cases` because a skipped test is *present* and
+   * *not executed*, which is the exact state a suite-shrink check reading only
+   * totals cannot see: mark four tests `.skip` and the file count, the case
+   * count and the assertion count can all stay flat.
+   */
+  readonly skipped?: number | undefined;
+  /**
+   * Whether the runner was scoped to a subset — `.only`, a `-t` filter, a
+   * narrowed path argument.
+   *
+   * A repair that makes the command run less is a repair that made the
+   * scoreboard smaller without touching a single test.
+   */
+  readonly filtered?: boolean | undefined;
+  /** Test files the runner matched. A narrowed glob shrinks this silently. */
+  readonly matchedFiles?: number | undefined;
 }
 
 export interface RepairJudgement {
@@ -162,6 +182,38 @@ export function repairIsLegitimate(before: TestInventory, after: TestInventory):
     // the assertion that failed was commented out.
     reasons.push(
       `assertion count fell from ${String(before.assertions)} to ${String(after.assertions)}`,
+    );
+  }
+
+  // ── P3-GATE-10: the ways a suite shrinks without any count falling ────────
+  //
+  // The three checks above compare totals, and totals are exactly what the
+  // cheapest evasions leave alone. `.skip` keeps the case in the file and out
+  // of the run; `.only` keeps every case and runs one; a narrowed glob keeps
+  // the whole suite and matches less of it. All three produce a green run over
+  // a smaller reality with no number going down.
+
+  const beforeSkipped = before.skipped ?? 0;
+  const afterSkipped = after.skipped ?? 0;
+  if (afterSkipped > beforeSkipped) {
+    reasons.push(
+      `skipped tests rose from ${String(beforeSkipped)} to ${String(afterSkipped)} — a skipped test is present and not run, which no total will show`,
+    );
+  }
+
+  if (after.filtered === true && before.filtered !== true) {
+    reasons.push(
+      'the run became filtered (`.only`, a name filter, or a narrowed path) — making the command run less is not making the code work',
+    );
+  }
+
+  if (
+    before.matchedFiles !== undefined &&
+    after.matchedFiles !== undefined &&
+    after.matchedFiles < before.matchedFiles
+  ) {
+    reasons.push(
+      `the runner matched ${String(before.matchedFiles)} files and now matches ${String(after.matchedFiles)} — the suite did not shrink, the net did`,
     );
   }
 

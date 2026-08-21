@@ -160,3 +160,60 @@ describe('formatRepairJudgement', () => {
     );
   });
 });
+
+describe('the ways a suite shrinks with no count falling (P3-GATE-10)', () => {
+  const base = { files: ['a.test.ts'], cases: 10, assertions: 40, skipped: 0, matchedFiles: 1 };
+
+  it('catches tests marked skip', () => {
+    // The cheapest evasion the total-comparing checks cannot see: the case is
+    // still in the file, still counted, and not run.
+    const verdict = repairIsLegitimate(base, { ...base, skipped: 4 });
+    expect(verdict.legitimate).toBe(false);
+    expect(verdict.reasons[0]).toContain('skipped tests rose');
+  });
+
+  it('catches a run that became filtered', () => {
+    const verdict = repairIsLegitimate(base, { ...base, filtered: true });
+    expect(verdict.legitimate).toBe(false);
+    expect(verdict.reasons[0]).toContain('run less');
+  });
+
+  it('catches a narrowed glob', () => {
+    // The suite did not shrink; the net did.
+    expect(
+      repairIsLegitimate({ ...base, matchedFiles: 12 }, { ...base, matchedFiles: 3 }).legitimate,
+    ).toBe(false);
+  });
+
+  it('does not complain when a run was already filtered', () => {
+    // A project that always runs a subset is not repairing its way there.
+    expect(
+      repairIsLegitimate({ ...base, filtered: true }, { ...base, filtered: true }).legitimate,
+    ).toBe(true);
+  });
+
+  it('does not complain when skips fall', () => {
+    // Un-skipping is the good direction and must not read as suspicious.
+    expect(repairIsLegitimate({ ...base, skipped: 5 }, { ...base, skipped: 1 }).legitimate).toBe(
+      true,
+    );
+  });
+
+  it('still passes a repair that only adds tests', () => {
+    expect(
+      repairIsLegitimate(base, { ...base, cases: 14, assertions: 55, matchedFiles: 2 }).legitimate,
+    ).toBe(true);
+  });
+
+  it('reports every reason, not the first', () => {
+    // A repair that did three of these did three of them, and a reviewer
+    // shown one will fix one.
+    const verdict = repairIsLegitimate(base, {
+      ...base,
+      skipped: 3,
+      filtered: true,
+      matchedFiles: 0,
+    });
+    expect(verdict.reasons.length).toBeGreaterThanOrEqual(3);
+  });
+});

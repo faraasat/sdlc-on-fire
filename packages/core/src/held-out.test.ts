@@ -8,6 +8,7 @@ import {
   summariseHeldOut,
   type HeldOutCriterion,
 } from './held-out.js';
+import { computeConfidence, MIN_SIZE_DISCOUNT, sizeDiscounted } from './evidence.js';
 
 /** P3-GATE-09 — the delta that was uncomputable. */
 
@@ -159,5 +160,63 @@ describe('the expected gap for a change of this size', () => {
 
   it('is monotonic in change size', () => {
     expect(expectedGapPp(50_000)).toBeGreaterThan(expectedGapPp(5_000));
+  });
+});
+
+describe('the size discount on evidence confidence (P3-GATE-11)', () => {
+  it('leaves a small change untouched', () => {
+    // Unknown and small are both "no discount", for different reasons: nothing
+    // is being claimed about a 300-line change that the base score overstates.
+    expect(sizeDiscounted(0.95, 300)).toBe(0.95);
+    expect(sizeDiscounted(0.95, undefined)).toBe(0.95);
+  });
+
+  it('discounts a large change', () => {
+    // A green suite over 10,000 lines is not worth what one over 300 is worth,
+    // and that is measured rather than felt.
+    expect(sizeDiscounted(0.95, 10_000)).toBeLessThan(0.95);
+  });
+
+  it('discounts more as the change grows', () => {
+    expect(sizeDiscounted(0.95, 100_000)).toBeLessThan(sizeDiscounted(0.95, 10_000));
+  });
+
+  it('never drives confidence below the floor', () => {
+    // A big change's evidence is worth *less*, never nothing. Zero would make a
+    // large change structurally ungateable, which is the opposite of the point.
+    expect(sizeDiscounted(0.95, 10_000_000)).toBeGreaterThanOrEqual(0.95 * MIN_SIZE_DISCOUNT);
+  });
+
+  it('leaves a zero-confidence producer at zero', () => {
+    // `agent-claim` is floored at 0 structurally; a multiplier must not lift it.
+    expect(sizeDiscounted(0, 100_000)).toBe(0);
+  });
+
+  it('flows through computeConfidence', () => {
+    const small = computeConfidence({
+      producer: 'daemon',
+      produced_at: '2026-08-21T00:00:00Z',
+      expires_at: '2026-08-22T00:00:00Z',
+      now: new Date('2026-08-21T00:00:00Z'),
+      changed_lines: 300,
+    });
+    const large = computeConfidence({
+      producer: 'daemon',
+      produced_at: '2026-08-21T00:00:00Z',
+      expires_at: '2026-08-22T00:00:00Z',
+      now: new Date('2026-08-21T00:00:00Z'),
+      changed_lines: 50_000,
+    });
+    expect(large).toBeLessThan(small);
+  });
+
+  it('still returns 0 for an agent claim whatever the size', () => {
+    expect(
+      computeConfidence({
+        producer: 'agent-claim',
+        produced_at: '2026-08-21T00:00:00Z',
+        changed_lines: 50_000,
+      }),
+    ).toBe(0);
   });
 });

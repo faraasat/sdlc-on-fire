@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { expectedGapPp } from './held-out.js';
 
 /**
  * The evidence envelope, per contracts/03-evidence-and-gates.md §2 and ADR-0030.
@@ -230,6 +231,16 @@ export function computeConfidence(input: {
   produced_at: string;
   expires_at?: string | undefined;
   now?: Date | undefined;
+  /**
+   * Lines the change under test touches (P3-GATE-11).
+   *
+   * A green suite over a 30,000-line change is not worth what a green suite
+   * over 300 lines is worth, and that is measured rather than felt: the gap
+   * between a visible suite's pass rate and a held-out one's grows roughly
+   * 27pp per tenfold increase in LOC. Omitted means unknown, and unknown
+   * applies no discount — inventing a size would be worse than not knowing one.
+   */
+  changed_lines?: number | undefined;
 }): number {
   const base = PRODUCER_BASE_CONFIDENCE[input.producer];
   if (base === 0) return 0;
@@ -241,7 +252,25 @@ export function computeConfidence(input: {
   if (Number.isNaN(produced) || Number.isNaN(expires) || expires <= produced) return base;
 
   const stalenessRatio = (now - produced) / (expires - produced);
-  return base * Math.max(0, 1 - stalenessRatio);
+  return sizeDiscounted(base * Math.max(0, 1 - stalenessRatio), input.changed_lines);
+}
+
+/**
+ * The change-size discount (P3-GATE-11).
+ *
+ * Multiplicative on whatever freshness left, and bounded below by
+ * {@link MIN_SIZE_DISCOUNT} — a large change's evidence is worth *less*, never
+ * nothing. Driving it to zero would make a big change structurally ungateable,
+ * which is the opposite of the intent: the point is that the number stops
+ * over-claiming, not that the gate stops working.
+ */
+export const MIN_SIZE_DISCOUNT = 0.5;
+
+export function sizeDiscounted(confidence: number, changedLines: number | undefined): number {
+  if (changedLines === undefined) return confidence;
+  const gap = expectedGapPp(changedLines);
+  if (gap <= 0) return confidence;
+  return confidence * Math.max(MIN_SIZE_DISCOUNT, 1 - gap / 100);
 }
 
 /**
