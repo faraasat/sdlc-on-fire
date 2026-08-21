@@ -25,6 +25,12 @@ export default defineConfig({
       '@sdlc-on-fire/daemon': fileURLToPath(
         new URL('./packages/daemon/src/index.ts', import.meta.url),
       ),
+      // `importers` was missing from this list, so nothing could import it by
+      // package name in a test — it only ever got reached by relative path from
+      // inside its own package, which hid the gap.
+      '@sdlc-on-fire/importers': fileURLToPath(
+        new URL('./packages/importers/src/index.ts', import.meta.url),
+      ),
     },
   },
   test: {

@@ -21,10 +21,15 @@ const verdict = evaluateGate(defaultV01Policy(), envelopes, approvals, {
 ## Parsers, and the failure they refuse to hide
 
 ```ts
-import { parseVitest, parseJUnitXml, parseLcov } from '@sdlc-on-fire/evidence';
+import {
+  parseRunnerOutput,
+  parseVitestJson,
+  parseLcov,
+  parseCoverage,
+} from '@sdlc-on-fire/evidence';
 ```
 
-Vitest, Jest, node:test TAP, pytest, go test, JUnit XML, lcov, Playwright. When a runner exits 0 and produces nothing parseable, the result is recorded as **exit-code-only evidence at confidence 0.6** with the reason attached — not as a pass. An unreadable report and a green suite are different facts.
+`parseRunnerOutput` sniffs the format — Vitest/Jest JSON, node:test TAP, pytest, go test, JUnit XML — and returns `null` rather than guessing when it recognises none. Coverage comes through `parseLcov`, `parseIstanbulSummary` and `parseCobertura`, with `coverageDelta` for the regression check. When a runner exits 0 and produces nothing parseable, the result is recorded as **exit-code-only evidence at confidence 0.6** with the reason attached — not as a pass. An unreadable report and a green suite are different facts.
 
 ## Staleness is structural
 
