@@ -32,3 +32,4 @@ export * from './board-move.js';
 export * from './card-progress.js';
 export * from './evidence-binding.js';
 export * from './visual-diff.js';
+export * from './agent-teammate.js';

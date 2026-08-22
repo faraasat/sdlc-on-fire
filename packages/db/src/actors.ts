@@ -76,3 +76,47 @@ export async function ensureHumanActor(
     because: `bootstrapped a human actor from git user.email (${normalised})`,
   };
 }
+
+/**
+ * Agent teammates, one persistent row each (P3-RBAC-09).
+ *
+ * Agents were transient: a run named its agent in a string and no `actors` row
+ * existed for it. That is fine while nothing needs to *refer* to an agent, and
+ * it breaks the moment one does — presence on a board, a memory row scoped to a
+ * writer, an assignment. Those all need an id, and inventing one per run means
+ * "what has this agent been doing" has no answer.
+ *
+ * Idempotent on `agent_target`, and deliberately not on display name: a target
+ * is what the daemon launches, and two rows for one target would split a
+ * teammate's history in half.
+ */
+export async function ensureAgentActor(
+  db: ActorWriter,
+  agentTarget: string,
+  displayName?: string,
+): Promise<EnsureHumanActorResult> {
+  const target = agentTarget.trim();
+  if (target === '') {
+    return { actorId: null, created: false, because: 'no agent target given' };
+  }
+
+  const existing = await db.query<{ id: string }>(
+    `SELECT id::text AS id FROM actors WHERE kind = 'agent' AND agent_target = $1 LIMIT 1;`,
+    [target],
+  );
+  const first = existing[0];
+  if (first !== undefined) {
+    return { actorId: first.id, created: false, because: `${target} is already a known teammate` };
+  }
+
+  const inserted = await db.query<{ id: string }>(
+    `INSERT INTO actors (kind, display_name, agent_target)
+     VALUES ('agent', $1, $2) RETURNING id::text AS id;`,
+    [displayName?.trim() === '' || displayName === undefined ? target : displayName.trim(), target],
+  );
+  return {
+    actorId: inserted[0]?.id ?? null,
+    created: true,
+    because: `registered ${target} as an agent teammate`,
+  };
+}

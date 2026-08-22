@@ -633,3 +633,15 @@ body {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* An agent must never render as a colleague (P3-RBAC-09). Dashed, not solid:
+   the same treatment as "provisional" elsewhere, because that is what an
+   agent's holding of a card is until evidence backs it. */
+.chip--claim {
+  border-style: solid;
+}
+.chip--agent {
+  border-style: dashed;
+  color: var(--accent);
+  border-color: var(--accent);
+}

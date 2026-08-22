@@ -152,6 +152,24 @@ describe('BoardView', () => {
     expect(screen.getByText('needs a human')).toBeDefined();
   });
 
+  it('renders an agent claimant visibly differently from a person', () => {
+    // "Agents are actors, never approvers" is a rule that lives in the database
+    // and dies on the screen. A board that renders an agent as a colleague
+    // quietly undoes it.
+    renderBoard([
+      card({ id: 'A', claimed_by: 'claude-code', claim_kind: 'agent' }),
+      card({ id: 'B', claimed_by: 'Ada', claim_kind: 'human' }),
+    ]);
+    expect(screen.getByText('claude-code (agent)')).toBeDefined();
+    expect(screen.getByText('Ada')).toBeDefined();
+    expect(screen.queryByText('Ada (agent)')).toBeNull();
+  });
+
+  it('says what an agent cannot do, on hover', () => {
+    renderBoard([card({ id: 'A', claimed_by: 'claude-code', claim_kind: 'agent' })]);
+    expect(screen.getByTitle(/cannot approve/i)).toBeDefined();
+  });
+
   it('shows a live run chip only while something is running', () => {
     renderBoard([card({ id: 'A', active_run: 'run-1' }), card({ id: 'B', active_run: null })]);
     expect(screen.getAllByText('running')).toHaveLength(1);

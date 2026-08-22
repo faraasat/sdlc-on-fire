@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ensureHumanActor, type ActorWriter } from './actors.js';
+import { ensureAgentActor, ensureHumanActor, type ActorWriter } from './actors.js';
 
 /**
  * P3-UI-01 — bootstrapping the human.
@@ -80,5 +80,36 @@ describe('ensureHumanActor', () => {
     const db = fakeDb([]);
     await ensureHumanActor(db, 'ada@example.test', '   ');
     expect(db.sql.some((statement) => statement.includes('INSERT'))).toBe(true);
+  });
+});
+
+describe('ensureAgentActor', () => {
+  it('registers an agent teammate with a persistent row', () => {
+    // Agents were transient: a run named its agent in a string and no row
+    // existed. Fine until something needs to *refer* to one — presence,
+    // assignment, a memory row scoped to its writer — all of which need an id.
+    const db = fakeDb([]);
+    return ensureAgentActor(db, 'claude-code').then((result) => {
+      expect(result.created).toBe(true);
+      expect(result.actorId).toBe('new-id');
+    });
+  });
+
+  it('is idempotent on the target, not on the display name', () => {
+    // A target is what the daemon launches. Two rows for one target would split
+    // a teammate's history in half.
+    const db = fakeDb([{ id: 'a1', display_name: 'Claude' }]);
+    return ensureAgentActor(db, 'claude-code', 'Something Else').then((result) => {
+      expect(result.created).toBe(false);
+      expect(db.sql.some((statement) => statement.includes('INSERT'))).toBe(false);
+    });
+  });
+
+  it('does nothing without a target', () => {
+    const db = fakeDb([]);
+    return ensureAgentActor(db, '   ').then((result) => {
+      expect(result.actorId).toBeNull();
+      expect(db.sql).toEqual([]);
+    });
   });
 });

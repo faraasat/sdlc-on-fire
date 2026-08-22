@@ -1,6 +1,6 @@
 import type { ReactElement } from 'react';
 import { useDraggable } from '@dnd-kit/core';
-import { isBlocked, needsHuman, type BoardCard } from '@sdlc-on-fire/core/browser';
+import { actorBadge, isBlocked, needsHuman, type BoardCard } from '@sdlc-on-fire/core/browser';
 import { useUiStore } from '../state/ui.js';
 
 /**
@@ -82,6 +82,33 @@ export function Card({ card }: { card: BoardCard }): ReactElement {
         {blocked ? <span className="chip chip--blocked">blocked</span> : null}
         {human ? <span className="chip chip--human">needs a human</span> : null}
         {card.risk_level != null ? <span className="chip">{card.risk_level}</span> : null}
+        {/*
+          Who holds the card, and whether they are a person. "Agents are actors,
+          never approvers" is a rule that lives in the database and dies on the
+          screen — everything anyone knows about who did what comes from what
+          they can see, so an agent is marked here rather than rendered as a
+          teammate indistinguishable from a colleague (P3-RBAC-09).
+        */}
+        {card.claimed_by == null ? null : (
+          <span
+            className={`chip chip--claim${card.claim_kind === 'agent' ? ' chip--agent' : ''}`}
+            title={
+              actorBadge({
+                id: card.claimed_by,
+                kind: card.claim_kind === 'agent' ? 'agent' : 'human',
+                displayName: card.claimed_by,
+              }).title
+            }
+          >
+            {
+              actorBadge({
+                id: card.claimed_by,
+                kind: card.claim_kind === 'agent' ? 'agent' : 'human',
+                displayName: card.claimed_by,
+              }).label
+            }
+          </span>
+        )}
       </footer>
     </article>
   );
