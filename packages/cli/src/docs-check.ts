@@ -1,7 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { relativePosix, resolveWorkspaceLayout } from '@sdlc-on-fire/core';
-import { checkFreshness, type DocRecord, type FreshnessReport } from '@sdlc-on-fire/evidence';
+import {
+  checkCorpusVisibility,
+  checkFreshness,
+  readVisibilityDoc,
+  type DocRecord,
+  type FreshnessReport,
+  type VisibilityReport,
+} from '@sdlc-on-fire/evidence';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import { createGitManager } from '@sdlc-on-fire/daemon';
 
@@ -136,5 +143,65 @@ export function formatDocsCheck(result: DocsCheckResult): string {
       'into "the docs passed".',
     );
   }
+  return lines.join('\n');
+}
+
+export interface DocVisibilityResult {
+  readonly report: VisibilityReport;
+  readonly docsScanned: number;
+}
+
+/**
+ * `sdlc docs visibility` — the third dimension (P4-DOC-01, ADR-0074).
+ *
+ * Reuses `readDocs`'s walk rather than doing its own, so the three checks
+ * always describe the same corpus. A second walk would eventually disagree
+ * about which files are docs, and the two answers would differ for reasons
+ * nobody could see from either report.
+ */
+export async function docVisibility(
+  root: string,
+  now: Date = new Date(),
+): Promise<DocVisibilityResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const docs = await readDocs(root);
+  const parsed = await Promise.all(
+    docs.map(async (doc) => {
+      const raw = await fs.readFile(path.join(layout.root, doc.path), 'utf8').catch(() => '');
+      const front = parseFrontmatter(raw);
+      return readVisibilityDoc(doc.path, front.body, front.data);
+    }),
+  );
+  return { report: checkCorpusVisibility(parsed, now), docsScanned: parsed.length };
+}
+
+/**
+ * Report.
+ *
+ * Gatekeepers first, then differentiators, and **no total**. ADR-0074 forbids
+ * an aggregate: a single number hides an upstream loss behind a downstream
+ * gain, which is exactly what SAGEO Arena measured.
+ */
+export function formatDocVisibility(result: DocVisibilityResult): string {
+  const { findings } = result.report;
+  if (findings.length === 0) {
+    return `${String(result.docsScanned)} doc(s) scanned. Nothing the evidence associates with being hard to find.`;
+  }
+
+  const lines: string[] = [];
+  for (const weight of ['gatekeeper', 'differentiator'] as const) {
+    const group = findings.filter((finding) => finding.weight === weight);
+    if (group.length === 0) continue;
+    lines.push(
+      `${weight === 'gatekeeper' ? 'Gatekeepers' : 'Differentiators'} (${String(group.length)}):`,
+    );
+    for (const finding of group)
+      lines.push(`  ${finding.path}: ${finding.check} — ${finding.detail}`);
+    lines.push('');
+  }
+  lines.push(
+    `${String(result.docsScanned)} doc(s) scanned. Findings are listed, never scored — an aggregate`,
+  );
+  lines.push('would hide a regression in one dimension behind an improvement in another.');
   return lines.join('\n');
 }

@@ -4,6 +4,7 @@
 // module rather than executing the built binary.
 import { existsSync, realpathSync } from 'node:fs';
 import { formatViews, listViews } from './views.js';
+import { docVisibility, formatDocVisibility } from './docs-check.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -1231,6 +1232,17 @@ export function buildProgram(): Command {
       emit(result, options.json === true, formatDocHealth);
       // No non-zero exit. Every finding is advisory, and an exit code would
       // make a lexical redundancy guess fail somebody's build.
+    });
+
+  program
+    .command('docs-visibility')
+    .description('what the evidence associates with a doc being found and cited (offline)')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await docVisibility(root());
+      emit(result, options.json === true, formatDocVisibility);
+      // Advisory, like doc-health. Every finding here is a judgement about
+      // prose, and an exit code would make a hedge count fail somebody's build.
     });
 
   program

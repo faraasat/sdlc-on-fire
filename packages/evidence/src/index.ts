@@ -6,6 +6,7 @@ export * from './definition-of-ready.js';
 export * from './traceability.js';
 export * from './spec-quality.js';
 export * from './doc-freshness.js';
+export * from './doc-visibility.js';
 export * from './doc-health.js';
 export * from './user-guide.js';
 export * from './dependency-audit.js';
