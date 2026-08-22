@@ -5,6 +5,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { formatViews, listViews } from './views.js';
 import { formatExport, runExport } from './export.js';
+import { archiveChange, checkSpecs, formatSpecCheck, newChange, newSpec } from './spec.js';
 import { docVisibility, formatDocVisibility, formatLlmsTxt, llmsTxt } from './docs-check.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
@@ -1233,6 +1234,63 @@ export function buildProgram(): Command {
       emit(result, options.json === true, formatDocHealth);
       // No non-zero exit. Every finding is advisory, and an exit code would
       // make a lexical redundancy guess fail somebody's build.
+    });
+
+  const spec = program.command('spec').description('native brownfield spec authoring');
+
+  spec
+    .command('new')
+    .argument('<domain>', 'the domain this spec covers')
+    .description('scaffold docs/specs/<domain>/spec.md')
+    .action(async (domain: string): Promise<void> => {
+      const result = await newSpec(root(), domain);
+      process.stdout.write(
+        result.created
+          ? `Created ${result.path}\n`
+          : `${result.path} already exists — left alone\n`,
+      );
+      if (!result.created) process.exitCode = 1;
+    });
+
+  spec
+    .command('check')
+    .description('validate every spec and open change')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await checkSpecs(root());
+      emit(result, options.json === true, formatSpecCheck);
+      // Refusals fail; advice does not. A validator that failed on style is one
+      // people switch off, taking the two real refusals with it.
+      if (!result.ok) process.exitCode = 1;
+    });
+
+  const change = program.command('change').description('spec deltas against the current truth');
+
+  change
+    .command('new')
+    .argument('<id>', 'the change id')
+    .description('scaffold docs/changes/<id>/proposal.md')
+    .action(async (id: string): Promise<void> => {
+      const result = await newChange(root(), id);
+      process.stdout.write(
+        result.created
+          ? `Created ${result.path}\n`
+          : `${result.path} already exists — left alone\n`,
+      );
+      if (!result.created) process.exitCode = 1;
+    });
+
+  change
+    .command('archive')
+    .argument('<id>', 'the change id')
+    .description('land a change: move it under changes/archive/')
+    .action(async (id: string): Promise<void> => {
+      const result = await archiveChange(root(), id);
+      if (result.moved) process.stdout.write(`Archived ${result.from} -> ${result.to}\n`);
+      else {
+        process.stderr.write(`Not archived: ${result.because ?? 'unknown reason'}\n`);
+        process.exitCode = 1;
+      }
     });
 
   program
