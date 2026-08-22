@@ -54,6 +54,8 @@ export interface WorkItemDetail {
   readonly runs: readonly Record<string, unknown>[];
   readonly comments: readonly Record<string, unknown>[];
   readonly transitions: readonly Record<string, unknown>[];
+  /** Evidence bound to each gate, with anything that does not add up (P3-KAN-03). */
+  readonly binding?: unknown;
 }
 
 export interface LifecycleStateRow {

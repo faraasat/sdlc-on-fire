@@ -30,3 +30,4 @@ export * from './contention.js';
 export * from './presence.js';
 export * from './board-move.js';
 export * from './card-progress.js';
+export * from './evidence-binding.js';

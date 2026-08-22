@@ -14,6 +14,7 @@ import { resolveIdentity, type Actor, type ResolvedIdentity } from '@sdlc-on-fir
 import { isAllowedOrigin, isLoopbackHost } from './guard.js';
 import { moveCard } from './move.js';
 import {
+  bindEvidence,
   bottleneck,
   cycleTime,
   flowEfficiency,
@@ -22,6 +23,9 @@ import {
   stageStats,
   visitsByCard,
   wipLimits,
+  type EvidenceRow,
+  type GateEvidenceLink,
+  type GateRow,
   type TransitionRow,
 } from '@sdlc-on-fire/core';
 import type { LifecycleStage } from '@sdlc-on-fire/core';
@@ -156,7 +160,43 @@ async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
         [id],
       ),
     ]);
-    return { status: 200, body: { item: items[0], gates, runs, comments, transitions } };
+    // Evidence bound to the gate it satisfies (P3-KAN-03). The `gate_evidence`
+    // join has existed since Phase 0 and nothing read it — so a gate showed
+    // green with no way to see the envelope behind it, which is exactly the
+    // shape this product refuses from an agent.
+    const [evidenceRows, links] = await Promise.all([
+      db.query<EvidenceRow>(
+        `SELECT e.id, e.kind, e.producer, e.git_sha, e.confidence::text AS confidence,
+                e.produced_at::text AS produced_at, e.expires_at::text AS expires_at
+           FROM evidence e
+           JOIN gate_evidence ge ON ge.evidence_id = e.id
+           JOIN gates g ON g.id = ge.gate_id
+          WHERE g.work_item_id = $1;`,
+        [id],
+      ),
+      db.query<GateEvidenceLink>(
+        `SELECT ge.gate_id, ge.evidence_id FROM gate_evidence ge
+           JOIN gates g ON g.id = ge.gate_id WHERE g.work_item_id = $1;`,
+        [id],
+      ),
+    ]);
+
+    // Narrowed rather than cast-and-stringified: `String()` on a non-string
+    // column would produce "[object Object]" and every envelope would then
+    // compare unequal to it, reporting the whole card as stale.
+    const shaValue = (items[0] as Record<string, unknown>)['git_commit_sha'];
+    const headSha = typeof shaValue === 'string' ? shaValue : '';
+    const binding = bindEvidence({
+      gates: gates as unknown as GateRow[],
+      evidence: evidenceRows.map((row) => ({ ...row, confidence: Number(row.confidence) })),
+      links,
+      headSha,
+    });
+
+    return {
+      status: 200,
+      body: { item: items[0], gates, runs, comments, transitions, binding },
+    };
   }
 
   if (path === '/api/runs') {

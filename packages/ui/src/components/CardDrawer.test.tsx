@@ -25,6 +25,7 @@ const detail = {
   runs: [] as Record<string, unknown>[],
   comments: [] as Record<string, unknown>[],
   transitions: [{ to_state: 'spec' }, { to_state: 'implement' }] as Record<string, unknown>[],
+  binding: { gates: [], unbound: [], problemCount: 0 },
 };
 
 function stub(body: unknown = detail): void {
@@ -117,6 +118,79 @@ describe('CardDrawer', () => {
   it('is announced as a dialog', async () => {
     renderDrawer();
     expect(await screen.findByRole('dialog', { name: /FEAT-1/ })).toBeDefined();
+  });
+
+  it('shows the envelopes behind a passing gate', async () => {
+    // A gate showing green with no way to see why is indistinguishable from a
+    // gate that was told to be green — the shape this product refuses from an
+    // agent, made by the product about itself.
+    stub({
+      ...detail,
+      binding: {
+        gates: [
+          {
+            gate: { id: 1, gate_name: 'tests', result: 'pass' },
+            evidence: [
+              {
+                id: 10,
+                kind: 'test',
+                producer: 'daemon',
+                git_sha: 'abcdef1234',
+                confidence: 0.9,
+                produced_at: 'x',
+              },
+            ],
+            problems: [],
+          },
+        ],
+        unbound: [],
+        problemCount: 0,
+      },
+    });
+    renderDrawer();
+    expect(await screen.findByText('tests')).toBeDefined();
+    expect(screen.getByText('test')).toBeDefined();
+    expect(screen.getByText('abcdef12')).toBeDefined();
+  });
+
+  it('calls out a gate passing with nothing behind it', async () => {
+    stub({
+      ...detail,
+      binding: {
+        gates: [
+          {
+            gate: { id: 1, gate_name: 'tests', result: 'pass' },
+            evidence: [],
+            problems: [
+              {
+                problem: 'unsupported-gate',
+                because: 'tests is passing with no evidence bound to it',
+              },
+            ],
+          },
+        ],
+        unbound: [],
+        problemCount: 1,
+      },
+    });
+    renderDrawer();
+    expect(await screen.findByText(/no evidence bound to it/i)).toBeDefined();
+  });
+
+  it('reports evidence that satisfies nothing', async () => {
+    // Produced, stored, attached to no gate. In a list it looks like coverage.
+    stub({
+      ...detail,
+      binding: {
+        gates: [],
+        unbound: [
+          { id: 11, kind: 'lint', producer: 'ci', git_sha: 'x', confidence: 1, produced_at: 'y' },
+        ],
+        problemCount: 1,
+      },
+    });
+    renderDrawer();
+    expect(await screen.findByText(/satisfy nothing/i)).toBeDefined();
   });
 
   it('never renders an object as [object Object]', async () => {

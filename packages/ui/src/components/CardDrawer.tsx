@@ -1,5 +1,10 @@
 import { useEffect, useRef, type ReactElement } from 'react';
-import { cardProgress, type DotState } from '@sdlc-on-fire/core/browser';
+import {
+  cardProgress,
+  summariseBinding,
+  type BindingReport,
+  type DotState,
+} from '@sdlc-on-fire/core/browser';
 import { useWorkItem } from '../api/queries.js';
 
 /**
@@ -71,6 +76,7 @@ export function CardDrawer({
   }, [onClose]);
 
   const item = detail.data?.item;
+  const binding = detail.data?.binding as BindingReport | undefined;
   const transitions = detail.data?.transitions ?? [];
   const progress =
     item === undefined
@@ -130,23 +136,49 @@ export function CardDrawer({
           ) : null}
 
           <section>
-            <h3>Gates</h3>
-            {detail.data?.gates.length === 0 ? (
+            <h3>Gates and the evidence behind them</h3>
+            {binding === undefined || binding.gates.length === 0 ? (
               // Never rendered as a pass. A card nothing has checked has not
               // passed anything — the distinction this product exists for.
               <p className="muted">no gate has run on this card</p>
             ) : (
               <ul className="plain">
-                {detail.data?.gates.map((gate, index) => (
-                  <li key={index}>
-                    <span className={`chip chip--${text(gate['result'], 'pending')}`}>
-                      {text(gate['result'], 'pending')}
+                {binding.gates.map((bound) => (
+                  <li
+                    key={bound.gate.id}
+                    className={bound.problems.length > 0 ? 'bound bound--bad' : 'bound'}
+                  >
+                    <span className={`chip chip--${bound.gate.result ?? 'pending'}`}>
+                      {bound.gate.result ?? 'pending'}
                     </span>{' '}
-                    {text(gate['gate_name'], '')}
+                    {bound.gate.gate_name}
+                    {/* The envelopes, or the reason there is a problem with
+                        them. A green gate you cannot inspect is the shape this
+                        product refuses from an agent. */}
+                    <small className={bound.problems.length > 0 ? 'error' : 'muted'}>
+                      {summariseBinding(bound)}
+                    </small>
+                    {bound.evidence.length > 0 ? (
+                      <ul className="plain envelopes">
+                        {bound.evidence.map((row) => (
+                          <li key={row.id}>
+                            <code>{row.kind}</code> by {row.producer} at{' '}
+                            <code>{row.git_sha.slice(0, 8)}</code>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
                   </li>
                 ))}
               </ul>
             )}
+            {binding !== undefined && binding.unbound.length > 0 ? (
+              // Produced, stored, satisfying nothing. In a list it looks like
+              // coverage.
+              <p className="warn">
+                {binding.unbound.length} envelope(s) are attached to no gate — they satisfy nothing.
+              </p>
+            ) : null}
           </section>
 
           <section>
