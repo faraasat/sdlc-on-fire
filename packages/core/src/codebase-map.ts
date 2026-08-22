@@ -30,6 +30,23 @@ export interface MappedFile {
   readonly size?: number | undefined;
 }
 
+/**
+ * How much the mapper believes its own proposal.
+ *
+ * `likely` is a directory that looks like product surface. `unlikely` is one
+ * whose *name* is a conventional grab-bag — `utils`, `common`, `shared` — which
+ * usually means a pile of helpers with no single obligation to specify. The
+ * distinction exists because these cannot be told apart by structure: `utils/`
+ * and `helper/` are the same shape on disk, and on the hono pilot one was a
+ * grab bag and the other was real product surface.
+ *
+ * So the mapper reports both and ranks them, rather than guessing. An
+ * `unlikely` domain is still shown — silently dropping it would hide a real
+ * domain that happens to be badly named — but `--write` skips it by default,
+ * because the cost of a wrong stub is a file somebody has to read and delete.
+ */
+export type DomainConfidence = 'likely' | 'unlikely';
+
 export interface InferredDomain {
   /** Directory-derived, lowercase, filename-safe. */
   readonly slug: string;
@@ -40,6 +57,7 @@ export interface InferredDomain {
   readonly testCount: number;
   /** Why the mapper proposed it, in one line a person can disagree with. */
   readonly because: string;
+  readonly confidence: DomainConfidence;
   /** Always true here. The field exists so the *absence* of it means "a human wrote this". */
   readonly inferred: true;
 }
@@ -50,6 +68,58 @@ export interface CodebaseMap {
   /** Directories deliberately not mapped, with the reason. */
   readonly skipped: readonly { readonly path: string; readonly because: string }[];
 }
+
+/**
+ * Directories that are *about* the product without being it.
+ *
+ * Benchmarks, examples and runtime harnesses contain real source files in real
+ * directories, so nothing structural separates them from a feature — they are
+ * excluded by name because that is the only signal there is. Found on the hono
+ * pilot, where `benchmarks`, `perf-measures` and `runtime-tests` were proposed
+ * as things to write a specification for; a reader given twelve domains of
+ * which three are noise trusts the other nine less.
+ *
+ * Excluded rather than down-ranked: a benchmark directory is not a
+ * badly-named domain, it is not a domain.
+ */
+const NOT_PRODUCT = new Set([
+  'benchmarks',
+  'benchmark',
+  'bench',
+  'perf',
+  'perf-measures',
+  'performance',
+  'examples',
+  'example',
+  'samples',
+  'demo',
+  'demos',
+  'runtime-tests',
+  'e2e',
+  'fixtures',
+  'scripts',
+  'tooling',
+  'codemods',
+]);
+
+/**
+ * Names that conventionally mean "everything that did not fit elsewhere".
+ *
+ * Proposed, but marked `unlikely`. `helper/` on hono is genuine product surface
+ * and `utils/` is a grab bag, and they are indistinguishable by structure — so
+ * the mapper says which one it doubts instead of pretending to know.
+ */
+const GRAB_BAG = new Set([
+  'utils',
+  'util',
+  'helpers',
+  'common',
+  'shared',
+  'misc',
+  'lib',
+  'types',
+  'constants',
+]);
 
 /** Directories that describe the toolchain rather than the product. */
 const IGNORED = new Set([
@@ -140,6 +210,7 @@ export function mapCodebase(files: readonly MappedFile[], options: MapOptions = 
   const buckets = new Map<string, { from: string; files: number; tests: number }>();
   const skipped: { path: string; because: string }[] = [];
   const seenIgnored = new Set<string>();
+  const seenNotProduct = new Set<string>();
 
   for (const file of files) {
     if (isIgnored(file.path)) {
@@ -156,6 +227,13 @@ export function mapCodebase(files: readonly MappedFile[], options: MapOptions = 
     if (domain === null) continue;
 
     const key = slugify(domain);
+    if (NOT_PRODUCT.has(key)) {
+      if (!seenNotProduct.has(key)) {
+        seenNotProduct.add(key);
+        skipped.push({ path: key, because: 'about the product rather than part of it' });
+      }
+      continue;
+    }
     const bucket = buckets.get(key) ?? { from: domain, files: 0, tests: 0 };
     if (isTest(file.path)) bucket.tests += 1;
     else bucket.files += 1;
@@ -169,14 +247,19 @@ export function mapCodebase(files: readonly MappedFile[], options: MapOptions = 
       from: bucket.from,
       fileCount: bucket.files,
       testCount: bucket.tests,
-      because:
-        bucket.tests > 0
+      confidence: GRAB_BAG.has(slug) ? ('unlikely' as const) : ('likely' as const),
+      because: GRAB_BAG.has(slug)
+        ? `${String(bucket.files)} source file(s) under ${bucket.from}/, but "${slug}" usually names a pile of helpers rather than one obligation`
+        : bucket.tests > 0
           ? `${String(bucket.files)} source file(s) and ${String(bucket.tests)} test(s) under ${bucket.from}/`
           : `${String(bucket.files)} source file(s) under ${bucket.from}/, no tests found`,
       inferred: true as const,
     }))
     .sort(
       (a, b) =>
+        // Confidence first: a reader who stops halfway down the list should
+        // have seen every domain the mapper actually believes in.
+        Number(a.confidence === 'unlikely') - Number(b.confidence === 'unlikely') ||
         Number(b.testCount > 0) - Number(a.testCount > 0) ||
         b.fileCount - a.fileCount ||
         a.slug.localeCompare(b.slug),

@@ -11,6 +11,7 @@ import {
   EAGER_DIRECTORIES,
   EAGER_STATE_SUBDIRS,
   GITIGNORE_ENTRIES,
+  ESSENTIAL_ROOT_FILES,
   ROOT_FILES,
   WorkspaceConfigSchema,
   AdvancedConfigSchema,
@@ -134,6 +135,35 @@ export interface InitOptions {
    * a Postgres it does not use.
    */
   readonly database?: 'provision' | 'skip' | undefined;
+  /**
+   * How much to scaffold (P5-PILOT-02).
+   *
+   * Omitted means *detect*: a repository that already has a README and a
+   * populated `docs/` gets the operating essentials only, an empty directory
+   * gets the full set. `'full'` and `'minimal'` override the detection in
+   * either direction, because a maintainer disagreeing with our guess about
+   * their own repository should not have to work around it.
+   */
+  readonly scaffold?: 'full' | 'minimal' | undefined;
+}
+
+/**
+ * Whether this repository already documents itself.
+ *
+ * Two signals, both weak alone and convincing together: a README that predates
+ * us, and a `docs/` directory with markdown in it. A project with both has made
+ * decisions about its own documentation, and the polite thing is to add as
+ * little as possible to them.
+ */
+async function hasOwnConventions(layout: { root: string; docsDir: string }): Promise<boolean> {
+  const hasReadme = await fs.access(path.join(layout.root, 'README.md')).then(
+    () => true,
+    () => false,
+  );
+  if (!hasReadme) return false;
+
+  const docs = await fs.readdir(layout.docsDir).catch(() => [] as string[]);
+  return docs.some((entry) => entry.endsWith('.md'));
 }
 
 /** One `git config` value, or undefined. Never throws: identity degrades, it does not fail. */
@@ -173,7 +203,19 @@ export async function init(root: string, options: InitOptions = {}): Promise<Ini
   for (const sub of EAGER_STATE_SUBDIRS) await ensureDir(path.join(layout.stateDir, sub));
   for (const dir of EAGER_DIRECTORIES) await ensureDir(path.join(layout.root, dir));
 
-  for (const file of ROOT_FILES) {
+  // Brownfield repositories get the operating essentials and nothing else.
+  //
+  // A project that already has a README and a populated `docs/` has decided how
+  // it documents itself, and adding twenty-four files to that decision is how a
+  // tool gets removed on day two. The full set is one command away
+  // (`sdlc scaffold docs`) and is the default on an empty directory, where
+  // there is no convention to intrude on.
+  const brownfield =
+    options.scaffold === 'minimal' ||
+    (options.scaffold !== 'full' && (await hasOwnConventions(layout)));
+  const rootFiles = brownfield ? ESSENTIAL_ROOT_FILES : ROOT_FILES;
+
+  for (const file of rootFiles) {
     await ensureFile(path.join(layout.root, file), `# ${file.replace(/\.md$/, '')}\n`);
   }
 
@@ -188,7 +230,11 @@ export async function init(root: string, options: InitOptions = {}): Promise<Ini
   // landed, but nothing called it — so a user who narrowed `docs.generate` got
   // every file anyway, and the setting silently did nothing.
   const existingConfig = await readConfig(root);
-  const docs = existingConfig === null ? DOCS_ROOT_FILES : docsToGenerate(existingConfig);
+  const docs = brownfield
+    ? []
+    : existingConfig === null
+      ? DOCS_ROOT_FILES
+      : docsToGenerate(existingConfig);
   for (const file of docs) {
     await ensureFile(path.join(layout.docsDir, file), `# ${file.replace(/\.md$/, '')}\n`);
   }

@@ -21,6 +21,23 @@ import { TierPolicyConfigSchema, tierPolicyViolations } from './tier-policy.js';
  * else; a project's own extra root files are left untouched but never treated as
  * SDLC on Fire assets.
  */
+/**
+ * The root files a workspace needs in order to *operate* (P5-PILOT-02).
+ *
+ * `SDLCOF.md` is the tool's own note about this project; `CLAUDE.md` and
+ * `AGENTS.md` are what a coding agent reads before touching anything. Without
+ * these three the product does not work. Everything else in `ROOT_FILES` is a
+ * document a team benefits from having and can be written whenever they want
+ * one.
+ *
+ * The distinction exists because of the hono pilot: `init` put seven markdown
+ * files at the root of a project with its own established conventions, and
+ * twenty-one into a curated `docs/` that had three. Nothing was overwritten —
+ * the invariant held — and it is still a large front door for one tool, in
+ * exactly the situation where a maintainer is deciding whether to keep it.
+ */
+export const ESSENTIAL_ROOT_FILES = ['AGENTS.md', 'CLAUDE.md', 'SDLCOF.md'] as const;
+
 export const ROOT_FILES = [
   'AGENTS.md',
   'CLAUDE.md',

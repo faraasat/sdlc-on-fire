@@ -52,7 +52,7 @@ async function listFiles(root: string): Promise<MappedFile[]> {
 
 export async function runMap(
   root: string,
-  options: { write?: boolean; maxDomains?: number } = {},
+  options: { write?: boolean; maxDomains?: number; includeUnlikely?: boolean } = {},
 ): Promise<MapRunResult> {
   const layout = resolveWorkspaceLayout(root);
   const files = await listFiles(layout.root);
@@ -65,7 +65,15 @@ export async function runMap(
   const skippedExisting: string[] = [];
 
   if (options.write === true) {
-    for (const domain of map.domains) {
+    // Only what the mapper believes in. An `unlikely` domain is still listed in
+    // the report — hiding it would bury a real domain that happens to be badly
+    // named — but writing a stub for it costs somebody a file to read and
+    // delete, and `--all` is there for when they disagree.
+    const toWrite =
+      options.includeUnlikely === true
+        ? map.domains
+        : map.domains.filter((domain) => domain.confidence === 'likely');
+    for (const domain of toWrite) {
       const relative = specPath(domain.slug);
       const target = path.join(layout.docsDir, relative);
       await fs.mkdir(path.dirname(target), { recursive: true });
@@ -96,7 +104,15 @@ export function formatMap(result: MapRunResult): string {
   }
 
   lines.push(`${String(domains.length)} proposed domain(s) from ${String(filesScanned)} file(s):`);
-  for (const domain of domains) lines.push(`  ${domain.slug.padEnd(20)} ${domain.because}`);
+  for (const domain of domains) {
+    const mark = domain.confidence === 'unlikely' ? '?' : ' ';
+    lines.push(`${mark} ${domain.slug.padEnd(20)} ${domain.because}`);
+  }
+  if (domains.some((domain) => domain.confidence === 'unlikely')) {
+    lines.push('');
+    lines.push('? — proposed, but the name usually means a pile of helpers. Not written unless');
+    lines.push('    you pass --all; listed here because a real domain can be badly named.');
+  }
 
   if (skipped.length > 0) {
     lines.push('');

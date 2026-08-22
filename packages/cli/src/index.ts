@@ -266,9 +266,19 @@ export function buildProgram(): Command {
   program
     .command('init')
     .description('scaffold the workspace (never overwrites an existing file)')
+    .option('--minimal', 'operating essentials only — the default on a repo that already has docs')
+    .option('--full', 'the complete document set, even on a repo that has its own')
     .option('--json', 'emit JSON')
-    .action(async (options: { json?: boolean }) => {
-      const result = await init(root());
+    .action(async (options: { minimal?: boolean; full?: boolean; json?: boolean }) => {
+      if (options.minimal === true && options.full === true) {
+        process.stderr.write('--minimal and --full ask for opposite things; pass one\n');
+        process.exitCode = 2;
+        return;
+      }
+      const result = await init(root(), {
+        ...(options.minimal === true ? { scaffold: 'minimal' as const } : {}),
+        ...(options.full === true ? { scaffold: 'full' as const } : {}),
+      });
       emit(result, options.json === true, (r: Awaited<ReturnType<typeof init>>) =>
         [
           r.alreadyInitialised ? 'Workspace already initialised.' : 'Workspace initialised.',
@@ -711,21 +721,45 @@ export function buildProgram(): Command {
   program
     .command('triage')
     .argument('<capture-id>', 'the capture to promote, e.g. CAP-001')
-    .requiredOption('--as <kind>', 'epic | story | feature | bug | task')
+    // `--type` is an accepted alias, not a second spelling to remember.
+    //
+    // The on-disk frontmatter field is `type` (contract 06 §3.3), so somebody
+    // who has read a card reaches for `--type` and gets `unknown option`. Found
+    // on the hono pilot, by exactly that route. The fix is an alias rather than
+    // a rename: `--as` reads better at a command line ("triage this as a bug"),
+    // and renaming the field to match would break every card already written.
+    // Both optional at the parser, with the "exactly one" rule enforced below.
+    // `requiredOption('--as')` would reject `--type` on its own, which is the
+    // whole failure this alias exists to remove.
+    .option('--as <kind>', 'epic | story | feature | bug | task')
+    .option('--type <kind>', 'alias for --as, matching the on-disk frontmatter field')
     .option('--preset <preset>', 'lite | standard | strict', 'standard')
     .description('turn a capture into a real work item')
     .option('--json', 'emit JSON')
     .action(
       async (
         capturedId: string,
-        options: { as: string; preset?: string; json?: boolean },
+        options: { as?: string; type?: string; preset?: string; json?: boolean },
       ): Promise<void> => {
-        const result = await triageItem(
-          root(),
-          capturedId,
-          options.as,
-          options.preset ?? 'standard',
-        );
+        const kind = options.as ?? options.type;
+        if (kind === undefined) {
+          process.stderr.write(
+            'triage needs a kind: --as <epic|story|feature|bug|task> (--type is accepted too)\n',
+          );
+          process.exitCode = 2;
+          return;
+        }
+        if (options.as !== undefined && options.type !== undefined && options.as !== options.type) {
+          // Two spellings of one argument disagreeing is not a preference to
+          // resolve — picking either silently would do something the user did
+          // not ask for.
+          process.stderr.write(
+            `--as ${options.as} and --type ${options.type} disagree; pass one\n`,
+          );
+          process.exitCode = 2;
+          return;
+        }
+        const result = await triageItem(root(), capturedId, kind, options.preset ?? 'standard');
         emit(
           result,
           options.json === true,
@@ -1241,17 +1275,26 @@ export function buildProgram(): Command {
     .command('map')
     .description('propose a spec tree from an existing codebase (brownfield on-ramp)')
     .option('--write', 'create the inferred stubs under docs/specs/')
+    .option('--all', 'also write stubs for low-confidence (grab-bag) domains')
     .option('--max <n>', 'cap the number of proposed domains', (v) => Number(v))
     .option('--json', 'emit JSON')
-    .action(async (options: { write?: boolean; max?: number; json?: boolean }): Promise<void> => {
-      const result = await runMap(root(), {
-        ...(options.write === true ? { write: true } : {}),
-        ...(options.max === undefined || Number.isNaN(options.max)
-          ? {}
-          : { maxDomains: options.max }),
-      });
-      emit(result, options.json === true, formatMap);
-    });
+    .action(
+      async (options: {
+        write?: boolean;
+        all?: boolean;
+        max?: number;
+        json?: boolean;
+      }): Promise<void> => {
+        const result = await runMap(root(), {
+          ...(options.write === true ? { write: true } : {}),
+          ...(options.all === true ? { includeUnlikely: true } : {}),
+          ...(options.max === undefined || Number.isNaN(options.max)
+            ? {}
+            : { maxDomains: options.max }),
+        });
+        emit(result, options.json === true, formatMap);
+      },
+    );
 
   const spec = program.command('spec').description('native brownfield spec authoring');
 

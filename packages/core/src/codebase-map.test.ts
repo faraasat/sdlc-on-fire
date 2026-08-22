@@ -150,6 +150,7 @@ describe('inferredSpecStub', () => {
     fileCount: 3,
     testCount: 1,
     because: '3 source file(s) and 1 test(s) under billing/',
+    confidence: 'likely' as const,
     inferred: true as const,
   };
 
@@ -175,6 +176,69 @@ describe('inferredSpecStub', () => {
 
   it('records the evidence it was proposed from', () => {
     expect(inferredSpecStub(domain)).toContain('3 source file(s)');
+  });
+});
+
+/**
+ * P5-PILOT-01 — separating product surface from tooling and grab bags.
+ *
+ * From the hono pilot: 4 of 12 proposed domains were noise — `benchmarks`,
+ * `perf-measures` and `runtime-tests` are about the product rather than part of
+ * it, and `utils` is a pile of helpers with no single obligation. A reader given
+ * twelve domains of which four are wrong trusts the other eight less.
+ */
+describe('product surface vs tooling', () => {
+  it('excludes a benchmark directory entirely, and says why', () => {
+    // Not a badly-named domain — not a domain. Excluded rather than ranked low.
+    const map = mapCodebase([f('benchmarks/a.ts'), f('benchmarks/b.ts')]);
+    expect(map.domains).toEqual([]);
+    expect(
+      map.skipped.some((s) => s.because.includes('about the product rather than part of it')),
+    ).toBe(true);
+  });
+
+  it('excludes every tooling directory the pilot surfaced', () => {
+    for (const dir of [
+      'benchmarks',
+      'perf-measures',
+      'runtime-tests',
+      'examples',
+      'e2e',
+      'scripts',
+    ]) {
+      const map = mapCodebase([f(`${dir}/a.ts`), f(`${dir}/b.ts`)]);
+      expect(map.domains, dir).toEqual([]);
+    }
+  });
+
+  it('proposes a grab-bag name but marks it unlikely', () => {
+    // Reported, never silently dropped: a real domain that happens to be badly
+    // named must still be visible.
+    const map = mapCodebase([f('src/utils/a.ts'), f('src/utils/b.ts')]);
+    expect(map.domains).toHaveLength(1);
+    expect(map.domains[0]?.confidence).toBe('unlikely');
+    expect(map.domains[0]?.because).toContain('pile of helpers');
+  });
+
+  it('does not mark an ambiguous-but-real directory unlikely', () => {
+    // `helper/` on hono is genuine product surface and `utils/` is a grab bag,
+    // and they are the same shape on disk. The list is names, not a heuristic.
+    const map = mapCodebase([f('src/helper/a.ts'), f('src/helper/b.ts')]);
+    expect(map.domains[0]?.confidence).toBe('likely');
+  });
+
+  it('ranks every likely domain above every unlikely one', () => {
+    // A reader who stops halfway should have seen everything the mapper
+    // actually believes in.
+    const map = mapCodebase([
+      f('src/utils/a.ts'),
+      f('src/utils/b.ts'),
+      f('src/utils/c.ts'),
+      f('src/utils/d.ts'),
+      f('src/router/a.ts'),
+      f('src/router/b.ts'),
+    ]);
+    expect(map.domains.map((d) => d.slug)).toEqual(['router', 'utils']);
   });
 });
 
