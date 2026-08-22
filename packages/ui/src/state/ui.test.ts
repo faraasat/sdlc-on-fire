@@ -49,6 +49,42 @@ describe('useUiStore', () => {
     expect(useUiStore.getState().connection).toBe('reconnecting');
   });
 
+  it('drops presence the moment the connection stops being live', () => {
+    // A viewer list rendered over a dead socket is the exact failure presence
+    // exists to avoid: it keeps showing people who left, and it looks identical
+    // to a current one. An empty list is visibly empty; a frozen one is not.
+    useUiStore.getState().setConnection('live');
+    useUiStore.getState().setViewers([
+      {
+        key: 'ana',
+        actorId: 'ana',
+        displayName: 'Ana',
+        cardIds: [],
+        seenAt: 1_000,
+        connections: 1,
+      },
+    ]);
+    expect(useUiStore.getState().viewers).toHaveLength(1);
+
+    useUiStore.getState().setConnection('reconnecting');
+    expect(useUiStore.getState().viewers).toEqual([]);
+  });
+
+  it('keeps presence while the connection stays live', () => {
+    useUiStore.getState().setViewers([
+      {
+        key: 'bo',
+        actorId: 'bo',
+        displayName: 'Bo',
+        cardIds: ['A'],
+        seenAt: 2_000,
+        connections: 2,
+      },
+    ]);
+    useUiStore.getState().setConnection('live');
+    expect(useUiStore.getState().viewers).toHaveLength(1);
+  });
+
   it('holds nothing that could be sent to the daemon', () => {
     // The firewall, asserted structurally. If a future change adds a field here
     // that a human authors and something persists, this is where it should be
@@ -56,12 +92,25 @@ describe('useUiStore', () => {
     // connection, none of which are content.
     // A theme is a rendering preference, not content — it belongs on this side
     // of the firewall for the same reason a filter does.
+    // `viewers` is inbound: it arrives over the socket from the daemon and is
+    // never authored here, so holding it cannot leak anything to an agent that
+    // the daemon did not already know. Adding it to this list is a decision,
+    // not a formality — anything appearing here that a *human types* is the
+    // failure this assertion exists to catch, and should move rather than be
+    // appended.
     useUiStore.getState().setFilters({ text: 'a secret note a human typed' });
     const keys = Object.keys(useUiStore.getState()).filter(
       (key) =>
         typeof (useUiStore.getState() as unknown as Record<string, unknown>)[key] !== 'function',
     );
-    expect(keys.sort()).toEqual(['connection', 'filters', 'selectedId', 'theme', 'view']);
+    expect(keys.sort()).toEqual([
+      'connection',
+      'filters',
+      'selectedId',
+      'theme',
+      'view',
+      'viewers',
+    ]);
   });
 });
 

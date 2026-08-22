@@ -149,3 +149,63 @@ export class Presence {
     return this.#entries.size;
   }
 }
+
+/** One actor, collapsed from however many connections they hold. */
+export interface Viewer {
+  /** `actorId` when the client identified itself, otherwise the client id. */
+  readonly key: string;
+  readonly actorId: string | null;
+  readonly displayName: string;
+  /** Every distinct card this actor currently has open. */
+  readonly cardIds: readonly string[];
+  /** The most recent heartbeat across their connections. */
+  readonly seenAt: number;
+  readonly connections: number;
+}
+
+/**
+ * Collapse presence entries into one per actor.
+ *
+ * `list()` returns one entry per *connection*, which is what the transport can
+ * actually track and not what a reader means by "who is here". One person with
+ * the board open in two tabs is two connections and one human, and a viewer
+ * list built straight from `list()` shows them twice — reporting tabs while
+ * appearing to report people. The collapse belongs here rather than in the
+ * component that renders it, so that every surface asking the question gets the
+ * same answer.
+ *
+ * Entries with no `actorId` are kept apart by client id rather than merged.
+ * Two unidentified clients are two different unknown people; merging them on a
+ * shared display name would hide one behind the other.
+ */
+export function viewers(entries: readonly PresenceEntry[]): readonly Viewer[] {
+  const byActor = new Map<string, { entry: PresenceEntry; cards: Set<string>; count: number }>();
+
+  for (const entry of entries) {
+    const key = entry.actorId ?? entry.clientId;
+    const existing = byActor.get(key);
+    if (!existing) {
+      byActor.set(key, {
+        entry,
+        cards: new Set(entry.cardId === null ? [] : [entry.cardId]),
+        count: 1,
+      });
+      continue;
+    }
+    if (entry.cardId !== null) existing.cards.add(entry.cardId);
+    existing.count += 1;
+    // The actor is as present as their liveliest tab.
+    if (entry.seenAt > existing.entry.seenAt) existing.entry = entry;
+  }
+
+  return [...byActor.entries()]
+    .map(([key, { entry, cards, count }]) => ({
+      key,
+      actorId: entry.actorId,
+      displayName: entry.displayName,
+      cardIds: [...cards].sort(),
+      seenAt: entry.seenAt,
+      connections: count,
+    }))
+    .sort((a, b) => a.displayName.localeCompare(b.displayName) || a.key.localeCompare(b.key));
+}

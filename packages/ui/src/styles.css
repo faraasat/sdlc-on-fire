@@ -650,3 +650,35 @@ body {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* Presence (P4-COLLAB-01). Ambient: legible at a glance, never competing with
+   the board for attention. Sized off the bar's own rhythm so it cannot push the
+   header taller than the controls beside it. */
+.presence {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.presence__dot,
+.presence__more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.6rem;
+  block-size: 1.6rem;
+  border-radius: 50%;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  /* Tokens, not literals — the four themes each restate these, and a hard-coded
+     colour here would survive a theme switch and stop being readable. */
+  background: var(--panel);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  user-select: none;
+}
+
+.presence__more {
+  background: transparent;
+}

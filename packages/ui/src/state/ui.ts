@@ -1,9 +1,19 @@
 /**
  * UI state (P3-UI-01), and the other half of ADR-0016's firewall.
  *
- * Everything in this store is *ephemeral and local*: which card is open, which
- * filters are applied, which view is showing. None of it is persisted, none of
- * it is sent to the daemon, and none of it can reach an agent.
+ * Everything in this store is *ephemeral*: which card is open, which filters
+ * are applied, which view is showing, who else is on the board. None of it is
+ * persisted, none of it is sent to the daemon, and none of it can reach an
+ * agent.
+ *
+ * The rule the firewall actually needs is directional, and it is worth stating
+ * that way rather than as "local only". What must never happen is a value a
+ * human authors in a browser becoming an agent's context without first being
+ * written through the daemon. Inbound ephemera — connection status, presence —
+ * came *from* the daemon and can be held here without weakening that: echoing
+ * it back could tell an agent nothing it did not already send. Outbound
+ * authored content is what this store must never accumulate, and the
+ * structural test below is the thing that notices when it starts to.
  *
  * That is the point of keeping it in a separate store from the server state in
  * `api/queries.ts` rather than in one big store holding both. A single store
@@ -15,6 +25,7 @@
  */
 
 import { create } from 'zustand';
+import type { Viewer } from '@sdlc-on-fire/core/browser';
 
 export const THEMES = ['ember', 'slate', 'paper', 'contrast'] as const;
 export type Theme = (typeof THEMES)[number];
@@ -43,6 +54,18 @@ export interface UiState {
   readonly filters: BoardFilters;
   /** Live connection status, shown so a stale board is never silently stale. */
   readonly connection: 'connecting' | 'live' | 'reconnecting' | 'offline';
+  /**
+   * Who else is on the board, collapsed to one entry per actor by the daemon.
+   *
+   * Server state, but deliberately not a TanStack query: there is nothing to
+   * fetch and nothing to cache. It arrives only over the socket and it is only
+   * ever true of *now*, so a cache with a stale time would be a cache of a
+   * claim that has already expired. Cleared on disconnect for the same reason —
+   * a viewer list rendered over a dead socket is the one failure mode presence
+   * exists to avoid, and an empty list is visibly empty where a frozen one
+   * looks current.
+   */
+  readonly viewers: readonly Viewer[];
 
   setView: (view: BoardView) => void;
   setTheme: (theme: Theme) => void;
@@ -50,6 +73,7 @@ export interface UiState {
   setFilters: (patch: Partial<BoardFilters>) => void;
   clearFilters: () => void;
   setConnection: (connection: UiState['connection']) => void;
+  setViewers: (viewers: readonly Viewer[]) => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -58,13 +82,16 @@ export const useUiStore = create<UiState>((set) => ({
   selectedId: null,
   filters: EMPTY_FILTERS,
   connection: 'connecting',
+  viewers: [],
 
   setView: (view) => set({ view }),
   setTheme: (theme) => set({ theme }),
   select: (selectedId) => set({ selectedId }),
   setFilters: (patch) => set((state) => ({ filters: { ...state.filters, ...patch } })),
   clearFilters: () => set({ filters: EMPTY_FILTERS }),
-  setConnection: (connection) => set({ connection }),
+  setConnection: (connection) =>
+    set(connection === 'live' ? { connection } : { connection, viewers: [] }),
+  setViewers: (viewers) => set({ viewers }),
 }));
 
 /** Whether any filter is narrowing the board — drives the "showing a subset" hint. */

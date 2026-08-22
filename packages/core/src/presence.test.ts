@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { mergeByField, Presence, PRESENCE_TTL_MS, stampAll } from './presence.js';
+import {
+  mergeByField,
+  Presence,
+  PRESENCE_TTL_MS,
+  type PresenceEntry,
+  stampAll,
+  viewers,
+} from './presence.js';
 
 /**
  * P3-RT-02 — per-field reconciliation and ephemeral presence.
@@ -145,5 +152,76 @@ describe('Presence', () => {
     expect(methods).not.toContain('save');
     expect(methods).not.toContain('load');
     expect(methods.sort()).toEqual(['constructor', 'leave', 'list', 'on', 'seen', 'size']);
+  });
+});
+
+/**
+ * Collapsing connections into people (P4-COLLAB-01).
+ *
+ * `list()` answers per connection because that is what a socket server can
+ * track. Every reader of that list means "who is here", and the gap between the
+ * two is one person with two tabs appearing as two people.
+ */
+describe('viewers', () => {
+  const entry = (over: Partial<PresenceEntry> = {}): PresenceEntry => ({
+    clientId: 'c1',
+    actorId: 'ana',
+    displayName: 'Ana',
+    cardId: null,
+    seenAt: 1_000,
+    ...over,
+  });
+
+  it('counts one person with two tabs once', () => {
+    const result = viewers([entry({ clientId: 'c1' }), entry({ clientId: 'c2' })]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.connections).toBe(2);
+  });
+
+  it('unions the cards an actor has open across connections', () => {
+    const result = viewers([
+      entry({ clientId: 'c1', cardId: 'B' }),
+      entry({ clientId: 'c2', cardId: 'A' }),
+      entry({ clientId: 'c3', cardId: 'A' }),
+    ]);
+    expect(result[0]?.cardIds).toEqual(['A', 'B']);
+  });
+
+  it('reports the freshest heartbeat across an actor’s connections', () => {
+    const result = viewers([
+      entry({ clientId: 'c1', seenAt: 1_000 }),
+      entry({ clientId: 'c2', seenAt: 9_000 }),
+    ]);
+    expect(result[0]?.seenAt).toBe(9_000);
+  });
+
+  it('keeps unidentified clients apart rather than merging them', () => {
+    // Two anonymous clients are two different unknown people. Merging them on a
+    // shared display name would hide one behind the other.
+    const result = viewers([
+      entry({ clientId: 'c1', actorId: null, displayName: 'someone' }),
+      entry({ clientId: 'c2', actorId: null, displayName: 'someone' }),
+    ]);
+    expect(result).toHaveLength(2);
+  });
+
+  it('separates two different actors', () => {
+    const result = viewers([
+      entry({ clientId: 'c1', actorId: 'ana', displayName: 'Ana' }),
+      entry({ clientId: 'c2', actorId: 'bo', displayName: 'Bo' }),
+    ]);
+    expect(result.map((v) => v.actorId)).toEqual(['ana', 'bo']);
+  });
+
+  it('orders stably so avatars do not reshuffle when a tab reconnects', () => {
+    const result = viewers([
+      entry({ clientId: 'c1', actorId: 'zoe', displayName: 'Zoe' }),
+      entry({ clientId: 'c2', actorId: 'ana', displayName: 'Ana' }),
+    ]);
+    expect(result.map((v) => v.displayName)).toEqual(['Ana', 'Zoe']);
+  });
+
+  it('is empty for an empty list rather than throwing', () => {
+    expect(viewers([])).toEqual([]);
   });
 });
