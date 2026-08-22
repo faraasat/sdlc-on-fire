@@ -4,7 +4,7 @@
 // module rather than executing the built binary.
 import { existsSync, realpathSync } from 'node:fs';
 import { formatViews, listViews } from './views.js';
-import { docVisibility, formatDocVisibility } from './docs-check.js';
+import { docVisibility, formatDocVisibility, formatLlmsTxt, llmsTxt } from './docs-check.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -1232,6 +1232,20 @@ export function buildProgram(): Command {
       emit(result, options.json === true, formatDocHealth);
       // No non-zero exit. Every finding is advisory, and an exit code would
       // make a lexical redundancy guess fail somebody's build.
+    });
+
+  program
+    .command('llms-txt')
+    .description('compile docs/ into a well-known llms.txt index')
+    .option('--check', 'do not write; fail if the committed file is out of date')
+    .option('--json', 'emit JSON')
+    .action(async (options: { check?: boolean; json?: boolean }): Promise<void> => {
+      const result = await llmsTxt(root(), { write: options.check !== true });
+      emit(result, options.json === true, formatLlmsTxt);
+      if (options.check === true && !result.upToDate) {
+        process.stderr.write('llms.txt is out of date — run `sdlc llms-txt` and commit it\n');
+        process.exitCode = 1;
+      }
     });
 
   program

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { relativePosix, resolveWorkspaceLayout } from '@sdlc-on-fire/core';
+import { compileLlmsTxt, LLMS_TXT_PATH, relativePosix as _rel } from '@sdlc-on-fire/core';
 import {
   checkCorpusVisibility,
   checkFreshness,
@@ -204,4 +205,75 @@ export function formatDocVisibility(result: DocVisibilityResult): string {
   );
   lines.push('would hide a regression in one dimension behind an improvement in another.');
   return lines.join('\n');
+}
+
+export interface LlmsTxtResult {
+  readonly path: string;
+  readonly docs: number;
+  /** What the corpus compiles to right now. */
+  readonly contents: string;
+  /** What is committed at that path, or null when nothing is. */
+  readonly onDisk: string | null;
+  readonly written: boolean;
+  /** True when the committed file already matches the compiled output. */
+  readonly upToDate: boolean;
+}
+
+/**
+ * `sdlc llms-txt` — compile the index (P4-DOC-02).
+ *
+ * Built from the same `readDocs` walk as freshness, health and visibility, so
+ * all four describe one corpus. A hand-maintained index is a second list of the
+ * documentation, and a second list goes stale the first time somebody adds a
+ * file — the exact failure `doc-freshness` exists to catch, one level up.
+ *
+ * Compiling and writing are separate, which they were not in the first version
+ * of this function: `--check` called the writing path to obtain the expected
+ * contents, so it wrote the file it was supposed to verify and then compared it
+ * against itself. It could not fail. Compiling is now pure and `write` is a
+ * flag, so the check reads disk and the compile never touches it.
+ */
+export async function llmsTxt(
+  root: string,
+  options: { write?: boolean } = {},
+): Promise<LlmsTxtResult> {
+  const layout = resolveWorkspaceLayout(root);
+  const docs = await readDocs(root);
+  const entries = await Promise.all(
+    docs.map(async (doc) => {
+      const raw = await fs.readFile(path.join(layout.root, doc.path), 'utf8').catch(() => '');
+      const front = parseFrontmatter(raw);
+      const heading = /^#\s+(.+)$/m.exec(front.body)?.[1]?.trim();
+      const summary = front.data['summary'];
+      const section = front.data['section'];
+      return {
+        path: doc.path,
+        ...(heading === undefined ? {} : { title: heading }),
+        ...(typeof summary === 'string' ? { summary } : {}),
+        ...(typeof section === 'string' ? { section } : {}),
+      };
+    }),
+  );
+
+  const contents = compileLlmsTxt({ project: path.basename(layout.root), docs: entries });
+  const target = path.join(layout.root, LLMS_TXT_PATH);
+  const onDisk = await fs.readFile(target, 'utf8').catch(() => null);
+
+  if (options.write === true) await fs.writeFile(target, contents);
+
+  return {
+    path: LLMS_TXT_PATH,
+    docs: entries.length,
+    contents,
+    onDisk,
+    written: options.write === true,
+    upToDate: onDisk === contents,
+  };
+}
+
+export function formatLlmsTxt(result: LlmsTxtResult): string {
+  if (result.written) return `Wrote ${result.path} from ${String(result.docs)} doc(s).`;
+  return result.upToDate
+    ? `${result.path} is up to date (${String(result.docs)} doc(s)).`
+    : `${result.path} is out of date — it would index ${String(result.docs)} doc(s).`;
 }

@@ -36,3 +36,4 @@ export * from './visual-diff.js';
 export * from './agent-teammate.js';
 export * from './activity.js';
 export * from './notification.js';
+export * from './llms-txt.js';
