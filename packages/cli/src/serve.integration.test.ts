@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { init } from './commands.js';
-import { serve, type ServeResult } from './serve.js';
+import { serve, type ServeOptions, type ServeResult } from './serve.js';
 
 /**
  * P3-UI-01 — `sdlc serve`, end to end.
@@ -55,8 +55,11 @@ async function writeCard(root: string, id: string, title: string): Promise<void>
   );
 }
 
-async function start(root: string): Promise<ServeResult> {
-  const server = await serve({ root, port: 0 });
+async function start(
+  root: string,
+  extra: Omit<ServeOptions, 'root' | 'port'> = {},
+): Promise<ServeResult> {
+  const server = await serve({ root, port: 0, ...extra });
   running.push(server);
   return server;
 }
@@ -69,14 +72,29 @@ async function ids(server: ServeResult): Promise<string[]> {
   return rows.map((row) => row.id).sort();
 }
 
-/** Poll rather than sleep: the watcher's latency is the OS's business, not ours. */
-async function until(check: () => Promise<boolean>, budgetMs = 20_000): Promise<boolean> {
-  const deadline = Date.now() + budgetMs;
-  while (Date.now() < deadline) {
-    if (await check()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+/**
+ * Awaits a signal, and names what was being waited for when it never comes.
+ *
+ * The budget is a diagnostic bound, not a latency guess. With the polling
+ * backend and a 50ms stability window the signal arrives in well under a
+ * second, so anything approaching this number means the chain is broken, not
+ * slow — and the point of the race is to say which signal was missing instead
+ * of letting Vitest report a bare timeout on the whole test.
+ */
+async function signalled(promise: Promise<void>, what: string, budgetMs = 30_000): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(what));
+        }, budgetMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
-  return false;
 }
 
 describe('sdlc serve', () => {
@@ -98,13 +116,47 @@ describe('sdlc serve', () => {
     // The first defect. The API served, the socket connected, the board
     // painted — and nothing ever changed, because nothing was watching. Every
     // layer was individually correct and the product did not work.
-    const server = await start(await workspace());
-    const root = roots[roots.length - 1] as string;
+    //
+    // It was also flaky, and the reason is worth keeping. It polled the API
+    // through a helper whose *own* budget was 20s — not the 120s Vitest timeout
+    // on the line below, which was never reached. The observed failure burned
+    // 22043ms: twenty seconds of polling plus startup. So the binding deadline
+    // was one nobody was looking at, and raising the visible number would have
+    // changed nothing.
+    //
+    // What made the machine slow enough to hit it under a 233-file run was not
+    // isolated — CPU contention alone does not reproduce it, and both watcher
+    // backends stay under 200ms when it is applied. That is the point: this
+    // test should not need to know. Awaiting the engine's own `onSynced` signal
+    // takes the deadline off the success path entirely, so the test is slow
+    // when the machine is slow instead of false. Forcing the polling backend
+    // bounds delivery on top of that, and matches what all three sibling
+    // watcher suites already do. `serve` gained the seam for it — this was the
+    // only watcher test that could not opt in.
+    const root = await workspace();
+    let resolveSynced: (() => void) | undefined;
+    const synced = new Promise<void>((resolve) => {
+      resolveSynced = resolve;
+    });
+
+    const server = await start(root, {
+      usePolling: true,
+      awaitWriteFinishMs: 50,
+      onSynced: (outcome) => {
+        if (outcome.relativePath.endsWith('FEAT-200.md')) resolveSynced?.();
+      },
+    });
     expect(await ids(server)).not.toContain('FEAT-200');
 
     await writeCard(root, 'FEAT-200', 'written while the daemon was watching');
-    const arrived = await until(async () => (await ids(server)).includes('FEAT-200'));
-    expect(arrived, 'the watcher never delivered the new card').toBe(true);
+    await signalled(synced, 'the watcher never delivered the new card');
+
+    // `onSynced` fires after `syncFile` resolves, which is after the upsert
+    // commits — so the row is servable by the time this runs, with no second
+    // wait. Asserting through the API rather than trusting the callback is what
+    // keeps this the end-to-end chain test it exists to be: file → watcher →
+    // sync → row → API.
+    expect(await ids(server)).toContain('FEAT-200');
   }, 120_000);
 
   it('reports that it is watching, rather than leaving the user to guess', async () => {

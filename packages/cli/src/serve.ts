@@ -31,6 +31,7 @@ import {
   startRealtimeServer,
   SyncEngine,
   type BudgetVerdict,
+  type SyncObserver,
 } from '@sdlc-on-fire/daemon';
 
 const exec = promisify(execFile);
@@ -41,6 +42,34 @@ export interface ServeOptions {
   readonly host?: string;
   /** Where the built board lives. Absent means look next to the installed package. */
   readonly uiDir?: string;
+  /**
+   * Force the watcher's polling backend instead of native OS events.
+   *
+   * Polling costs CPU and buys an upper bound. A 50ms interval delivers within
+   * a known window; a native backend delivers when the OS decides to, which is
+   * usually faster and has no ceiling — fine for a daemon, where a sync arriving
+   * late is invisible, and wrong for anything that has to assert the change
+   * landed within a budget. Measured on an idle machine the two are equivalent
+   * (~90ms vs ~115ms median); what differs is the tail. It is also the escape
+   * hatch for filesystems where native events do not fire at all: network
+   * mounts, and bind-mounted volumes inside a container.
+   *
+   * `SyncEngine` has carried this option since P0-SYNC-01 and `serve` did not
+   * pass it, which left the one end-to-end watcher test unable to opt in.
+   */
+  readonly usePolling?: boolean | undefined;
+  /** Stability window for editor atomic-saves and agent write bursts. */
+  readonly awaitWriteFinishMs?: number | undefined;
+  /**
+   * Notified after every watcher-driven sync, success or failure.
+   *
+   * The watcher runs detached from any caller, so this is the only way to
+   * observe that a file reached the mirror — or did not. A caller that needs to
+   * know *when* the chain completed awaits this rather than polling the API,
+   * which is the difference between a test that asserts on the daemon and one
+   * that asserts on the operating system's mood.
+   */
+  readonly onSynced?: SyncObserver | undefined;
 }
 
 export interface ServeResult {
@@ -139,7 +168,13 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
   // `sdlc` process cannot open it. The daemon has to be the one doing the
   // writing, which is exactly what the sync engine is for.
   const store = await PostgresStorageAdapter.create(db);
-  const sync = new SyncEngine({ workspaceRoot: options.root, store });
+  const sync = new SyncEngine({
+    workspaceRoot: options.root,
+    store,
+    usePolling: options.usePolling,
+    awaitWriteFinishMs: options.awaitWriteFinishMs,
+    onSynced: options.onSynced,
+  });
 
   // Reconcile before watching, in that order, for the same reason the socket
   // sends its watermark before it trusts the stream: a watcher only ever sees
