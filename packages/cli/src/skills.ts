@@ -5,7 +5,11 @@ import {
   CANONICAL_SKILLS,
   ClaudeCodeAdapter,
   formatDoctorReport,
+  CopilotAdapter,
+  CursorAdapter,
+  GeminiAdapter,
   McpAdapter,
+  OpenCodeAdapter,
   runDoctor,
   type AgentAdapter,
   type CompileResult,
@@ -70,6 +74,13 @@ export interface SkillSources {
 export const COMPILE_TARGETS: Readonly<Record<string, () => AgentAdapter>> = {
   'claude-code': () => new ClaudeCodeAdapter(),
   mcp: () => new McpAdapter(),
+  // P5-ADAPT-01. Registered here rather than discovered, for the reason above:
+  // a target list assembled by looking around writes to whichever surface
+  // happens to be lying around.
+  cursor: () => new CursorAdapter(),
+  copilot: () => new CopilotAdapter(),
+  gemini: () => new GeminiAdapter(),
+  opencode: () => new OpenCodeAdapter(),
 };
 
 /** Every canonical skill, in a stable order so output diffs are readable. */

@@ -31,3 +31,4 @@ export const agentManagerPackage: PackageInfo = {
 /** Resolved dependency identities — proves the workspace links are real, not just declared. */
 export const agentManagerDependencies: readonly PackageInfo[] = [corePackage];
 export * from './adapters/tool-budget.js';
+export * from './adapters/markdown-targets.js';
