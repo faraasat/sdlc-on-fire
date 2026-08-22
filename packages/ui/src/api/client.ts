@@ -7,7 +7,7 @@
  * served by the daemon itself, same origin, same port.
  */
 
-import type { ActivityEntry, ResolvedIdentity } from '@sdlc-on-fire/core/browser';
+import type { ActivityEntry, ResolvedIdentity, ViewDefinition } from '@sdlc-on-fire/core/browser';
 
 export class ApiError extends Error {
   constructor(
@@ -89,6 +89,7 @@ export const api = {
   workItems: () => get<WorkItemRow[]>('/api/work-items'),
   workItem: (id: string) => get<WorkItemDetail>(`/api/work-items/${encodeURIComponent(id)}`),
   lifecycleStates: () => get<LifecycleStateRow[]>('/api/lifecycle-states'),
+  views: () => get<ViewDefinition[]>('/api/views'),
   activity: (workItemId: string | null) =>
     get<ActivityEntry[]>(
       workItemId === null

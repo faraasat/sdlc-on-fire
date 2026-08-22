@@ -16,6 +16,7 @@
 
 export * from './lifecycle.js';
 export * from './board.js';
+export * from './view-definition.js';
 export * from './identity.js';
 export * from './capability.js';
 export * from './change-event.js';

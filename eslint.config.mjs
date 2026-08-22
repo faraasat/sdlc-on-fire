@@ -6,7 +6,17 @@ import globals from 'globals';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', '**/*.tsbuildinfo'],
+    ignores: [
+      '**/dist/**',
+      '**/coverage/**',
+      '**/node_modules/**',
+      '**/*.tsbuildinfo',
+      // Benchmarks are deliberately outside every tsconfig: they are run by
+      // hand, not built and not type-checked as part of the project. Linting
+      // them means adding them to a tsconfig, which would put them back in the
+      // build they were moved out of.
+      '**/bench/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

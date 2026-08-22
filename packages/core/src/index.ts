@@ -76,6 +76,7 @@ export * from './plugin-manifest.js';
 export * from './change-event.js';
 export * from './identity.js';
 export * from './board.js';
+export * from './view-definition.js';
 export * from './context-provenance.js';
 
 /**

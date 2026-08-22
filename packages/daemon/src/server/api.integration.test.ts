@@ -366,3 +366,29 @@ describe('the activity feed', () => {
     expect(huge.status).toBe(200);
   });
 });
+
+/**
+ * P4-COLLAB-03 — saved views over HTTP.
+ *
+ * The reader is tested in the CLI package against a real directory. What only
+ * this shows is the injection seam: a server started without a views provider
+ * must serve an empty list rather than failing, because a board with no view
+ * picker still works and a 500 here would take the whole board down with it.
+ */
+describe('the views endpoint', () => {
+  it('serves an empty list when the server has no views provider', async () => {
+    const response = await fetch(`${base}/api/views`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
+  it('refuses an unknown role rather than returning everything', async () => {
+    const response = await fetch(`${base}/api/views?role=devops`);
+    expect(response.status).toBe(400);
+  });
+
+  it('accepts a known role', async () => {
+    const response = await fetch(`${base}/api/views?role=security`);
+    expect(response.status).toBe(200);
+  });
+});

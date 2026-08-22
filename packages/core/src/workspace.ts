@@ -272,6 +272,14 @@ export interface WorkspaceLayout {
   readonly docsDir: string;
   /** Gate-policy YAML (contract 03 §4, contract 06 §2) — content, so under `docs/`. */
   readonly gatesDir: string;
+  /**
+   * Saved board views (P4-COLLAB-03, contract 06 §2a).
+   *
+   * Beside `gatesDir` and for the same reason: a saved view is authored,
+   * shared and reviewed, so it is content and cannot live under the gitignored
+   * `.sdlcof/`.
+   */
+  readonly viewsDir: string;
   readonly stateDir: string;
   readonly dataDir: string;
   readonly lockDir: string;
@@ -298,6 +306,7 @@ export function resolveWorkspaceLayout(
     kanbanDir: path.join(absoluteRoot, paths?.kanban ?? DEFAULT_KANBAN_DIR),
     docsDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR),
     gatesDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR, 'gates'),
+    viewsDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR, 'views'),
     stateDir,
     dataDir: path.join(stateDir, 'db'),
     lockDir: path.join(stateDir, 'locks'),

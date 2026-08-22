@@ -1,11 +1,12 @@
 import { useState, type ReactElement } from 'react';
-import { useIdentity, useWorkItems } from './api/queries.js';
+import { useIdentity, useSavedViews, useWorkItems } from './api/queries.js';
 import { useMoveCard } from './api/mutations.js';
 import { useRealtime } from './api/realtime.js';
 import { isFiltered, useUiStore } from './state/ui.js';
 import { IdentityBadge } from './components/IdentityBadge.js';
 import { ConnectionDot } from './components/ConnectionDot.js';
 import { PresenceBar } from './components/PresenceBar.js';
+import { ViewPicker } from './components/ViewPicker.js';
 import { BoardView } from './components/BoardView.js';
 import { TableView } from './components/TableView.js';
 import { RoadmapView } from './components/RoadmapView.js';
@@ -25,6 +26,7 @@ export function App(): ReactElement {
 
   const identity = useIdentity();
   const items = useWorkItems();
+  const savedViews = useSavedViews();
   const move = useMoveCard();
   const { view, setView, filters, setFilters, clearFilters, selectedId, select, viewers } =
     useUiStore();
@@ -99,6 +101,7 @@ export function App(): ReactElement {
           needs a human
         </button>
         <ThemePicker />
+        <ViewPicker views={savedViews.data ?? []} onGroupBy={setGroupBy} />
         <PresenceBar viewers={viewers} selfActorId={identity.data?.actor?.id ?? null} />
         <ConnectionDot />
         <IdentityBadge identity={identity.data} />

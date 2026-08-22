@@ -8,6 +8,7 @@
  */
 
 import fs from 'node:fs/promises';
+import { readViews } from './views.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -147,6 +148,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     db,
     gitEmail: email,
     version: 'dev',
+    views: () => readViews(options.root),
     transition: async (id, to) => {
       await lifecycle.transition({ workItemId: id, to });
     },

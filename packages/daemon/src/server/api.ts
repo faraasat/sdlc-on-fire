@@ -23,14 +23,18 @@ import {
   rework,
   stageStats,
   visitsByCard,
+  viewsForRole,
   wipLimits,
+  ROLE_KEYS,
   type CommentEvent,
   type EvidenceRow,
   type GateEvent,
   type GateEvidenceLink,
   type GateRow,
+  type RoleKey,
   type RunEvent,
   type TransitionEvent,
+  type ViewDefinition,
   type TransitionRow,
 } from '@sdlc-on-fire/core';
 import type { LifecycleStage } from '@sdlc-on-fire/core';
@@ -47,6 +51,16 @@ export interface ApiOptions {
    * drives is what a board drag drives, guards and all.
    */
   readonly transition?: ((id: string, to: LifecycleStage) => Promise<void>) | undefined;
+  /**
+   * Reads the saved views from `docs/views/` (P4-COLLAB-03).
+   *
+   * Injected for the same reason `transition` is, plus a layering one: the
+   * reader lives in the CLI package and the daemon cannot import it without
+   * inverting the dependency. A server started without it serves an empty list
+   * rather than failing — a board with no view picker still works.
+   */
+  readonly views?:
+    (() => Promise<{ views: readonly ViewDefinition[]; problems: readonly unknown[] }>) | undefined;
   /** `git config user.email`, resolved once by the caller. */
   readonly gitEmail?: string | undefined;
   readonly version?: string;
@@ -213,6 +227,29 @@ async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
             workItemId,
           ]);
     return { status: 200, body: rows };
+  }
+
+  if (path === '/api/views') {
+    // Read from disk on every request rather than cached. A view is a file a
+    // person edits; a cache would mean saving the file and not seeing it, and
+    // the directory is small enough that the read costs nothing worth keeping.
+    // The argument is validated before the provider is consulted. Ordering
+    // these the other way makes a bad request succeed whenever the server
+    // happens to be configured without views — validation that depends on
+    // configuration is validation that reports different answers to the same
+    // request for reasons the caller cannot see.
+    const role = url.searchParams.get('role');
+    if (role !== null && !(ROLE_KEYS as readonly string[]).includes(role)) {
+      // Refused rather than ignored. Silently returning every view for a
+      // misspelled role tells the caller that role sees all of them.
+      return { status: 400, body: { error: `unknown role "${role}"` } };
+    }
+    if (options.views === undefined) return { status: 200, body: [] };
+    const loaded = await options.views();
+    return {
+      status: 200,
+      body: role === null ? loaded.views : viewsForRole(loaded.views, role as RoleKey),
+    };
   }
 
   if (path === '/api/activity') {

@@ -3,6 +3,7 @@
 // syntax error — and one that no unit test can see, because tests import the
 // module rather than executing the built binary.
 import { existsSync, realpathSync } from 'node:fs';
+import { formatViews, listViews } from './views.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -30,6 +31,7 @@ import {
   AmbiguitySchema,
   PERMISSION_KEYS,
   ROLE_KEYS,
+  type RoleKey,
 } from '@sdlc-on-fire/core';
 import { renderWorkItem } from '@sdlc-on-fire/storage';
 import fs from 'node:fs/promises';
@@ -1229,6 +1231,30 @@ export function buildProgram(): Command {
       emit(result, options.json === true, formatDocHealth);
       // No non-zero exit. Every finding is advisory, and an exit code would
       // make a lexical redundancy guess fail somebody's build.
+    });
+
+  program
+    .command('views')
+    .description('saved board views from docs/views/')
+    .option('--role <role>', 'only views offered to this role')
+    .option('--json', 'emit JSON')
+    .action(async (options: { role?: string; json?: boolean }): Promise<void> => {
+      const role = options.role === undefined ? undefined : (options.role as RoleKey);
+      if (role !== undefined && !(ROLE_KEYS as readonly string[]).includes(role)) {
+        // Named rather than silently returning everything. A typo'd role that
+        // listed every view would read as "this role sees all of them".
+        process.stderr.write(
+          `unknown role "${String(options.role)}" — expected one of ${ROLE_KEYS.join(', ')}\n`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+      const result = await listViews(root(), role);
+      emit(result, options.json === true, formatViews);
+      // Non-zero when a file failed to load. Unlike a gate, a broken view costs
+      // a menu entry rather than a missed check — but a file the author thinks
+      // is working and is not still deserves a failing command.
+      if (!result.ok) process.exitCode = 1;
     });
 
   program

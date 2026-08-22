@@ -11,7 +11,7 @@
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { api, type LifecycleStateRow, type WorkItemDetail, type WorkItemRow } from './client.js';
-import type { ActivityEntry, ResolvedIdentity } from '@sdlc-on-fire/core/browser';
+import type { ActivityEntry, ResolvedIdentity, ViewDefinition } from '@sdlc-on-fire/core/browser';
 
 export const queryKeys = {
   identity: ['identity'] as const,
@@ -19,6 +19,7 @@ export const queryKeys = {
   workItem: (id: string) => ['work-items', id] as const,
   lifecycleStates: ['lifecycle-states'] as const,
   activity: (workItemId: string | null) => ['activity', workItemId ?? 'all'] as const,
+  views: ['views'] as const,
 };
 
 /** Which query key a change to a given table should invalidate. */
@@ -78,5 +79,15 @@ export function useActivity(workItemId: string | null): UseQueryResult<ActivityE
   return useQuery({
     queryKey: queryKeys.activity(workItemId),
     queryFn: () => api.activity(workItemId),
+  });
+}
+
+export function useSavedViews(): UseQueryResult<ViewDefinition[]> {
+  return useQuery({
+    queryKey: queryKeys.views,
+    queryFn: api.views,
+    // Views are files on disk that the daemon re-reads per request. Refetching
+    // on focus is what makes editing one and alt-tabbing back show the change.
+    staleTime: 5_000,
   });
 }
