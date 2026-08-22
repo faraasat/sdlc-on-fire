@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import {
   archivePath,
   blocks,
@@ -122,8 +123,30 @@ export async function checkSpecs(root: string): Promise<SpecCheckResult> {
   const summary: { path: string; requirements: number }[] = [];
 
   for (const file of files) {
-    const requirements = splitAuthored(file.raw);
+    const front = parseFrontmatter(file.raw);
+    const requirements = splitAuthored(front.body);
     summary.push({ path: file.path, requirements: requirements.length });
+
+    // An inferred stub is a *proposal*, not a specification (P4-BROWN-02). It
+    // is reported as unconfirmed, and its unwritten requirements are not run
+    // through the authoring rules — telling somebody their generated
+    // placeholder is missing an RFC-2119 keyword is true, useless, and would
+    // bury the one message that matters under one per domain.
+    //
+    // This is the seam where a guess could quietly become a specification, so
+    // the refusal lives here rather than in a convention about how people are
+    // supposed to treat these files.
+    if (front.data['inferred'] === true) {
+      problems.push({
+        file: file.path,
+        requirement: '(whole file)',
+        because:
+          'inferred from the codebase and not yet confirmed — write the requirements, then delete the `inferred: true` marker',
+        severity: 'refusal',
+      });
+      continue;
+    }
+
     for (const problem of validateSpec(requirements))
       problems.push({ ...problem, file: file.path });
   }

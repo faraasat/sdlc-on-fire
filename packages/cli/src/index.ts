@@ -6,6 +6,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { formatViews, listViews } from './views.js';
 import { formatExport, runExport } from './export.js';
 import { archiveChange, checkSpecs, formatSpecCheck, newChange, newSpec } from './spec.js';
+import { formatMap, runMap } from './map.js';
 import { docVisibility, formatDocVisibility, formatLlmsTxt, llmsTxt } from './docs-check.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
@@ -1234,6 +1235,22 @@ export function buildProgram(): Command {
       emit(result, options.json === true, formatDocHealth);
       // No non-zero exit. Every finding is advisory, and an exit code would
       // make a lexical redundancy guess fail somebody's build.
+    });
+
+  program
+    .command('map')
+    .description('propose a spec tree from an existing codebase (brownfield on-ramp)')
+    .option('--write', 'create the inferred stubs under docs/specs/')
+    .option('--max <n>', 'cap the number of proposed domains', (v) => Number(v))
+    .option('--json', 'emit JSON')
+    .action(async (options: { write?: boolean; max?: number; json?: boolean }): Promise<void> => {
+      const result = await runMap(root(), {
+        ...(options.write === true ? { write: true } : {}),
+        ...(options.max === undefined || Number.isNaN(options.max)
+          ? {}
+          : { maxDomains: options.max }),
+      });
+      emit(result, options.json === true, formatMap);
     });
 
   const spec = program.command('spec').description('native brownfield spec authoring');
