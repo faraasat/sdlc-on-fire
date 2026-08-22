@@ -14,3 +14,4 @@ export const importersPackage: PackageInfo = {
 };
 export * from './export-port.js';
 export * from './exporters.js';
+export * from './round-trip.js';

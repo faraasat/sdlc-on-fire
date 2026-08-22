@@ -195,18 +195,35 @@ export const gsdExporter: ToolExporter = {
         path: `.gsd/${node.kind}s/${slugify(node.title)}.md`,
         contents: `# ${node.title}\n\n${node.body}\n`,
       },
-      losses: commonLosses(node, { relations: false, externalRef: false }).concat(
-        Object.keys(node.frontmatterHints).length > 0
-          ? [
-              {
-                nodeTitle: node.title,
-                kind: node.kind,
-                field: 'frontmatterHints',
-                because: 'GSD task files carry no frontmatter',
-              },
-            ]
-          : [],
-      ),
+      losses: commonLosses(node, { relations: false, externalRef: false })
+        .concat(
+          Object.keys(node.frontmatterHints).length > 0
+            ? [
+                {
+                  nodeTitle: node.title,
+                  kind: node.kind,
+                  field: 'frontmatterHints',
+                  because: 'GSD task files carry no frontmatter',
+                },
+              ]
+            : [],
+        )
+        .concat(
+          // Found by the P2-IMP-08 round-trip gate, not by reading this code.
+          // GSD files carry no frontmatter at all, so the identifiers had
+          // nowhere to go — and this exporter claimed `moderate` fidelity while
+          // silently dropping the strings teams reference in commits and PRs.
+          node.preservedIdentifiers.length > 0
+            ? [
+                {
+                  nodeTitle: node.title,
+                  kind: node.kind,
+                  field: 'preservedIdentifiers',
+                  because: 'GSD files carry no frontmatter, so the ids survive only in prose',
+                },
+              ]
+            : [],
+        ),
     }));
   },
 };

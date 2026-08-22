@@ -41,5 +41,8 @@
   },
   "peerDependencies": {
     "@sdlc-on-fire/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@sdlc-on-fire/context": "workspace:^"
   }
 }

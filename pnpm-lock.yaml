@@ -59,6 +59,10 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+    devDependencies:
+      '@sdlc-on-fire/context':
+        specifier: workspace:^
+        version: link:../context
 
   packages/cli:
     dependencies:
