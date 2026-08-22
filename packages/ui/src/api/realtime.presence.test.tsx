@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { act, cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactElement, ReactNode } from 'react';
 import { PRESENCE_HEARTBEAT_MS, useRealtime } from './realtime.js';
@@ -131,6 +131,26 @@ describe('useRealtime — presence', () => {
     const [ana] = useUiStore.getState().viewers;
     expect(ana?.connections).toBe(2);
     expect(ana?.cardIds).toEqual(['A', 'B']);
+  });
+
+  it('re-announces the moment the open card changes, without waiting for a beat', async () => {
+    // Found by opening the board, not by a test. The first announce goes out
+    // before identity resolves and before any card is open; if nothing pushes a
+    // fresh one, the daemon keeps labelling the connection by its own id and
+    // showing the wrong card until the next heartbeat seconds later.
+    render(wrap(<Probe />));
+    const socket = FakeSocket.last as FakeSocket;
+    socket.open();
+    const before = parsed(socket).filter((m) => m['type'] === 'presence').length;
+
+    await act(async () => {
+      useUiStore.setState({ selectedId: 'P4-COLLAB-01' });
+      await Promise.resolve();
+    });
+
+    const presence = parsed(socket).filter((m) => m['type'] === 'presence');
+    expect(presence.length).toBeGreaterThan(before);
+    expect(presence[presence.length - 1]?.['cardId']).toBe('P4-COLLAB-01');
   });
 
   it('does not treat a presence frame as a change event', async () => {

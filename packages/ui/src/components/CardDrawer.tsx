@@ -5,7 +5,8 @@ import {
   type BindingReport,
   type DotState,
 } from '@sdlc-on-fire/core/browser';
-import { useWorkItem } from '../api/queries.js';
+import { useActivity, useWorkItem } from '../api/queries.js';
+import { ActivityFeed } from './ActivityFeed.js';
 
 /**
  * The card detail drawer (P3-KAN-02).
@@ -62,6 +63,7 @@ export function CardDrawer({
   onClose: () => void;
 }): ReactElement {
   const detail = useWorkItem(cardId);
+  const activity = useActivity(cardId);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   // Focus moves into the drawer when it opens and Escape closes it. Without
@@ -229,6 +231,21 @@ export function CardDrawer({
                   );
                 })}
               </ul>
+            )}
+          </section>
+
+          <section>
+            <h3>Activity</h3>
+            {activity.isError ? (
+              <p className="error" role="alert">
+                the activity feed could not be loaded
+              </p>
+            ) : (
+              // Rendered from the daemon's assembled feed, not stitched
+              // together here from the comments and transitions already on this
+              // page. Two ways to build the same list disagree eventually, and
+              // the one a person is reading is the one that must be right.
+              <ActivityFeed entries={activity.data ?? []} />
             )}
           </section>
         </div>

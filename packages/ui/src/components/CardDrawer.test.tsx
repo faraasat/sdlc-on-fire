@@ -28,10 +28,24 @@ const detail = {
   binding: { gates: [], unbound: [], problemCount: 0 },
 };
 
-function stub(body: unknown = detail): void {
+/**
+ * URL-aware, because the drawer now fetches two endpoints.
+ *
+ * A stub that answers every request with the same body is a stub that lies: it
+ * handed the work-item detail object to the activity feed, which typechecks as
+ * `ActivityEntry[]` and is not an array at runtime. Routing by path keeps the
+ * fake honest about which endpoint returned what.
+ */
+function stub(body: unknown = detail, activity: unknown = []): void {
   vi.stubGlobal(
     'fetch',
-    vi.fn(() => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))),
+    vi.fn((input: unknown) =>
+      Promise.resolve(
+        new Response(JSON.stringify(String(input).includes('/api/activity') ? activity : body), {
+          status: 200,
+        }),
+      ),
+    ),
   );
 }
 

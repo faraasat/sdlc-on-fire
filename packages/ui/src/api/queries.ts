@@ -11,13 +11,14 @@
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { api, type LifecycleStateRow, type WorkItemDetail, type WorkItemRow } from './client.js';
-import type { ResolvedIdentity } from '@sdlc-on-fire/core/browser';
+import type { ActivityEntry, ResolvedIdentity } from '@sdlc-on-fire/core/browser';
 
 export const queryKeys = {
   identity: ['identity'] as const,
   workItems: ['work-items'] as const,
   workItem: (id: string) => ['work-items', id] as const,
   lifecycleStates: ['lifecycle-states'] as const,
+  activity: (workItemId: string | null) => ['activity', workItemId ?? 'all'] as const,
 };
 
 /** Which query key a change to a given table should invalidate. */
@@ -33,7 +34,11 @@ export function keysForTable(table: string, id: string): readonly (readonly stri
     case 'gates':
     case 'comments':
     case 'lifecycle_transitions':
-      return [queryKeys.workItems];
+      // These four *are* the feed. A change to any of them makes every activity
+      // query stale, including the board-wide one, so the prefix is invalidated
+      // rather than the one card's key — a comment on another card still
+      // changes what the unscoped feed should show.
+      return [queryKeys.workItems, ['activity']];
     default:
       return [];
   }
@@ -66,5 +71,12 @@ export function useLifecycleStates(): UseQueryResult<LifecycleStateRow[]> {
     queryKey: queryKeys.lifecycleStates,
     queryFn: api.lifecycleStates,
     staleTime: Infinity,
+  });
+}
+
+export function useActivity(workItemId: string | null): UseQueryResult<ActivityEntry[]> {
+  return useQuery({
+    queryKey: queryKeys.activity(workItemId),
+    queryFn: () => api.activity(workItemId),
   });
 }

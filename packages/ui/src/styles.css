@@ -682,3 +682,73 @@ body {
 .presence__more {
   background: transparent;
 }
+
+/* Activity feed (P4-COLLAB-01). Severity is a border and a word, never colour
+   alone — the same rule the risk chips follow. */
+.feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.feed__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border-inline-start: 3px solid var(--line);
+  background: var(--panel);
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+}
+
+.feed__row--blocking {
+  border-inline-start-color: var(--bad);
+}
+
+.feed__row--attention {
+  border-inline-start-color: var(--warn);
+}
+
+.feed__row--quiet {
+  opacity: 0.75;
+}
+
+.feed__kind,
+.feed__card {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.feed__summary {
+  flex: 1 1 12rem;
+}
+
+.feed__actor,
+.feed__when {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.feed__agent {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+
+.feed__severity {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--bad);
+}
+
+.feed__row--attention .feed__severity {
+  color: var(--warn);
+}

@@ -69,11 +69,15 @@ export function useRealtime(): void {
   // resolves after the socket is already open, and rebuilding the socket when
   // it lands would drop the watermark.
   const identity = useIdentity();
-  const selfRef = useRef<{ actorId: string | null; displayName: string } | null>(null);
-  selfRef.current =
+  const self =
     identity.data?.actor === undefined || identity.data.actor === null
       ? null
       : { actorId: identity.data.actor.id, displayName: identity.data.actor.displayName };
+  const selfRef = useRef<{ actorId: string | null; displayName: string } | null>(self);
+  selfRef.current = self;
+
+  /** The live socket's announce function, so identity changes can push a beat. */
+  const announceRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -180,14 +184,31 @@ export function useRealtime(): void {
       socket.onerror = () => socket?.close();
     };
 
+    // Published so the effect below can re-announce the moment identity or the
+    // open card changes, without this effect depending on either and tearing
+    // the socket down.
+    announceRef.current = announce;
+
     connect();
 
     return () => {
       closed = true;
+      announceRef.current = null;
       setConnection('offline');
       if (timer !== null) clearTimeout(timer);
       if (beat !== null) clearInterval(beat);
       socket?.close();
     };
   }, [queryClient, setConnection, setViewers]);
+
+  // Re-announce as soon as there is something new to say.
+  //
+  // Found by opening the board rather than by a test: the first heartbeat goes
+  // out on `open`, before the identity query has resolved, so the daemon labels
+  // the connection by its own id and everyone sees an avatar reading "C" until
+  // the next beat ten seconds later. Waiting for a heartbeat to correct a name
+  // that is already known is a stale label with a timer on it.
+  useEffect(() => {
+    announceRef.current?.();
+  }, [selectedId, self?.actorId, self?.displayName]);
 }

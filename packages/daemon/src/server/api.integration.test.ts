@@ -3,7 +3,12 @@ import { request as httpRequest } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { applySchema, provisionPglite, type ProvisionedDatabase } from '@sdlc-on-fire/db';
+import {
+  applySchema,
+  provisionPglite,
+  seedLifecycleStates,
+  type ProvisionedDatabase,
+} from '@sdlc-on-fire/db';
 import { startRealtimeServer, type RealtimeServer } from '../realtime/server.js';
 import { createApiHandler } from './api.js';
 
@@ -25,6 +30,9 @@ beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'sdlcof-api-'));
   db = await provisionPglite({ workspaceRoot: root });
   await applySchema(db);
+  // `lifecycle_transitions.to_state` is a foreign key into `lifecycle_states`,
+  // so a transition cannot be seeded until the state vocabulary exists.
+  await seedLifecycleStates(db);
   server = await startRealtimeServer({
     db,
     onRequest: createApiHandler({ db, gitEmail: 'solo@example.com', version: 'test' }),
@@ -239,5 +247,122 @@ describe('the read API', () => {
 
   it('leaves non-API paths to the rest of the server', async () => {
     expect((await fetch(`${base}/not-api`)).status).toBe(404);
+  });
+});
+
+/**
+ * P4-COLLAB-01 — the activity feed, over a real database.
+ *
+ * This is the only test that can catch the defect the endpoint is most likely
+ * to have. Its four queries name columns across two tables defined in raw SQL
+ * and two defined in Drizzle, and a wrong-but-plausible column name typechecks
+ * perfectly — `lifecycle_transitions.actor` and `comments.author` both read as
+ * obviously right and neither exists. Nothing but execution against a real
+ * schema distinguishes them.
+ */
+describe('the activity feed', () => {
+  it('builds a feed from every source, newest first', async () => {
+    await seedItem('FEED-1');
+    await db.query(
+      `INSERT INTO lifecycle_transitions (work_item_id, from_state, to_state)
+       VALUES ('FEED-1', 'spec', 'implement');`,
+    );
+    await db.query(
+      `INSERT INTO comments (work_item_id, type, body, role_effect)
+       VALUES ('FEED-1', 'blocker', 'the gate is wrong', 'GATE_BLOCK');`,
+    );
+
+    const response = await fetch(`${base}/api/activity`);
+    expect(response.status).toBe(200);
+    const feed = (await response.json()) as { kind: string; cardId: string; severity: string }[];
+
+    expect(feed.map((entry) => entry.kind).sort()).toEqual(['comment', 'transition']);
+    expect(feed.every((entry) => entry.cardId === 'FEED-1')).toBe(true);
+  });
+
+  it('carries the stored role_effect rather than re-deriving it', async () => {
+    // ADR-0012: the effect was resolved from (type × role) at insert. The feed
+    // reads that column; it does not compute a second opinion.
+    await seedItem('FEED-2');
+    await db.query(
+      `INSERT INTO comments (work_item_id, type, body, role_effect)
+       VALUES ('FEED-2', 'normal', 'looks fine to me', 'GATE_BLOCK');`,
+    );
+
+    const feed = (await (await fetch(`${base}/api/activity`)).json()) as {
+      kind: string;
+      effect?: string;
+      severity: string;
+    }[];
+    const comment = feed.find((entry) => entry.kind === 'comment');
+
+    // The type says `normal`. The stored effect says GATE_BLOCK. A feed that
+    // re-derived from the type would call this quiet and hide a blocked gate.
+    expect(comment?.effect).toBe('GATE_BLOCK');
+    expect(comment?.severity).toBe('blocking');
+  });
+
+  it('names the actor behind a transition instead of a uuid', async () => {
+    await seedItem('FEED-3');
+    const actor = (
+      await db.query<{ id: string }>(
+        `INSERT INTO actors (kind, display_name) VALUES ('human', 'Ana Ruiz') RETURNING id;`,
+      )
+    )[0];
+    await db.query(
+      `INSERT INTO lifecycle_transitions (work_item_id, from_state, to_state, actor_id)
+       VALUES ('FEED-3', 'spec', 'implement', $1);`,
+      [actor?.id],
+    );
+
+    const feed = (await (await fetch(`${base}/api/activity`)).json()) as {
+      kind: string;
+      actor: string | null;
+    }[];
+    expect(feed.find((entry) => entry.kind === 'transition')?.actor).toBe('Ana Ruiz');
+  });
+
+  it('keeps an unattributed event rather than dropping it', async () => {
+    // LEFT JOIN, not INNER. An inner join silently removes every event nobody
+    // signed for — the feed would look clean and be incomplete.
+    await seedItem('FEED-4');
+    await db.query(
+      `INSERT INTO lifecycle_transitions (work_item_id, from_state, to_state)
+       VALUES ('FEED-4', 'spec', 'implement');`,
+    );
+
+    const feed = (await (await fetch(`${base}/api/activity`)).json()) as {
+      cardId: string;
+      actor: string | null;
+    }[];
+    const entry = feed.find((row) => row.cardId === 'FEED-4');
+    expect(entry).toBeDefined();
+    expect(entry?.actor).toBeNull();
+  });
+
+  it('scopes to one card when asked', async () => {
+    await seedItem('FEED-5');
+    await seedItem('FEED-6');
+    for (const id of ['FEED-5', 'FEED-6']) {
+      await db.query(
+        `INSERT INTO lifecycle_transitions (work_item_id, from_state, to_state)
+         VALUES ($1, 'spec', 'implement');`,
+        [id],
+      );
+    }
+
+    const feed = (await (await fetch(`${base}/api/activity?workItemId=FEED-5`)).json()) as {
+      cardId: string;
+    }[];
+    expect(feed.length).toBeGreaterThan(0);
+    expect(feed.every((entry) => entry.cardId === 'FEED-5')).toBe(true);
+  });
+
+  it('bounds the limit rather than trusting the query string', async () => {
+    await seedItem('FEED-7');
+    const bad = await fetch(`${base}/api/activity?limit=not-a-number`);
+    expect(bad.status).toBe(200);
+    const huge = await fetch(`${base}/api/activity?limit=999999`);
+    expect(huge.status).toBe(200);
   });
 });

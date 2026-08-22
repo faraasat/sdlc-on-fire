@@ -16,6 +16,7 @@ import { moveCard } from './move.js';
 import {
   bindEvidence,
   bottleneck,
+  buildFeed,
   cycleTime,
   flowEfficiency,
   leadTime,
@@ -23,9 +24,13 @@ import {
   stageStats,
   visitsByCard,
   wipLimits,
+  type CommentEvent,
   type EvidenceRow,
+  type GateEvent,
   type GateEvidenceLink,
   type GateRow,
+  type RunEvent,
+  type TransitionEvent,
   type TransitionRow,
 } from '@sdlc-on-fire/core';
 import type { LifecycleStage } from '@sdlc-on-fire/core';
@@ -208,6 +213,70 @@ async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
             workItemId,
           ]);
     return { status: 200, body: rows };
+  }
+
+  if (path === '/api/activity') {
+    // Built on the server, for the same reason the board's projection is: the
+    // feed is a claim about what happened, and a claim assembled in the browser
+    // cannot be tested without one. `buildFeed` merges then truncates — the
+    // client receives a finished feed and renders it.
+    //
+    // `role_effect` is selected and carried, never recomputed here. It was
+    // resolved from (type x role) at insert (ADR-0012); deriving it a second
+    // time in a read path would be a second implementation of the one value the
+    // comment model exists to make unambiguous.
+    const requested = Number(url.searchParams.get('limit') ?? '100');
+    const limit = Number.isFinite(requested) && requested > 0 ? Math.min(requested, 500) : 100;
+    const workItemId = url.searchParams.get('workItemId');
+    // Built per query rather than shared, because two of the four join and so
+    // need the column qualified. The parameter is still bound, never
+    // interpolated — `workItemId` arrives from a query string.
+    const params = workItemId === null ? [] : [workItemId];
+    const where = (column: string): string => (workItemId === null ? '' : `WHERE ${column} = $1`);
+
+    // Each source is over-fetched to `limit` and merged; the cut happens after.
+    // Capping each query at a share of the limit would make the feed's contents
+    // depend on which table happened to be busy.
+    const [transitions, comments, gates, runs] = await Promise.all([
+      // Joined to `actors` for a name. The transition and comment tables carry
+      // an actor *id*; a feed that rendered the raw uuid would be technically
+      // correct and unreadable. LEFT JOIN, because both columns are nullable —
+      // an inner join would silently drop every system-authored event, and a
+      // feed missing exactly the entries nobody signed for is worse than one
+      // showing them unattributed.
+      db.query<TransitionEvent>(
+        `SELECT t.work_item_id, t.from_state, t.to_state,
+                a.display_name AS actor, t.created_at::text AS created_at
+           FROM lifecycle_transitions t
+           LEFT JOIN actors a ON a.id = t.actor_id
+           ${where('t.work_item_id')} ORDER BY t.created_at DESC LIMIT ${String(limit)};`,
+        params,
+      ),
+      db.query<CommentEvent>(
+        `SELECT c.work_item_id, c.type, c.role_effect, c.body,
+                a.display_name AS author, a.kind AS author_kind,
+                c.created_at::text AS created_at
+           FROM comments c
+           LEFT JOIN actors a ON a.id = c.author_actor_id
+           ${where('c.work_item_id')} ORDER BY c.created_at DESC LIMIT ${String(limit)};`,
+        params,
+      ),
+      db.query<GateEvent>(
+        `SELECT work_item_id, gate_name, result, updated_at::text AS updated_at
+           FROM gates ${where('work_item_id')} ORDER BY updated_at DESC LIMIT ${String(limit)};`,
+        params,
+      ),
+      db.query<RunEvent>(
+        `SELECT work_item_id, id, status, agent_target, updated_at::text AS updated_at
+           FROM runs ${where('work_item_id')} ORDER BY updated_at DESC LIMIT ${String(limit)};`,
+        params,
+      ),
+    ]);
+
+    return {
+      status: 200,
+      body: buildFeed({ transitions, comments, gates, runs, limit }),
+    };
   }
 
   if (path === '/api/metrics') {
