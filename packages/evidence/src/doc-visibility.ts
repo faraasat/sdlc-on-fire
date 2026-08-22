@@ -35,6 +35,15 @@ export const VISIBILITY_CHECKS = [
   'hedged-prose',
   'no-specifics',
   'keyword-gap',
+  // Prose tells (P4-DOC-03). Deliberately in this module rather than beside it:
+  // `techniques/44` §5 found the citation-visibility properties and the
+  // reads-as-machine-written properties are largely one set, and building them
+  // separately would produce two checkers disagreeing about hedged prose.
+  'tagline-under-heading',
+  'tricolon-density',
+  'not-just-construction',
+  'em-dash-rate',
+  'no-authorial-choice',
 ] as const;
 export type VisibilityCheck = (typeof VISIBILITY_CHECKS)[number];
 
@@ -47,7 +56,14 @@ export interface VisibilityFinding {
    * Whether the evidence calls this a gatekeeper (unanimous across six models,
    * odds ratios far above the differentiators) or a weaker signal.
    */
-  readonly weight: 'gatekeeper' | 'differentiator';
+  /**
+   * `style` is reported and never blocks. `techniques/44` §4 is explicit that a
+   * document with no concrete anchor is *the* failure and the rest is style —
+   * and a project is entitled to a style. A check that refused on tricolon
+   * density would be a linter nobody keeps switched on, which is worse than no
+   * check because it takes the anchor finding down with it.
+   */
+  readonly weight: 'gatekeeper' | 'differentiator' | 'style';
 }
 
 export interface VisibilityDoc {
@@ -130,7 +146,15 @@ export function checkVisibility(doc: VisibilityDoc, now: Date): readonly Visibil
   // honest proxy is whether the document names the question it answers — a
   // title that is a bare noun ("Configuration") matches no question anyone
   // types, where "How configuration is resolved" does.
-  if (doc.title === null || doc.title.trim().split(/\s+/).length < 3) {
+  // A title that *is* an identifier — a package name, a command, a file — is a
+  // topic match by construction: somebody searching for `@scope/pkg` matches it
+  // exactly. Requiring three words there would flag every package README in
+  // existence, which is how a check earns a reputation for being wrong. Found
+  // by running this over our own nine READMEs and getting nine findings that
+  // were all false.
+  const titled = doc.title?.trim() ?? '';
+  const isIdentifier = titled !== '' && !/\s/.test(titled) && /[@/._-]/.test(titled);
+  if (!isIdentifier && (doc.title === null || titled.split(/\s+/).length < 3)) {
     findings.push({
       check: 'title-question',
       path: doc.path,
@@ -193,6 +217,8 @@ export function checkVisibility(doc: VisibilityDoc, now: Date): readonly Visibil
     });
   }
 
+  findings.push(...styleTells(doc));
+
   const missing = (doc.keywords ?? []).filter((word) => !lower.includes(word.toLowerCase()));
   if (missing.length > 0) {
     findings.push({
@@ -200,6 +226,84 @@ export function checkVisibility(doc: VisibilityDoc, now: Date): readonly Visibil
       path: doc.path,
       detail: `declared but never mentioned: ${missing.join(', ')}`,
       weight: 'differentiator',
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * The stylistic tells (P4-DOC-03).
+ *
+ * Every one is a *signal*, not a verdict, and none of them gates. They exist
+ * because a reader can act on "this reads as generated and here is the line",
+ * where a detector score tells them nothing they can change — and detectors do
+ * not work anyway: `techniques/44` §2 records them flagging human writing
+ * 9–15% of the time and missing humanised text 96% of the time, so optimising
+ * against one optimises against noise. No detector is called here and none ever
+ * should be.
+ */
+function styleTells(doc: VisibilityDoc): readonly VisibilityFinding[] {
+  const findings: VisibilityFinding[] = [];
+  const body = doc.body;
+
+  // A bold one-line tagline immediately under the H1. Near-universal in
+  // generated READMEs and almost nobody writes it by hand.
+  if (/^#\s+.+\n+\*\*[^*\n]{10,}\*\*\s*$/m.test(body)) {
+    findings.push({
+      check: 'tagline-under-heading',
+      path: doc.path,
+      detail: 'a bold one-line tagline sits directly under the heading',
+      weight: 'style',
+    });
+  }
+
+  // "not just X, but Y" / "it is not A — it is B". The signature construction.
+  const notJust = body.match(
+    /\bnot (?:just|only|merely)\b[^.!?\n]{0,80}?\b(?:but|it'?s|it is)\b/gi,
+  );
+  if (notJust !== null && notJust.length > 0) {
+    findings.push({
+      check: 'not-just-construction',
+      path: doc.path,
+      detail: `"${notJust[0]?.slice(0, 60) ?? ''}"`,
+      weight: 'style',
+    });
+  }
+
+  // Tricolons: "fast, safe, and analyzable". Rhetorically satisfying, and
+  // models reach for it constantly.
+  const tricolons = body.match(/\b\w+, \w+,? and \w+\b/g) ?? [];
+  const words = body.split(/\s+/).filter(Boolean).length;
+  if (words > 0 && tricolons.length >= 3 && tricolons.length / words > 0.004) {
+    findings.push({
+      check: 'tricolon-density',
+      path: doc.path,
+      detail: `${String(tricolons.length)} three-part lists in ${String(words)} words`,
+      weight: 'style',
+    });
+  }
+
+  // Em-dash rate far above a corpus norm. A known fingerprint — and one this
+  // very file would trip, which is exactly why it does not gate anything.
+  const emDashes = (body.match(/—/g) ?? []).length;
+  if (words > 100 && emDashes / words > 0.01) {
+    findings.push({
+      check: 'em-dash-rate',
+      path: doc.path,
+      detail: `${String(emDashes)} em dashes in ${String(words)} words`,
+      weight: 'style',
+    });
+  }
+
+  // Models describe; authors decide. A doc that never records a choice is a
+  // doc nobody made a decision in.
+  if (words > 150 && !/\b(?:we|I) (?:chose|picked|decided|rejected|prefer|avoided)\b/i.test(body)) {
+    findings.push({
+      check: 'no-authorial-choice',
+      path: doc.path,
+      detail: 'no recorded decision ("we chose X over Y because …")',
+      weight: 'style',
     });
   }
 

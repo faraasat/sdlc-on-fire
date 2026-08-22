@@ -50,6 +50,21 @@ describe('checkVisibility', () => {
       );
     });
 
+    it('accepts a title that is an identifier, which matches by construction', () => {
+      // Found by running this over our own nine package READMEs: every one was
+      // flagged, and every finding was false. Somebody searching `@scope/pkg`
+      // matches a page titled `@scope/pkg` exactly.
+      expect(checks(doc({ title: '@sdlc-on-fire/core' }))).not.toContain('title-question');
+      expect(checks(doc({ title: 'sdlc-on-fire' }))).not.toContain('title-question');
+      expect(checks(doc({ title: 'vitest.config.ts' }))).not.toContain('title-question');
+    });
+
+    it('still flags a short bare noun that is not an identifier', () => {
+      // The exemption is narrow on purpose: "Setup" is a word, not a name.
+      expect(checks(doc({ title: 'Setup' }))).toContain('title-question');
+      expect(checks(doc({ title: 'Configuration' }))).toContain('title-question');
+    });
+
     it('weights it as a gatekeeper', () => {
       const finding = checkVisibility(doc({ title: 'Setup' }), NOW)[0];
       expect(finding?.weight).toBe('gatekeeper');
@@ -238,5 +253,106 @@ describe('readVisibilityDoc', () => {
   it('ignores non-string keywords rather than rendering undefined', () => {
     const d = readVisibilityDoc('x.md', '# T', { keywords: ['ok', 42, null] });
     expect(d.keywords).toEqual(['ok']);
+  });
+});
+
+/**
+ * P4-DOC-03 — the prose tells.
+ *
+ * In this file rather than beside it, per `techniques/44` §5: the citation
+ * properties and the reads-as-machine-written properties are largely one set,
+ * and two checkers would disagree about hedged prose.
+ *
+ * The load-bearing assertion is that every tell here is weighted `style` and
+ * none is a gatekeeper. §4 is explicit: a document with no concrete anchor is
+ * *the* failure, and the rest is style a project is entitled to. A check that
+ * refused on tricolon density would be a linter nobody keeps on — which is
+ * worse than no check, because it takes the anchor finding down with it.
+ */
+describe('prose tells', () => {
+  const long = (extra: string): string =>
+    `${extra}\n\n${'filler words here about the 30s budget. '.repeat(40)}`;
+
+  it('flags a bold tagline directly under the heading', () => {
+    const d = doc({ body: '# Thing\n\n**The fast, modern way to do things**\n\nBody 1.' });
+    expect(checks(d)).toContain('tagline-under-heading');
+  });
+
+  it('does not flag bold text elsewhere in a document', () => {
+    const d = doc({ body: '# Thing\n\nSome prose.\n\n**Important:** read this. 1 note.' });
+    expect(checks(d)).not.toContain('tagline-under-heading');
+  });
+
+  it('flags the "not just X but Y" construction', () => {
+    expect(
+      checks(doc({ body: 'This is not just a parser, but a whole toolchain. 1 thing.' })),
+    ).toContain('not-just-construction');
+  });
+
+  it('quotes the construction it found rather than only naming it', () => {
+    const finding = checkVisibility(
+      doc({ body: 'It is not merely fast, but correct. 1 thing.' }),
+      NOW,
+    ).find((f) => f.check === 'not-just-construction');
+    expect(finding?.detail).toContain('not merely');
+  });
+
+  it('flags dense tricolons but tolerates one', () => {
+    const dense = doc({
+      body: 'It is fast, safe, and analyzable. Small, sharp, and clear. Neat, terse, and 1 more.',
+    });
+    expect(checks(dense)).toContain('tricolon-density');
+    expect(checks(doc({ body: 'It is fast, safe, and analyzable in 30s.' }))).not.toContain(
+      'tricolon-density',
+    );
+  });
+
+  it('flags a high em-dash rate only in a document long enough to have one', () => {
+    const many = doc({ body: long('a — b — c — d — e — f — g — h — i — j — k — l — m —') });
+    expect(checks(many)).toContain('em-dash-rate');
+    // A short doc with one em dash is not evidence of anything.
+    expect(checks(doc({ body: 'One — dash. 1 thing.' }))).not.toContain('em-dash-rate');
+  });
+
+  it('flags a long document that never records a decision', () => {
+    // Models describe; authors decide.
+    expect(checks(doc({ body: long('The system processes input.') }))).toContain(
+      'no-authorial-choice',
+    );
+  });
+
+  it('accepts a document that records one', () => {
+    expect(
+      checks(doc({ body: long('We chose PGlite over sqlite because the schema had to match.') })),
+    ).not.toContain('no-authorial-choice');
+  });
+
+  it('weights every tell as style, so none of them can gate', () => {
+    // The assertion that keeps this a report rather than a linter.
+    const noisy = doc({
+      body: long('# T\n\n**A fast, safe, and modern tool**\n\nNot just a parser, but a toolchain.'),
+      title: 'A long enough title here',
+    });
+    const tells = checkVisibility(noisy, NOW).filter((f) =>
+      (
+        [
+          'tagline-under-heading',
+          'tricolon-density',
+          'not-just-construction',
+          'em-dash-rate',
+          'no-authorial-choice',
+        ] as string[]
+      ).includes(f.check),
+    );
+    expect(tells.length).toBeGreaterThan(0);
+    expect(tells.every((f) => f.weight === 'style')).toBe(true);
+  });
+
+  it('never calls a detector', () => {
+    // techniques/44 §2: detectors flag human writing 9-15% of the time and miss
+    // humanised text 96% of the time, so optimising against one optimises
+    // against noise. Asserted structurally — the checker takes a document and a
+    // date and nothing else, so there is nowhere for a network call to hide.
+    expect(checkVisibility.length).toBe(2);
   });
 });
