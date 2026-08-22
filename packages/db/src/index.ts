@@ -26,3 +26,4 @@ export const dbPackage: PackageInfo = {
 
 /** Resolved dependency identities — proves the workspace links are real, not just declared. */
 export const dbDependencies: readonly PackageInfo[] = [corePackage];
+export * from './tracker-cursors.js';

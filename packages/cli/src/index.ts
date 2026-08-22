@@ -4,6 +4,7 @@
 // module rather than executing the built binary.
 import { existsSync, realpathSync } from 'node:fs';
 import { formatViews, listViews } from './views.js';
+import { exitCodeFor, renderSyncReport, resolveToken, trackerSync } from './tracker.js';
 import { formatExport, runExport } from './export.js';
 import { archiveChange, checkSpecs, formatSpecCheck, newChange, newSpec } from './spec.js';
 import { formatMap, runMap } from './map.js';
@@ -512,6 +513,60 @@ export function buildProgram(): Command {
         ].join('\n'),
       );
     });
+
+  program
+    .command('tracker:sync')
+    .description('two-way sync between this workspace and a GitHub Issues repository')
+    .requiredOption('--repo <owner/repo>', 'the GitHub repository to sync with')
+    .option('--since <iso>', 'only consider remote items updated after this ISO timestamp')
+    .option('--policy <policy>', 'refuse | prefer-local | prefer-remote (default: refuse)')
+    .option('--dry-run', 'decide everything, write nothing')
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: {
+        repo: string;
+        since?: string;
+        policy?: string;
+        dryRun?: boolean;
+        json?: boolean;
+      }): Promise<void> => {
+        const policy = options.policy ?? 'refuse';
+        if (policy !== 'refuse' && policy !== 'prefer-local' && policy !== 'prefer-remote') {
+          // Rejected up front rather than defaulted. Silently falling back to
+          // `refuse` on a typo'd `--policy prefer-loc` would look like the sync
+          // simply found conflicts, and the operator would go hunting for a
+          // divergence that does not exist.
+          throw new Error(
+            `unknown --policy "${policy}". Use refuse, prefer-local, or prefer-remote.`,
+          );
+        }
+        const token = await resolveToken();
+        const { items } = await listWorkItems(root());
+        const report = await trackerSync({
+          repo: options.repo,
+          token,
+          locals: items.map((item) => ({
+            id: item.id,
+            title: item.title,
+            body: '',
+            closed: item.lifecycleState === 'done',
+          })),
+          cursors: new Map(),
+          adopt: (remote: { id: string; title: string; body: string; closed: boolean }) =>
+            Promise.resolve({
+              id: `GH-${remote.id}`,
+              title: remote.title,
+              body: remote.body,
+              closed: remote.closed,
+            }),
+          ...(options.since === undefined ? {} : { since: options.since }),
+          policy,
+          dryRun: options.dryRun === true,
+        });
+        emit(report, options.json === true, renderSyncReport);
+        process.exitCode = exitCodeFor(report);
+      },
+    );
 
   program
     .command('hooks:install')

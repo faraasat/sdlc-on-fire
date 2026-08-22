@@ -125,6 +125,21 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      observed_at       TIMESTAMPTZ NOT NULL DEFAULT now()
    );`,
 
+  // ── Tracker sync cursors (P5-TRACK-01, contract 01 §3.10) ─────────────────
+  `CREATE TABLE IF NOT EXISTS tracker_sync_cursors (
+     ref_key           TEXT PRIMARY KEY,
+     remote_id         TEXT NOT NULL,
+     -- Canonical JSON of the synced fields, not a hash. A hash introduces a
+     -- collision class whose symptom is a *missed* update -- silent data loss
+     -- that looks exactly like "nothing changed".
+     local_fingerprint TEXT NOT NULL,
+     -- The provider's timestamp, verbatim, only ever compared to another
+     -- provider timestamp. Against a local clock, skew reads as an edit.
+     remote_updated_at TEXT NOT NULL,
+     list_etag         TEXT,
+     synced_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+   );`,
+
   // ── Already-happened ledger (P1-AGENT-04, ADR-0039) ───────────────────────
   //
   // Contract §6 deferred this to v0.2 behind a `runs.pr_url` stopgap; this is
