@@ -27,3 +27,18 @@ Playwright names them `board-webkit-darwin.png`. A Linux run writes its own set 
 ## What it found on its first run
 
 `nested-interactive` — dnd-kit's `attributes` were spread onto the whole card, giving it `role="button"`, so the open-details button sat inside a button. A screen-reader user meets a button inside a button and the inner one can be unreachable. Fixed with a dedicated drag handle that is a _sibling_ of the open control. No unit test would have caught it, and it was invisible to the eye.
+
+## Cross-environment comparison (P3-UI-05)
+
+A different question from visual regression: not _"did this change alter the UI"_ but _"do two deployments of the same commit render the same"_. It catches what no amount of regression testing can, because none of it is a code change — fonts that resolve here and 404 there, CDN configuration, missing assets, locale and timezone defaults.
+
+```bash
+SDLC_COMPARE_URL=https://staging.example \
+  pnpm --filter @sdlc-on-fire/ui e2e --project=chromium -g "cross-environment"
+```
+
+Skipped without that variable, deliberately. There is no second deployment on a laptop, and a test that invented one would compare a thing to itself and report a pass that means nothing.
+
+Verified in both directions against two local daemons of the same build: identical deployments match, and adding one card to the second produced `14.8% of pixels differ, above the 1.00% allowance`.
+
+`unusable` is a third verdict alongside match and differs, and it is what keeps this honest. A comparison run against captures of different sizes, or without animations frozen, has not found a difference — it has failed to look. Reporting that as a difference trains people to ignore the report; reporting it as a match is a lie.
