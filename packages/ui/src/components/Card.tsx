@@ -11,7 +11,9 @@ import { useUiStore } from '../state/ui.js';
  * from a title — so they are shown on the face rather than behind a click.
  */
 export function Card({ card }: { card: BoardCard }): ReactElement {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: card.id });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isDragging } = useDraggable({
+    id: card.id,
+  });
 
   const select = useUiStore((state) => state.select);
 
@@ -22,29 +24,42 @@ export function Card({ card }: { card: BoardCard }): ReactElement {
     <article
       ref={setNodeRef}
       className={`kcard${isDragging ? ' kcard--dragging' : ''}${blocked ? ' kcard--blocked' : ''}`}
-      // The keyboard sensor needs a focusable, labelled handle. A board that
-      // can only be operated with a mouse excludes people outright, and it is
-      // also the first thing an axe-core run fails on (P3-UI-03).
-      {...attributes}
-      {...listeners}
-      aria-roledescription="draggable card"
       aria-label={`${card.id}: ${card.title}`}
     >
       <header className="kcard__head">
-        {/* A separate control, not a click on the card itself: the card is a
-            drag handle, and a click that both drags and opens is a card you
-            cannot move without opening. */}
+        {/*
+          A dedicated drag handle, sibling to the open control rather than
+          wrapping it. The first version spread dnd-kit's `attributes` and
+          `listeners` onto the whole <article>, which gives it role="button" and
+          tabIndex=0 — so the open-details button sat *inside* a button. axe
+          flags that as `nested-interactive` on its first run, and it is a real
+          problem rather than a lint: a screen-reader user meets a button inside
+          a button and the inner one may be unreachable.
+
+          Two siblings also make the interaction honest. Grab the handle to move
+          the card; click the id to read it.
+        */}
+        <button
+          type="button"
+          className="kcard__grip"
+          ref={setActivatorNodeRef}
+          {...attributes}
+          {...listeners}
+          aria-label={`drag ${card.id}`}
+          title="drag to move"
+        >
+          <span aria-hidden="true">⠿</span>
+        </button>
+
         <button
           type="button"
           className="kcard__open"
-          // Belt and braces alongside the sensor's distance constraint: this
-          // button must never be the thing that starts a drag.
-          onPointerDown={(event) => event.stopPropagation()}
           onClick={() => select(card.id)}
           aria-label={`open details for ${card.id}`}
         >
           <code>{card.id}</code>
         </button>
+
         {card.active_run != null ? (
           <span className="chip chip--live" title={`run ${card.active_run} is executing`}>
             <i aria-hidden="true" /> running

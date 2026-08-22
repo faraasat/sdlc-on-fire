@@ -80,13 +80,28 @@ describe('BoardView', () => {
     expect(screen.queryByText(/does not know/i)).toBeNull();
   });
 
-  it('makes every card reachable and labelled for a keyboard', () => {
-    // Dragging is the board's primary verb. A primary verb available only to a
-    // mouse is a board a keyboard user cannot operate at all.
+  it('gives every card a keyboard-reachable drag handle', () => {
+    // Dragging is the board's primary verb, and a primary verb available only
+    // to a mouse is a board a keyboard user cannot operate at all.
+    //
+    // The handle is a sibling of the open control, not a wrapper around it.
+    // Spreading dnd-kit's attributes onto the whole card gives it role=button,
+    // which put the open-details button inside a button — axe reports that as
+    // `nested-interactive`, and it is a real problem: the inner control can be
+    // unreachable with a screen reader.
     renderBoard([card({ id: 'FEAT-7', title: 'Add auth' })]);
-    const item = screen.getByRole('button', { name: 'FEAT-7: Add auth' });
-    expect(item.getAttribute('tabindex')).toBe('0');
-    expect(item.getAttribute('aria-roledescription')).toBe('draggable card');
+    const handle = screen.getByRole('button', { name: /drag FEAT-7/i });
+    expect(handle.getAttribute('tabindex')).toBe('0');
+    expect(screen.getByRole('button', { name: /open details for FEAT-7/i })).toBeDefined();
+  });
+
+  it('does not nest one interactive control inside another', () => {
+    // The structural half of the same finding, asserted so a future refactor
+    // cannot quietly reintroduce it between Playwright runs.
+    renderBoard([card({ id: 'FEAT-7' })]);
+    for (const control of screen.getAllByRole('button')) {
+      expect(control.querySelector('button'), control.getAttribute('aria-label') ?? '').toBeNull();
+    }
   });
 
   it('opens the drawer on a plain click instead of starting a drag', async () => {

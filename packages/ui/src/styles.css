@@ -612,3 +612,24 @@ body {
 .envelopes code {
   color: var(--accent);
 }
+
+.kcard {
+  cursor: default;
+}
+.kcard__grip {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: grab;
+  padding: 0 4px 0 0;
+  font-size: 13px;
+  line-height: 1;
+}
+.kcard__grip:active {
+  cursor: grabbing;
+}
+.kcard__grip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

@@ -1,0 +1,5 @@
+# Playwright run artifacts. Baselines under e2e/*-snapshots/ ARE committed —
+# they are the reference, not output.
+test-results/
+playwright-report/
+e2e-results.json
