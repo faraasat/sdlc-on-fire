@@ -122,3 +122,4 @@ export * from './skill-signing.js';
 export * from './skill-registry.js';
 export * from './tracker-sync.js';
 export * from './github-issues.js';
+export * from './sync-engine.js';
