@@ -12,3 +12,5 @@ export const importersPackage: PackageInfo = {
   name: '@sdlc-on-fire/importers',
   dependsOn: ['@sdlc-on-fire/core', '@sdlc-on-fire/storage'],
 };
+export * from './export-port.js';
+export * from './exporters.js';

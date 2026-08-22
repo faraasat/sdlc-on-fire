@@ -4,6 +4,7 @@
 // module rather than executing the built binary.
 import { existsSync, realpathSync } from 'node:fs';
 import { formatViews, listViews } from './views.js';
+import { formatExport, runExport } from './export.js';
 import { docVisibility, formatDocVisibility, formatLlmsTxt, llmsTxt } from './docs-check.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
@@ -1233,6 +1234,36 @@ export function buildProgram(): Command {
       // No non-zero exit. Every finding is advisory, and an exit code would
       // make a lexical redundancy guess fail somebody's build.
     });
+
+  program
+    .command('export')
+    .description("write a snapshot of this workspace in another tool's format")
+    .requiredOption('--to <tool>', 'target format')
+    .option('--out <dir>', 'output directory')
+    .option('--dry-run', 'report what would be written, and what would be lost')
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: {
+        to: string;
+        out?: string;
+        dryRun?: boolean;
+        json?: boolean;
+      }): Promise<void> => {
+        try {
+          const result = await runExport(root(), options.to, {
+            ...(options.out === undefined ? {} : { outDir: options.out }),
+            ...(options.dryRun === true ? { dryRun: true } : {}),
+          });
+          emit(result, options.json === true, formatExport);
+          // Non-zero when an exporter broke its own fidelity claim. This is the
+          // one place a self-report could slip through, so it fails loudly.
+          if (result.violations.length > 0) process.exitCode = 1;
+        } catch (cause) {
+          process.stderr.write(`${cause instanceof Error ? cause.message : String(cause)}\n`);
+          process.exitCode = 2;
+        }
+      },
+    );
 
   program
     .command('llms-txt')
