@@ -41,3 +41,6 @@ export * from './spec-authoring.js';
 export * from './codebase-map.js';
 export * from './visibility-matrix.js';
 export * from './visibility-analysis.js';
+export * from './web-bundle.js';
+export * from './preview-env.js';
+export * from './embedder-registry.js';
