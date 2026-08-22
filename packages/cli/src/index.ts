@@ -7,6 +7,7 @@ import { formatViews, listViews } from './views.js';
 import { formatExport, runExport } from './export.js';
 import { archiveChange, checkSpecs, formatSpecCheck, newChange, newSpec } from './spec.js';
 import { formatMap, runMap } from './map.js';
+import { formatVisibility, readVisibility } from './visibility.js';
 import { docVisibility, formatDocVisibility, formatLlmsTxt, llmsTxt } from './docs-check.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
@@ -1269,6 +1270,20 @@ export function buildProgram(): Command {
       emit(result, options.json === true, formatDocHealth);
       // No non-zero exit. Every finding is advisory, and an exit code would
       // make a lexical redundancy guess fail somebody's build.
+    });
+
+  program
+    .command('visibility')
+    .description('read a recorded AI-search visibility corpus (offline; makes no calls)')
+    .requiredOption('--subject <name>', 'the project name to look for in answers')
+    .requiredOption('--host <domain>', 'the domain that counts as your own')
+    .option('--json', 'emit JSON')
+    .action(async (options: { subject: string; host: string; json?: boolean }): Promise<void> => {
+      const result = await readVisibility(root(), options.subject, options.host);
+      emit(result, options.json === true, formatVisibility);
+      // A corpus whose design cannot support its own claim fails the command.
+      // Reporting the numbers under a warning would let somebody quote them.
+      if (result.problems.length > 0) process.exitCode = 1;
     });
 
   program

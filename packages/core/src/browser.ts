@@ -39,3 +39,5 @@ export * from './notification.js';
 export * from './llms-txt.js';
 export * from './spec-authoring.js';
 export * from './codebase-map.js';
+export * from './visibility-matrix.js';
+export * from './visibility-analysis.js';
