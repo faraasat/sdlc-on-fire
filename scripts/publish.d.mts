@@ -5,3 +5,8 @@ export declare function publishFlags(env?: Record<string, string | undefined>): 
   flags: string[];
 };
 export declare function publishStdio(dryRun: boolean): ('inherit' | 'ignore')[];
+export declare function alreadyPublished(
+  name: string,
+  version: string,
+  exec?: (file: string, args: string[], options?: Record<string, unknown>) => string,
+): boolean;

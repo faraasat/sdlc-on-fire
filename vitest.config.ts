@@ -74,9 +74,16 @@ export default defineConfig({
     // if the test was actually scheduled; raising every timeout until the
     // starvation fits underneath it would keep the suite green and throw away
     // the signal. Costs wall-clock, buys a red run that means something.
-    poolOptions: {
-      forks: { maxForks: 6 },
-    },
+    //
+    // Spelled `maxWorkers`, not `poolOptions.forks.maxForks`. Vitest 4 removed
+    // `test.poolOptions` and promoted its contents to top-level options, so the
+    // old key was still *accepted* by the type checker and silently ignored at
+    // runtime — the bound was not in effect, and the only sign was a
+    // `DEPRECATED` line in output nobody reads once a suite is green. Same
+    // shape as every other defect this repo has hit: a setting that looks
+    // applied and is not, indistinguishable from one that works, because the
+    // suite passes either way until load tips it over.
+    maxWorkers: 6,
 
     // `scripts/` is included deliberately. The release guard lives there
     // rather than in a package — it is repo tooling, not shipped code — and a

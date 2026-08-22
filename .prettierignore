@@ -12,3 +12,11 @@ packages/*/src/__fixtures__/
 # drizzle-kit's own generated snapshots. Reformatting them makes the next
 # `drizzle-kit generate` see a spurious diff.
 packages/db/migrations/
+
+# Playwright's own run output. Written into the package by `playwright test`
+# and already gitignored — but Prettier reads this file, not .gitignore, so
+# without the entry a `pnpm check` straight after an e2e run fails on
+# formatting a report nobody authored.
+packages/ui/e2e-results.json
+packages/ui/playwright-report/
+packages/ui/test-results/

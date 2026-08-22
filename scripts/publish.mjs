@@ -44,13 +44,27 @@ function publishablePackages(cwd) {
  * Whether this exact version is already on the registry.
  *
  * Publishing is not idempotent — npm rejects a duplicate version with an error
- * that reads like a failure. A re-run after a partial release (network drop
- * between package four and package five) has to be able to finish the job
- * rather than abort on the four that already landed.
+ * that reads like a failure. A re-run after a partial release has to be able to
+ * finish the job rather than abort on the packages that already landed. That is
+ * not a hypothetical: an account with 2FA on publishing gets `EOTP` partway
+ * through, and the fix is to re-run, so this guard is on the recovery path of
+ * every interactive release rather than an edge case.
+ *
+ * It rests on one non-obvious npm behaviour, checked against the live registry
+ * rather than assumed: `npm view <pkg>@<version> version` exits **1** when the
+ * package exists but that version does not. The plausible-and-wrong reading is
+ * that npm treats a version that matches nothing on a known package as an empty
+ * result and exits 0 — which would make this return `true` for every package
+ * and turn the release into a silent no-op that reports success. It does not;
+ * both a missing version and a missing package exit non-zero.
+ *
+ * `exec` is injected so that behaviour can be pinned by a test. Shelling out to
+ * the real registry to prove a skip rule works is not a test, it is a network
+ * call — and an unexercised guard is indistinguishable from a passing one.
  */
-function alreadyPublished(name, version) {
+export function alreadyPublished(name, version, exec = run) {
   try {
-    run('npm', ['view', `${name}@${version}`, 'version'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    exec('npm', ['view', `${name}@${version}`, 'version'], { stdio: ['ignore', 'pipe', 'ignore'] });
     return true;
   } catch {
     return false;

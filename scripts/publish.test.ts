@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { distTagFor, publishFlags, publishStdio } from './publish.mjs';
+import { alreadyPublished, distTagFor, publishFlags, publishStdio } from './publish.mjs';
 
 /**
  * The dist-tag rule (P0-META-03).
@@ -75,5 +75,55 @@ describe('publishStdio', () => {
     // the one line per package that matters.
     expect(publishStdio(true)[1]).toBe('ignore');
     expect(publishStdio(false)[1]).toBe('inherit');
+  });
+});
+
+/**
+ * The resume guard (P0-META-03).
+ *
+ * This decides whether a re-run after a partial release finishes the job or
+ * skips everything and reports success over an empty upload. It sits on the
+ * recovery path of every interactive publish: 2FA returns `EOTP` partway
+ * through a ten-package release, and the remedy is to run the command again.
+ *
+ * The behaviour it depends on was checked against the live registry:
+ * `npm view @sdlc-on-fire/core@0.1.0-alpha.1 version` exits 1 while
+ * `@0.1.0-alpha.0` exits 0, so a version that does not exist on a package that
+ * does is an error, not an empty success. These tests pin that reading — if a
+ * refactor makes the probe swallow the non-zero exit, the release becomes a
+ * no-op that prints "published" and this goes red instead.
+ */
+
+describe('alreadyPublished', () => {
+  const throws = () => {
+    throw new Error('npm ERR! code E404');
+  };
+
+  it('treats a resolvable version as already on the registry', () => {
+    expect(alreadyPublished('@sdlc-on-fire/core', '0.1.0-alpha.0', () => '0.1.0-alpha.0\n')).toBe(
+      true,
+    );
+  });
+
+  it('treats a missing version on an existing package as not published', () => {
+    // The case that makes the release resumable. npm exits non-zero here rather
+    // than returning an empty result, so the publish proceeds for this package.
+    expect(alreadyPublished('@sdlc-on-fire/core', '0.1.0-alpha.1', throws)).toBe(false);
+  });
+
+  it('treats an entirely unpublished package as not published', () => {
+    expect(alreadyPublished('@sdlc-on-fire/ui', '0.1.0-alpha.1', throws)).toBe(false);
+  });
+
+  it('asks the registry about the exact version, never the package alone', () => {
+    // `npm view <pkg> version` reports the *latest* version and exits 0 for any
+    // published package, which would report every package as already released
+    // and skip the entire upload.
+    const seen: string[][] = [];
+    alreadyPublished('@sdlc-on-fire/core', '0.1.0-alpha.1', (_file, args) => {
+      seen.push(args);
+      throw new Error('E404');
+    });
+    expect(seen).toEqual([['view', '@sdlc-on-fire/core@0.1.0-alpha.1', 'version']]);
   });
 });
