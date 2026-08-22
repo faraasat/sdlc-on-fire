@@ -1,15 +1,4 @@
-:root {
-  --bg: #0f1115;
-  --panel: #161a22;
-  --line: #232936;
-  --ink: #e6e9ef;
-  --muted: #8b93a7;
-  --accent: #f0803c;
-  --ok: #4ec9a5;
-  --warn: #e0b341;
-  --bad: #e56b6b;
-  color-scheme: dark;
-}
+@import './themes.css';
 
 * {
   box-sizing: border-box;
@@ -30,12 +19,27 @@ body {
 .app__bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  /* Wraps rather than crushing. Adding the theme picker pushed the bar past its
+     width at 800px and the brand and the "needs a human" toggle both broke onto
+     two lines mid-word — which reads as a rendering bug rather than as a full
+     toolbar. Found by looking at it after adding one control. */
+  flex-wrap: wrap;
+  row-gap: 8px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
   position: sticky;
   top: 0;
+  z-index: 2;
+}
+
+/* Nothing in the bar may break mid-word. A wrapped control is fine; a wrapped
+   *label* is what looks broken. */
+.app__bar > *,
+.app__views button,
+.toggle {
+  white-space: nowrap;
 }
 
 .app__brand {
@@ -62,6 +66,7 @@ body {
 
 .app__search {
   margin-left: auto;
+  flex: 1 1 180px;
   background: var(--bg);
   border: 1px solid var(--line);
   color: var(--ink);

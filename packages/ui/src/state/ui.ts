@@ -16,6 +16,9 @@
 
 import { create } from 'zustand';
 
+export const THEMES = ['ember', 'slate', 'paper', 'contrast'] as const;
+export type Theme = (typeof THEMES)[number];
+
 export const BOARD_VIEWS = ['board', 'table', 'roadmap', 'metrics'] as const;
 export type BoardView = (typeof BOARD_VIEWS)[number];
 
@@ -35,12 +38,14 @@ export const EMPTY_FILTERS: BoardFilters = {
 
 export interface UiState {
   readonly view: BoardView;
+  readonly theme: Theme;
   readonly selectedId: string | null;
   readonly filters: BoardFilters;
   /** Live connection status, shown so a stale board is never silently stale. */
   readonly connection: 'connecting' | 'live' | 'reconnecting' | 'offline';
 
   setView: (view: BoardView) => void;
+  setTheme: (theme: Theme) => void;
   select: (id: string | null) => void;
   setFilters: (patch: Partial<BoardFilters>) => void;
   clearFilters: () => void;
@@ -49,11 +54,13 @@ export interface UiState {
 
 export const useUiStore = create<UiState>((set) => ({
   view: 'board',
+  theme: 'ember',
   selectedId: null,
   filters: EMPTY_FILTERS,
   connection: 'connecting',
 
   setView: (view) => set({ view }),
+  setTheme: (theme) => set({ theme }),
   select: (selectedId) => set({ selectedId }),
   setFilters: (patch) => set((state) => ({ filters: { ...state.filters, ...patch } })),
   clearFilters: () => set({ filters: EMPTY_FILTERS }),

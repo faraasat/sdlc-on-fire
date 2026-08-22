@@ -10,6 +10,7 @@ import { TableView } from './components/TableView.js';
 import { RoadmapView } from './components/RoadmapView.js';
 import { CardDrawer } from './components/CardDrawer.js';
 import { MetricsView } from './components/MetricsView.js';
+import { ThemePicker } from './components/ThemePicker.js';
 import { GROUP_BY, type BoardCard, type GroupBy } from '@sdlc-on-fire/core/browser';
 
 /**
@@ -95,6 +96,7 @@ export function App(): ReactElement {
         >
           needs a human
         </button>
+        <ThemePicker />
         <ConnectionDot />
         <IdentityBadge identity={identity.data} />
       </header>

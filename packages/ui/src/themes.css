@@ -1,0 +1,98 @@
+/*
+ * Theme variants (P3-UI-04).
+ *
+ * Four whole positions rather than four palettes, so the choice is between
+ * *approaches* and not between shades of orange. Each sets the same token
+ * contract, so nothing outside this file knows a theme exists — which is the
+ * property that makes them comparable at all.
+ *
+ * Direction taken from 2026 dev-tool dashboard writing, all of it vendor blogs
+ * and template round-ups (tier C, ADR-0073): true greys rather than black,
+ * elevation instead of borders, one or two saturated accents, dark-first for a
+ * developer audience, prioritisation over raw density. Consistent enough across
+ * sources to use as direction; no figure from any of them is relied on.
+ */
+
+/* ── ember: the current design. Near-black, one warm accent, bordered cards.
+   Highest information density; borders make column and card boundaries
+   unambiguous at a glance, which is what a board is for. ─────────────── */
+:root,
+[data-theme='ember'] {
+  --bg: #0f1115;
+  --panel: #161a22;
+  --line: #232936;
+  --ink: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #f0803c;
+  --ok: #4ec9a5;
+  --warn: #e0b341;
+  --bad: #e56b6b;
+  --card-border: 1px solid var(--line);
+  --card-shadow: none;
+  --radius: 8px;
+  --density: 1;
+  color-scheme: dark;
+}
+
+/* ── slate: true greys, borderless cards, elevation by background shift and
+   shadow. Calmer and less busy at a glance; the trade is that column edges are
+   implied rather than drawn, which costs something on a board with seven of
+   them. ──────────────────────────────────────────────────────────────── */
+[data-theme='slate'] {
+  --bg: #17181c;
+  --panel: #1e2026;
+  --line: transparent;
+  --ink: #e8eaed;
+  --muted: #9aa0a8;
+  --accent: #5eb3f6;
+  --ok: #63d2a4;
+  --warn: #e5c07b;
+  --bad: #e88f8f;
+  --card-border: 1px solid transparent;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --radius: 10px;
+  --density: 1.1;
+  color-scheme: dark;
+}
+
+/* ── paper: a light theme, because "developers work in dark mode" is a
+   generalisation and the people it is wrong about are the ones who need light
+   most — bright rooms, projectors, and anybody who finds dark text on light
+   easier to read for long stretches. ──────────────────────────────────── */
+[data-theme='paper'] {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --line: #dfe3e8;
+  --ink: #1b1f24;
+  --muted: #61697a;
+  --accent: #c2410c;
+  --ok: #14805e;
+  --warn: #9a6700;
+  --bad: #b42318;
+  --card-border: 1px solid var(--line);
+  --card-shadow: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --radius: 8px;
+  --density: 1;
+  color-scheme: light;
+}
+
+/* ── contrast: larger type, heavier borders, colours pushed apart. Not a
+   "high contrast mode" bolted on — a position that trades density for
+   legibility, for low-vision users and for anyone reading a board on a
+   projector. Fewer cards fit, on purpose. ─────────────────────────────── */
+[data-theme='contrast'] {
+  --bg: #000000;
+  --panel: #0d0d0d;
+  --line: #6b7280;
+  --ink: #ffffff;
+  --muted: #c9ced6;
+  --accent: #ffb020;
+  --ok: #46e5b0;
+  --warn: #ffd34d;
+  --bad: #ff7a7a;
+  --card-border: 2px solid var(--line);
+  --card-shadow: none;
+  --radius: 6px;
+  --density: 1.35;
+  color-scheme: dark;
+}

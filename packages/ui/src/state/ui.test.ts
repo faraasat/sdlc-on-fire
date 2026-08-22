@@ -13,6 +13,7 @@ import { EMPTY_FILTERS, isFiltered, useUiStore } from './ui.js';
 beforeEach(() => {
   useUiStore.setState({
     view: 'board',
+    theme: 'ember',
     selectedId: null,
     filters: EMPTY_FILTERS,
     connection: 'connecting',
@@ -53,12 +54,14 @@ describe('useUiStore', () => {
     // that a human authors and something persists, this is where it should be
     // noticed — the store's whole surface is view, selection, filters and
     // connection, none of which are content.
+    // A theme is a rendering preference, not content — it belongs on this side
+    // of the firewall for the same reason a filter does.
     useUiStore.getState().setFilters({ text: 'a secret note a human typed' });
     const keys = Object.keys(useUiStore.getState()).filter(
       (key) =>
         typeof (useUiStore.getState() as unknown as Record<string, unknown>)[key] !== 'function',
     );
-    expect(keys.sort()).toEqual(['connection', 'filters', 'selectedId', 'view']);
+    expect(keys.sort()).toEqual(['connection', 'filters', 'selectedId', 'theme', 'view']);
   });
 });
 
