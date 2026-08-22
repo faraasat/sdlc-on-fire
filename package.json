@@ -3,7 +3,7 @@
   "version": "0.1.0-alpha.1",
   "private": true,
   "type": "module",
-  "description": "Monorepo root for SDLC on Fire. Not published \u2014 the published surface is packages/cli (`sdlc-on-fire`).",
+  "description": "Monorepo root for SDLC on Fire. Not published — the published surface is packages/cli (`sdlc-on-fire`).",
   "license": "MIT",
   "packageManager": "pnpm@11.11.0",
   "engines": {
@@ -37,6 +37,7 @@
     "eslint-config-prettier": "10.1.8",
     "globals": "17.8.0",
     "prettier": "3.9.6",
+    "semver": "7.8.5",
     "tsup": "8.5.1",
     "typescript": "5.9.3",
     "typescript-eslint": "8.65.0",

@@ -28,6 +28,7 @@ import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import semver from 'semver';
 import { verifyTarball } from './verify-package.mjs';
 
 const run = (file, args, options = {}) =>
@@ -83,9 +84,152 @@ export function alreadyPublished(name, version, exec = run) {
  * So the tag is derived from the version rather than passed in: a version with
  * a prerelease component goes to `next`, everything else to `latest`. Nothing
  * to remember at release time, and no flag to forget.
+ *
+ * **What this cannot do, and the policy that covers the gap.** npm sets
+ * `latest` on a package's *first* publish regardless of `--tag`: there is no
+ * `latest` yet, so the registry creates one pointing at whatever was uploaded.
+ * Checked against the live registry rather than reasoned about — all nine
+ * packages went up at `0.1.0-alpha.0` with `--tag next` already in this script,
+ * and every one of them came back `latest: 0.1.0-alpha.0`. `distTagFor` was
+ * right and the tag landed anyway.
+ *
+ * Tagging correctly cannot undo that, because the wrong tag is already there.
+ * So while a package has **no stable release at all**, the policy is that
+ * `latest` tracks the newest prerelease, moved forward after each publish by
+ * `shouldAdvanceLatest` + `advanceLatest`.
+ *
+ * The alternative — leave `latest` where the first publish put it and only warn
+ * — was rejected on the arithmetic. Once `latest` exists and points at a
+ * prerelease, the choice is no longer "prerelease or not"; that was lost at
+ * first publish, and deleting the tag is worse still, since `latest` is by
+ * definition what a bare `npm install <pkg>` resolves to. The choice is *which*
+ * prerelease, and oldest-versus-newest is not a close call: same category of
+ * risk, strictly fewer known defects. `0.1.0-alpha.1` exists precisely because
+ * `0.1.0-alpha.0`'s `sdlc tiers` reports a passing test suite it never ran —
+ * and for the eight days between them, `npm install sdlc-on-fire` served the
+ * version with the false report in it.
+ *
+ * ADR-0033's intent — a bare install must not resolve to a prerelease — is
+ * unachievable until a stable version exists, and is satisfied automatically
+ * the moment one does: `distTagFor` sends it to `latest` and
+ * `shouldAdvanceLatest` switches off permanently. Until then, second-best.
  */
 export function distTagFor(version) {
   return String(version).includes('-') ? 'next' : 'latest';
+}
+
+/**
+ * What dist-tags and versions the registry currently holds for a package.
+ *
+ * One `npm view` call for both fields, because the decision below needs them
+ * together: `dist-tags.latest` says where a bare `npm install` lands today, and
+ * `versions` says whether a stable release exists to own that tag.
+ *
+ * Two npm shapes worth naming, both checked against the live registry. The
+ * field is `dist-tags`, with a hyphen, so it cannot be read as a plain property
+ * name — a `view.distTags` typo returns `undefined` and silently disables this
+ * whole path with nothing failing. And npm's `--json` shape depends on how many
+ * fields are asked for: one field collapses to the bare value, so
+ * `npm view <pkg> versions --json` prints the array itself, while two fields
+ * return an object keyed by field name. The two-field call below is therefore
+ * load-bearing, and `versions` is normalised rather than trusted — dropping a
+ * field from that argument list would otherwise turn `versions` into something
+ * `.some()` throws on, inside a release, after the upload.
+ *
+ * Returns `null` when the registry cannot answer. A lookup failure is not a
+ * reason to fail a release whose packages are already uploaded.
+ */
+export function registryTags(name, exec = run) {
+  try {
+    const view = JSON.parse(
+      exec('npm', ['view', name, 'dist-tags', 'versions', '--json'], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }),
+    );
+    const versions = view['versions'] ?? [];
+    return {
+      distTags: view['dist-tags'] ?? {},
+      versions: Array.isArray(versions) ? versions : [versions],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `latest` should be moved forward onto the version just published.
+ *
+ * The policy above, as one predicate, deliberately conservative: every
+ * condition has to hold, and the only thing it can ever authorise is moving
+ * `latest` *forward* onto a prerelease of a package that has never had a stable
+ * release.
+ *
+ *   * A stable version anywhere in the package's history means `latest` is
+ *     already spoken for. `distTagFor` routes stable versions onto it and
+ *     prereleases away from it; from the first stable release onward this
+ *     function is off for good.
+ *   * `latest` has to be pointing at a *lower* version. Moving it backwards is
+ *     the same defect aimed the other way, and there is a real shape that would
+ *     do it: a backport publishing `0.1.1-alpha.0` after `0.2.0-alpha.0` is
+ *     already out.
+ *
+ * `semver` does the comparing rather than a string compare or a parser written
+ * here. `alpha.10` is newer than `alpha.9` and lexicographically smaller, and
+ * the ordering of the default install target is not the place to discover that.
+ * It costs nothing: 7.8.5 is already in the lockfile via `@changesets/cli`, so
+ * declaring it direct adds an edge, not a download.
+ */
+export function shouldAdvanceLatest(version, snapshot) {
+  if (snapshot === null) return false;
+
+  const latest = snapshot.distTags['latest'];
+  // Nothing observed to correct. A package with no `latest` at all is a state
+  // only a manual `npm dist-tag rm` produces; guessing at it is out of scope.
+  if (latest === undefined || latest === version) return false;
+
+  // A stable version owns `latest` — whether it is the one just published, the
+  // one the tag already points at, or one sitting anywhere in the history.
+  if (semver.prerelease(version) === null) return false;
+  if (semver.prerelease(latest) === null) return false;
+  if (snapshot.versions.some((v) => semver.valid(v) !== null && semver.prerelease(v) === null)) {
+    return false;
+  }
+
+  return semver.gt(version, latest);
+}
+
+/** The command a human runs to do this by hand. Printed whenever automation cannot. */
+export function distTagAddCommand(name, version) {
+  return `npm dist-tag add ${name}@${version} latest`;
+}
+
+/**
+ * Move `latest` forward, or report exactly how to.
+ *
+ * `npm dist-tag add` reaches the registry through the same `otplease()` wrapper
+ * as `npm publish` — read out of the npm CLI source, where the dist-tag PUT and
+ * the publish request are wrapped identically — so on an account with 2FA on
+ * auth-and-writes it needs a one-time password. Two consequences:
+ *
+ *   * stdin is inherited, so npm can prompt for the OTP the way it does during
+ *     publish. With stdin ignored the call dies on a closed channel, which is
+ *     the bug `publishStdio` already documents one function up.
+ *   * a failure here **never fails the release.** This runs after the tarball is
+ *     on the registry, where the irreversible part is done; a non-zero exit
+ *     would report a failed release that actually succeeded, and would do it on
+ *     the OTP path — the likeliest failure on a 2FA account, and one an
+ *     unattended run cannot satisfy at all. So it degrades to a printed command
+ *     rather than an exit code.
+ */
+export function advanceLatest(name, version, exec = run) {
+  try {
+    exec('npm', ['dist-tag', 'add', `${name}@${version}`, 'latest'], {
+      stdio: ['inherit', 'inherit', 'inherit'],
+    });
+    return { moved: true, reason: null };
+  } catch (error) {
+    return { moved: false, reason: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**
@@ -152,6 +296,10 @@ function main() {
   const expectedVersion = packages.find((pkg) => pkg.name === 'sdlc-on-fire')?.version;
   const out = mkdtempSync(path.join(tmpdir(), 'publish-'));
   const published = [];
+  // Packages whose `latest` still needs moving by hand — collected so the
+  // instruction can be repeated once at the end, where nine packages' worth
+  // of npm output has not yet scrolled it away.
+  const needsManualLatest = [];
 
   try {
     // Packed and verified as a set *before* anything is uploaded. Publishing is
@@ -195,6 +343,12 @@ function main() {
 
       if (dryRun) {
         process.stdout.write(`✓ ${pkg.name}@${pkg.version} would publish to "${tag}"\n`);
+        const rehearsal = registryTags(pkg.name);
+        if (shouldAdvanceLatest(pkg.version, rehearsal)) {
+          process.stdout.write(
+            `  … and would move dist-tag "latest" from ${String(rehearsal.distTags['latest'])} to ${pkg.version}\n`,
+          );
+        }
         published.push(pkg);
         continue;
       }
@@ -210,6 +364,27 @@ function main() {
             '    after Trusted Publishing is configured runs in CI and is signed.\n',
         );
       }
+
+      // npm put `latest` on the very first publish regardless of `--tag`, so
+      // correcting it is a post-publish step, not a flag — see distTagFor.
+      const snapshot = registryTags(pkg.name);
+      if (shouldAdvanceLatest(pkg.version, snapshot)) {
+        process.stdout.write(
+          `  ⚠ dist-tag "latest" still points at ${String(snapshot.distTags['latest'])}, which is\n` +
+            `    what a bare \`npm install ${pkg.name}\` resolves to. Moving it forward.\n`,
+        );
+        const { moved, reason } = advanceLatest(pkg.name, pkg.version);
+        if (moved) {
+          process.stdout.write(`  ✓ dist-tag "latest" now points at ${pkg.version}\n`);
+        } else {
+          needsManualLatest.push(pkg);
+          process.stdout.write(
+            `  ⚠ could not move "latest": ${String(reason).split('\n')[0]}\n` +
+              `    The package is published; only the tag is behind. Run:\n` +
+              `      ${distTagAddCommand(pkg.name, pkg.version)}\n`,
+          );
+        }
+      }
       published.push(pkg);
     }
   } finally {
@@ -219,6 +394,19 @@ function main() {
   process.stdout.write(
     `\n${String(published.length)} of ${String(packages.length)} package(s) ${dryRun ? 'would publish' : 'published'} at ${String(expectedVersion)}\n`,
   );
+  if (needsManualLatest.length > 0) {
+    // Loud, last, and copy-pasteable. Until these run, a bare `npm install`
+    // keeps serving the older prerelease — the exact failure this release fixed.
+    process.stdout.write(
+      `\n⚠ dist-tag "latest" was NOT moved for ${String(needsManualLatest.length)} package(s).\n` +
+        '  A bare `npm install` still resolves to an older prerelease until it is.\n' +
+        '  Run (each needs an --otp value if 2FA is on auth-and-writes):\n\n',
+    );
+    for (const pkg of needsManualLatest) {
+      process.stdout.write(`    ${distTagAddCommand(pkg.name, pkg.version)}\n`);
+    }
+    process.stdout.write('\n');
+  }
 }
 
 /**
