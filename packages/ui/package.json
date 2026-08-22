@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/ui",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "The board: a React app served by the daemon, reading through its API and staying live over its WebSocket.",
   "license": "MIT",
   "type": "module",

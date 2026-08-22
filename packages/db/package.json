@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/db",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "PostgresAdapter for the StoragePort: Drizzle schema, migrations, pgvector provisioning, HNSW DDL.",
   "license": "MIT",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/agent-manager",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "Canonical skill format, AgentAdapter interface, and the Claude Code / Codex skill compilers.",
   "license": "MIT",
   "type": "module",

@@ -10,7 +10,8 @@
     "@sdlc-on-fire/db": "0.0.0",
     "@sdlc-on-fire/evidence": "0.0.0",
     "@sdlc-on-fire/importers": "0.0.0",
-    "@sdlc-on-fire/storage": "0.0.0"
+    "@sdlc-on-fire/storage": "0.0.0",
+    "@sdlc-on-fire/ui": "0.0.0"
   },
-  "changesets": ["first-alpha"]
+  "changesets": ["first-alpha", "phase-three"]
 }
