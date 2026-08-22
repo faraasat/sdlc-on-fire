@@ -392,3 +392,98 @@ describe('the views endpoint', () => {
     expect(response.status).toBe(200);
   });
 });
+
+/**
+ * P4-COLLAB-02 — notifications over a real database.
+ *
+ * The parsing and fan-out are pure and tested in core. What only this can show
+ * is the roster query: that a role mention resolves through `memberships` to
+ * real actors, and — the one that matters — that an **expired** membership does
+ * not. A lapsed reviewer who still gets paged as one is a defect nobody
+ * notices, because the notification looks exactly like a correct one.
+ */
+describe('the notifications endpoint', () => {
+  async function actor(name: string): Promise<string> {
+    const rows = await db.query<{ id: string }>(
+      `INSERT INTO actors (kind, display_name) VALUES ('human', $1) RETURNING id;`,
+      [name],
+    );
+    return rows[0]?.id ?? '';
+  }
+
+  async function grant(actorId: string, roleKey: string, expiresAt: string | null): Promise<void> {
+    await db.query(
+      `INSERT INTO memberships (actor_id, role_id, expires_at)
+       SELECT $1, r.id, $3::timestamptz FROM roles r WHERE r.key = $2;`,
+      [actorId, roleKey, expiresAt],
+    );
+  }
+
+  it('resolves a role mention to the actors holding it', async () => {
+    await seedItem('NOTE-1');
+    const ana = await actor('ana');
+    await grant(ana, 'security', null);
+    await db.query(
+      `INSERT INTO comments (work_item_id, type, body, role_effect)
+       VALUES ('NOTE-1', 'normal', 'please review @security', 'NONE');`,
+    );
+
+    const feed = (await (await fetch(`${base}/api/notifications`)).json()) as {
+      actorId: string;
+      because: string;
+      tier: string;
+    }[];
+    expect(feed.map((n) => n.actorId)).toEqual([ana]);
+    expect(feed[0]?.because).toBe('@security (role)');
+  });
+
+  it('does not page someone whose membership has expired', async () => {
+    // The defect that looks identical to correct behaviour from the outside.
+    await seedItem('NOTE-2');
+    const bo = await actor('bo');
+    await grant(bo, 'qa', '2020-01-01T00:00:00Z');
+    await db.query(
+      `INSERT INTO comments (work_item_id, type, body, role_effect)
+       VALUES ('NOTE-2', 'normal', 'over to @qa', 'NONE');`,
+    );
+
+    const feed = (await (await fetch(`${base}/api/notifications`)).json()) as { actorId: string }[];
+    expect(feed).toEqual([]);
+  });
+
+  it('makes a blocking effect instant even without a mention of urgency', async () => {
+    await seedItem('NOTE-3');
+    const cy = await actor('cy');
+    await grant(cy, 'eng-lead', null);
+    await db.query(
+      `INSERT INTO comments (work_item_id, type, body, role_effect)
+       VALUES ('NOTE-3', 'normal', '@eng-lead the gate is wrong', 'GATE_BLOCK');`,
+    );
+
+    const feed = (await (await fetch(`${base}/api/notifications`)).json()) as { tier: string }[];
+    expect(feed[0]?.tier).toBe('instant');
+  });
+
+  it('filters to one actor when asked', async () => {
+    await seedItem('NOTE-4');
+    const ana = await actor('ana2');
+    const bo = await actor('bo2');
+    await grant(ana, 'security', null);
+    await grant(bo, 'qa', null);
+    await db.query(
+      `INSERT INTO comments (work_item_id, type, body, role_effect)
+       VALUES ('NOTE-4', 'normal', '@security and @qa both', 'NONE');`,
+    );
+
+    const all = (await (await fetch(`${base}/api/notifications`)).json()) as { actorId: string }[];
+    expect(all).toHaveLength(2);
+    const mine = (await (
+      await fetch(`${base}/api/notifications?actorId=${encodeURIComponent(ana)}`)
+    ).json()) as { actorId: string }[];
+    expect(mine.map((n) => n.actorId)).toEqual([ana]);
+  });
+
+  it('returns nothing rather than failing when there are no comments', async () => {
+    expect(await (await fetch(`${base}/api/notifications`)).json()).toEqual([]);
+  });
+});

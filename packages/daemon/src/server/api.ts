@@ -23,6 +23,8 @@ import {
   rework,
   stageStats,
   visitsByCard,
+  fanOut,
+  parseMentions,
   viewsForRole,
   wipLimits,
   ROLE_KEYS,
@@ -31,6 +33,7 @@ import {
   type GateEvent,
   type GateEvidenceLink,
   type GateRow,
+  type RoleEffect,
   type RoleKey,
   type RunEvent,
   type TransitionEvent,
@@ -227,6 +230,76 @@ async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
             workItemId,
           ]);
     return { status: 200, body: rows };
+  }
+
+  if (path === '/api/notifications') {
+    // Computed from the stored comments, never from a queue. There is no
+    // notification table on purpose: a row saying "we told Ana" is state about
+    // a delivery, and until a transport exists to do the telling, storing it
+    // would be recording an event that never happened. What this answers is
+    // "what would reach whom", which is derivable and therefore rebuildable.
+    const limitRaw = Number(url.searchParams.get('limit') ?? '50');
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
+
+    const [comments, recipients] = await Promise.all([
+      db.query<{
+        work_item_id: string;
+        body: string;
+        role_effect: RoleEffect;
+        author_actor_id: string | null;
+        created_at: string;
+      }>(
+        `SELECT work_item_id, body, role_effect, author_actor_id, created_at::text AS created_at
+           FROM comments ORDER BY created_at DESC LIMIT ${String(limit)};`,
+      ),
+      // One query, not one per comment. Memberships are small and the fan-out
+      // is pure, so pulling the roster once and resolving in memory avoids a
+      // query per comment against a table that will not grow with the backlog.
+      db.query<{ actor_id: string; handle: string; role_key: string | null }>(
+        `SELECT a.id AS actor_id, a.display_name AS handle, r.key AS role_key
+           FROM actors a
+           LEFT JOIN memberships m
+             ON m.actor_id = a.id
+            AND (m.expires_at IS NULL OR m.expires_at > now())
+           LEFT JOIN roles r ON r.id = m.role_id;`,
+      ),
+    ]);
+
+    const roster = new Map<string, { actorId: string; handle: string; roles: RoleKey[] }>();
+    for (const row of recipients) {
+      const existing = roster.get(row.actor_id) ?? {
+        actorId: row.actor_id,
+        handle: row.handle,
+        roles: [] as RoleKey[],
+      };
+      // An expired membership arrives as a null role via the LEFT JOIN and must
+      // not become a role. Filtering on the join rather than after it is what
+      // keeps a lapsed reviewer from still being paged as one.
+      if (row.role_key !== null && (ROLE_KEYS as readonly string[]).includes(row.role_key)) {
+        existing.roles.push(row.role_key as RoleKey);
+      }
+      roster.set(row.actor_id, existing);
+    }
+    const people = [...roster.values()];
+
+    const out = comments.flatMap((comment) =>
+      fanOut({
+        mentions: parseMentions(comment.body),
+        recipients: people,
+        effect: comment.role_effect,
+        authorActorId: comment.author_actor_id,
+      }).map((notification) => ({
+        ...notification,
+        cardId: comment.work_item_id,
+        at: comment.created_at,
+      })),
+    );
+
+    const actorId = url.searchParams.get('actorId');
+    return {
+      status: 200,
+      body: actorId === null ? out : out.filter((n) => n.actorId === actorId),
+    };
   }
 
   if (path === '/api/views') {
