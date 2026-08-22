@@ -44,3 +44,5 @@ export * from './visibility-analysis.js';
 export * from './web-bundle.js';
 export * from './preview-env.js';
 export * from './embedder-registry.js';
+export * from './tracker-sync.js';
+export * from './github-issues.js';

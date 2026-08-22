@@ -120,3 +120,5 @@ export * from './preview-env.js';
 export * from './embedder-registry.js';
 export * from './skill-signing.js';
 export * from './skill-registry.js';
+export * from './tracker-sync.js';
+export * from './github-issues.js';
