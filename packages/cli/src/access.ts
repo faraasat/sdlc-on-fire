@@ -157,7 +157,7 @@ export function formatPolicy(result: PolicyResult): string {
       '',
       'This is the failure that looks like nothing: capability() decides from what',
       'the database holds, so a permission only the code knows about passes its',
-      'unit test and refuses every real user. `sdlc db:up` re-seeds.',
+      'unit test and refuses every real user. `sdlc db:rebuild` re-seeds.',
     );
   }
 

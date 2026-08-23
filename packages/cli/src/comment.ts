@@ -50,7 +50,7 @@ export async function dispatchedEffect(
     throw new Error(
       `no dispatch row for (${type}, ${role ?? 'no role'}) — the table is seeded total, so a ` +
         'missing rule means an unseeded database rather than an undecided case (ADR-0012); ' +
-        'run `sdlc db:up`',
+        'run `sdlc db:rebuild`',
     );
   }
   return effect;
