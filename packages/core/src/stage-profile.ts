@@ -292,3 +292,75 @@ export function applyRetrievalBudget<T extends { readonly tokens: number }>(
 
   return { admitted, dropped, tokensUsed: used, budget };
 }
+
+/**
+ * The insertion profile (P6-PERSTAGE-03; FEAT-INS-014).
+ *
+ * Insertion is not a lifecycle stage — it happens *to* a container while its
+ * items are somewhere in the ladder — so it does not belong in `STAGE_PROFILES`.
+ * Giving it a stage key would put a state in the table that nothing transitions
+ * into, which is the same mistake `situation` exists to avoid on the skill side.
+ *
+ * **Scoped to the container, never a global re-plan.** The pack is the target
+ * container's *remaining* items plus the insertion plus one hop of neighbours.
+ * Finished items are excluded on purpose: an insertion is a question about what
+ * is still going to happen, and re-reading what already shipped is the cost that
+ * makes people stop using insertion and hand-edit the board instead.
+ *
+ * **One hop, and the number is the point.** Two hops on a well-connected board
+ * is most of the board, which is the global re-plan under another name.
+ */
+export interface InsertionScope {
+  readonly containerId: string;
+  /** Items in the container that have not finished. */
+  readonly remaining: readonly string[];
+  /** The item being inserted. */
+  readonly inserting: string;
+  /** One hop out: direct dependencies and dependents of the remaining set. */
+  readonly neighbours: readonly string[];
+}
+
+export interface ScopeInput {
+  readonly containerId: string;
+  readonly inserting: string;
+  readonly items: readonly {
+    readonly id: string;
+    readonly containerId: string;
+    readonly finished: boolean;
+    /** Ids this item depends on or blocks. Direction does not matter at one hop. */
+    readonly links?: readonly string[] | undefined;
+  }[];
+}
+
+export function insertionScope(input: ScopeInput): InsertionScope {
+  const inContainer = input.items.filter((item) => item.containerId === input.containerId);
+  const remaining = inContainer.filter((item) => !item.finished).map((item) => item.id);
+  const remainingSet = new Set(remaining);
+
+  // Everything in the target container, finished or not. Neighbours are
+  // deliberately *out-of-container* only: a finished sibling was excluded from
+  // `remaining` on purpose, and re-admitting it through the neighbour door
+  // undoes the scoping this function exists to do. Found by the test for
+  // two-directional links, which pulled a shipped sibling back in.
+  const inTarget = new Set(inContainer.map((item) => item.id));
+
+  const neighbours = new Set<string>();
+  for (const item of input.items) {
+    for (const link of item.links ?? []) {
+      // One hop in either direction: an item the remaining set points at, and an
+      // item that points at it. Following only one direction would miss the
+      // thing that is about to break, which is the neighbour worth having.
+      if (remainingSet.has(item.id) && !inTarget.has(link)) neighbours.add(link);
+      if (remainingSet.has(link) && !inTarget.has(item.id)) neighbours.add(item.id);
+    }
+  }
+  // The insertion is named separately and never counted as its own neighbour.
+  neighbours.delete(input.inserting);
+
+  return {
+    containerId: input.containerId,
+    remaining,
+    inserting: input.inserting,
+    neighbours: [...neighbours].sort(),
+  };
+}

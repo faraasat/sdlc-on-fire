@@ -4,6 +4,7 @@ import { CONTEXT_LAYER_KINDS, EFFORT_TIERS } from './context.js';
 import {
   admitsChunk,
   applyRetrievalBudget,
+  insertionScope,
   mandatoryLayers,
   matchesGlob,
   resolveStageProfile,
@@ -180,5 +181,72 @@ describe('per-stage budgets and effort tiers (P6-PERSTAGE-02, FEAT-CTX-015)', ()
 
   it('admits nothing at a budget of zero', () => {
     expect(applyRetrievalBudget([{ tokens: 1, id: 'a' }], 0).admitted).toEqual([]);
+  });
+});
+
+describe('insertion scope (P6-PERSTAGE-03, FEAT-INS-014)', () => {
+  const board = [
+    { id: 'A', containerId: 'FEAT-001', finished: true, links: ['B'] },
+    { id: 'B', containerId: 'FEAT-001', finished: false, links: ['OUT-1'] },
+    // C links BACK to a finished sibling: the outbound rule must exclude it for
+    // the same reason the inbound one does, or the neighbour door readmits what
+    // `remaining` deliberately dropped.
+    { id: 'C', containerId: 'FEAT-001', finished: false, links: ['A'] },
+    { id: 'D', containerId: 'FEAT-002', finished: false, links: ['C'] },
+    { id: 'OUT-1', containerId: 'FEAT-003', finished: false },
+  ];
+
+  it('scopes to the container and drops what already finished', () => {
+    // An insertion is a question about what is still going to happen. Re-reading
+    // what already shipped is the cost that makes people hand-edit the board
+    // instead of using insertion.
+    const scope = insertionScope({ containerId: 'FEAT-001', inserting: 'NEW', items: board });
+    expect([...scope.remaining].sort()).toEqual(['B', 'C']);
+    expect(scope.remaining).not.toContain('A');
+  });
+
+  it('follows links in both directions, one hop', () => {
+    // B points at OUT-1; D points at C. Following only outward would miss D,
+    // which is the thing about to break — the neighbour worth having.
+    //
+    // A is a finished sibling that links to B, and must NOT come back as a
+    // neighbour: it was excluded from `remaining` on purpose, and the neighbour
+    // door would quietly undo that. This test caught exactly that.
+    const scope = insertionScope({ containerId: 'FEAT-001', inserting: 'NEW', items: board });
+    expect(scope.neighbours).toEqual(['D', 'OUT-1']);
+  });
+
+  it('does not take a second hop', () => {
+    // Two hops on a well-connected board is most of the board, which is the
+    // global re-plan under another name.
+    const chain = [
+      { id: 'B', containerId: 'FEAT-001', finished: false, links: ['N1'] },
+      { id: 'N1', containerId: 'X', finished: false, links: ['N2'] },
+      { id: 'N2', containerId: 'X', finished: false },
+    ];
+    const scope = insertionScope({ containerId: 'FEAT-001', inserting: 'NEW', items: chain });
+    expect(scope.neighbours).toEqual(['N1']);
+    expect(scope.neighbours).not.toContain('N2');
+  });
+
+  it('never lists the insertion as its own neighbour', () => {
+    const withSelf = [
+      { id: 'B', containerId: 'FEAT-001', finished: false, links: ['NEW'] },
+      { id: 'NEW', containerId: 'FEAT-001', finished: false },
+    ];
+    const scope = insertionScope({ containerId: 'FEAT-001', inserting: 'NEW', items: withSelf });
+    expect(scope.neighbours).not.toContain('NEW');
+  });
+
+  it('returns an empty scope for a container whose work is done', () => {
+    // Not an error. Inserting into a finished container is a real thing to do,
+    // and it deserves the smallest pack there is rather than a failure.
+    const scope = insertionScope({
+      containerId: 'FEAT-001',
+      inserting: 'NEW',
+      items: [{ id: 'A', containerId: 'FEAT-001', finished: true }],
+    });
+    expect(scope.remaining).toEqual([]);
+    expect(scope.neighbours).toEqual([]);
   });
 });
