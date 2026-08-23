@@ -83,7 +83,18 @@ export interface InitResult {
    * was actually performing. The v0.1 DoD says `init` brings PGlite up — so it
    * does, and proves it.
    */
-  readonly database: { readonly ready: boolean; readonly detail: string };
+  readonly database: {
+    readonly ready: boolean;
+    /**
+     * True when the database is fine and simply owned by another process —
+     * somebody has `sdlc serve` running. Distinguished from a real failure so
+     * the exit code can differ: this is the most ordinary setup there is and
+     * must not fail the command, while a genuine failure must not be sailed
+     * past by a script doing `sdlc init && …`.
+     */
+    readonly held?: boolean;
+    readonly detail: string;
+  };
 }
 
 export interface StatusResult {
@@ -316,6 +327,7 @@ export async function init(root: string, options: InitOptions = {}): Promise<Ini
       );
       database = {
         ready: true,
+        held: false,
         detail: `PGlite provisioned and schema applied; ${bootstrapped.because}`,
       };
     } finally {
@@ -325,10 +337,42 @@ export async function init(root: string, options: InitOptions = {}): Promise<Ini
     // Not fatal: every file-based command still works, and the scaffold on disk
     // is valid. But it is said out loud, at the step where a user looks for
     // setup problems, instead of surfacing as a puzzling refusal later.
-    database = { ready: false, detail: `database did not start: ${String(cause)}` };
+    //
+    // Two very different situations reached this branch and were reported
+    // identically, which real-world testing surfaced (2026-08-23):
+    //
+    //   * **Held by another process.** Somebody already has `sdlc serve` up.
+    //     Nothing is wrong; the database is running, just not by us. Saying
+    //     "database did not start" here is false, and failing the command
+    //     would make `init` noisy on the most ordinary setup there is.
+    //   * **Genuinely failed.** Missing directory, bad permissions, corrupt
+    //     data dir. The scaffold is on disk and the mirror is not, and a
+    //     script doing `sdlc init && sdlc verify …` must not sail past it.
+    //
+    // So the two are told apart, and only the second one is a failure.
+    const locked = cause instanceof Error && cause.name === 'DatabaseLockedError';
+    // `String(cause)` renders a non-Error throw as "[object Object]", which is
+    // the least useful string a setup failure can end with. Real-world testing
+    // hit exactly that.
+    const because = describeCause(cause);
+    database = locked
+      ? { ready: false, held: true, detail: because }
+      : { ready: false, held: false, detail: `database did not start: ${because}` };
   }
 
   return { root: layout.root, created, skipped, alreadyInitialised, initialisedGit, database };
+}
+
+/** A throw rendered for a person, whatever shape it arrived in. */
+function describeCause(cause: unknown): string {
+  if (cause instanceof Error) return cause.message === '' ? cause.name : cause.message;
+  if (typeof cause === 'string') return cause;
+  try {
+    const json = JSON.stringify(cause);
+    return json === undefined || json === '{}' ? String(cause) : json;
+  } catch {
+    return String(cause);
+  }
 }
 
 export interface StatusStore {

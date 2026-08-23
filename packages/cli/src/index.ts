@@ -209,6 +209,11 @@ function r_committed(result: { dryRun: boolean; committed: boolean }): boolean {
   return result.dryRun || result.committed;
 }
 
+/** Whether `init` actually finished, treating a merely-held database as fine. */
+function r_ready(result: Awaited<ReturnType<typeof init>>): boolean {
+  return result.database.ready || result.database.held === true;
+}
+
 function emit(value: unknown, json: boolean, human: (value: never) => string): void {
   process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${human(value as never)}\n`);
 }
@@ -291,11 +296,21 @@ export function buildProgram(): Command {
           r.initialisedGit
             ? '  git:     initialised a repository (content in git is how this tool stores work)'
             : '',
-          r.database.ready ? '  db:      PGlite ready' : `  db:      ⚠ ${r.database.detail}`,
+          r.database.ready
+            ? '  db:      PGlite ready'
+            : r.database.held === true
+              ? `  db:      held by another process — this is fine. ${r.database.detail}`
+              : `  db:      ⚠ ${r.database.detail}`,
         ]
           .filter((line) => line !== '')
           .join('\n'),
       );
+      // A database that genuinely failed to come up is a failed init, however
+      // valid the scaffold on disk is. Exiting 0 here let `sdlc init && …`
+      // sail straight past a workspace with no mirror — found by pointing the
+      // published package at real repositories, 2026-08-23. A database merely
+      // *held* by another process is the ordinary case and stays exit 0.
+      if (!r_ready(result)) process.exitCode = 1;
     });
 
   program
