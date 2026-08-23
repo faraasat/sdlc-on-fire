@@ -8,6 +8,7 @@ import {
   DECOMPOSE_SKILL,
   DISCOVERY_SKILL,
   IMPLEMENTATION_PLANNING_SKILL,
+  TRIAGE_BUG_SKILL,
   PLAN_STORY_SKILL,
 } from './planning.js';
 import { WRITE_TESTS_SKILL } from './write-tests.js';
@@ -153,6 +154,10 @@ export const CANONICAL_SKILLS: Readonly<Record<string, CanonicalSkill>> = {
   // an argument, see `core/research-subtype.ts`), plus the conditional pass.
   research: RESEARCH_SKILL,
   'ui-explore': UI_EXPLORE_SKILL,
+  // P6-PAYLOAD-06. The `triage` STAGE — bug and dependency-upgrade cards enter
+  // the ladder here, and nothing claimed it. Distinct from `triage-capture`,
+  // which is the `sdlc triage` command promoting a capture into a work item.
+  'triage-bug': TRIAGE_BUG_SKILL,
 };
 
 export function getSkill(name: string): CanonicalSkill | undefined {

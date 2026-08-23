@@ -42,6 +42,7 @@ describe('canonical skills', () => {
       'review',
       'security-review',
       'spec',
+      'triage-bug',
       'triage-capture',
       'ui-explore',
       'write-tests',

@@ -10,6 +10,7 @@ import {
   ResearchOutputSchema,
   resolveOutputSchema,
   SpecOutputSchema,
+  TriageBugOutputSchema,
   TriageCaptureOutputSchema,
   UiExploreOutputSchema,
 } from './output-schemas.js';
@@ -305,5 +306,57 @@ describe('the research contracts (P6-PAYLOAD-05)', () => {
         recommendation: 'adopt a design system',
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('triage-bug (P6-PAYLOAD-06)', () => {
+  const valid = {
+    work_item_id: 'BUG-001',
+    reproduces: 'yes',
+    steps: ['open the export dialog', 'pick a date range spanning a DST change'],
+    severity: 'high',
+    impact: 'anyone exporting across a DST boundary, which is most of March',
+  };
+
+  it('accepts a reproduced, sourced triage', () => {
+    expect(TriageBugOutputSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('refuses a defect that reproduces but says nothing about how', () => {
+    // A defect with no steps is a description, and the next person starts over.
+    expect(TriageBugOutputSchema.safeParse({ ...valid, steps: [] }).success).toBe(false);
+  });
+
+  it('keeps "no" and "not tried" apart', () => {
+    // A boolean collapses them into the one that closes the card.
+    expect(
+      TriageBugOutputSchema.safeParse({ ...valid, reproduces: 'no', steps: undefined }).success,
+    ).toBe(true);
+    expect(
+      TriageBugOutputSchema.safeParse({ ...valid, reproduces: 'not-attempted', steps: undefined })
+        .success,
+    ).toBe(true);
+    expect(TriageBugOutputSchema.safeParse({ ...valid, reproduces: false }).success).toBe(false);
+  });
+
+  it('refuses critical for a defect nobody has triggered', () => {
+    // "Critical" applied to everything is the same as applying it to nothing,
+    // and the cheapest guard is refusing the top of the scale to a defect nobody
+    // has managed to reproduce.
+    expect(
+      TriageBugOutputSchema.safeParse({
+        ...valid,
+        severity: 'critical',
+        reproduces: 'not-attempted',
+        steps: undefined,
+      }).success,
+    ).toBe(false);
+    expect(TriageBugOutputSchema.safeParse({ ...valid, severity: 'critical' }).success).toBe(true);
+  });
+
+  it('gives triage nowhere to record a fix', () => {
+    // Investigating until the fix is obvious is how triage becomes
+    // implementation, and a field for it is an invitation.
+    expect(TriageBugOutputSchema.safeParse({ ...valid, fix: 'use UTC' }).success).toBe(false);
   });
 });

@@ -204,3 +204,60 @@ export const IMPLEMENTATION_PLANNING_SKILL: CanonicalSkill = CanonicalSkillSchem
   arguments: [{ name: 'work-item-id', required: true, description: WORK_ITEM_ID_ARG }],
   context_mode: 'inline',
 });
+
+/**
+ * `triage-bug` (P6-PAYLOAD-06) — the bug-shaped lifecycle's first stage.
+ *
+ * Found while building P6-PAYLOAD-04: `bug` and `dependency-upgrade` cards enter
+ * the ladder at `triage`, and no skill claimed that stage. So a bug's first step
+ * dispatched no agent where a feature's `discovery` dispatched one — not an
+ * error, just a card sitting at a stage that answered "no skill drives this".
+ *
+ * **Named `triage-bug`, not `triage`.** `triage-capture` already exists for the
+ * `sdlc triage` command, which promotes a capture into a work item — a different
+ * act on a different object. One word on two dispatch paths is the mistake this
+ * repository has now found five times, and the resolution is that dispatch
+ * resolves by the `stage` field, so the *name* is free to be unambiguous.
+ *
+ * The pressure here is the opposite of `discovery`'s. Discovery is asked to find
+ * everything; triage is asked to decide, quickly, whether this is real and how
+ * bad it is — and its characteristic failure is investigating a bug thoroughly
+ * enough to have fixed it. So the stop condition is explicit that reproduction
+ * steps are the deliverable and a fix is not.
+ */
+export const TRIAGE_BUG_SKILL: CanonicalSkill = CanonicalSkillSchema.parse({
+  schema_version: '0.1.0',
+  name: 'triage-bug',
+  description:
+    'Decide whether a reported bug is real, how bad it is, and what reproduces it — without fixing it.',
+  stage: 'triage',
+  tier: 'medium',
+  context_pack_spec_ref: 'context-packs/triage-bug.yaml',
+  role: [
+    'You triage a reported defect. You establish whether it reproduces, what it affects, and how urgent it is.',
+    'You do not fix it, you do not refactor around it, and you do not advance the stage.',
+    'Deciding is the job; investigating until the fix is obvious is how triage becomes implementation.',
+  ].join(' '),
+  constitution_excerpt_ref: 'constitution#defects',
+  task: [
+    'Triage {{work_item_id}}.',
+    'Establish reproduction first: the exact steps, the environment, and what actually happens versus what should.',
+    'A defect nobody can reproduce is not yet a defect — say so plainly rather than filing a fix for a description.',
+    'Then say what it affects and how badly, in terms of who hits it and how often.',
+    '"Critical" applied to everything is the same as applying it to nothing.',
+    'If the same defect is already on the board, say which item and stop.',
+  ].join(' '),
+  output_contract: {
+    tool_name: 'triage_bug_output',
+    json_schema_ref: 'schemas/triage-bug-output.schema.json',
+  },
+  self_verification: [
+    'Before emitting: confirm the reproduction steps are ones somebody else could follow on a clean checkout.',
+    'Steps that only work in the state your session happens to be in are the reason a bug reopens two weeks later marked "cannot reproduce".',
+  ].join(' '),
+  stop_condition:
+    'Stop once the triage is emitted. Do not fix the defect, do not write a test for it, and do not advance the stage.',
+  verify: { command_template: '{{verify_command}}', done_criteria_ref: 'work-item#done' },
+  arguments: [{ name: 'work-item-id', required: true, description: WORK_ITEM_ID_ARG }],
+  context_mode: 'inline',
+});

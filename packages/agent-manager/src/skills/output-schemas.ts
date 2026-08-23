@@ -549,6 +549,46 @@ export const UiExploreOutputSchema = z
   // by the exploration pass is the exploration pass having done the planning.
   .strict();
 
+/**
+ * `triage-bug` (P6-PAYLOAD-06).
+ *
+ * `reproduces` is a required enum rather than a boolean, because "no" and "not
+ * yet tried" are different answers and a boolean collapses them into the one
+ * that closes the card.
+ */
+export const TriageBugOutputSchema = z
+  .strictObject({
+    work_item_id: z.string().min(1),
+    reproduces: z.enum(['yes', 'no', 'not-attempted']),
+    /** Required when it reproduces. A defect with no steps is a description. */
+    steps: z.array(z.string().min(1)).optional(),
+    severity: z.enum(['low', 'medium', 'high', 'critical']),
+    /** Who hits it and how often — the sentence that makes a severity arguable. */
+    impact: z.string().min(1),
+    /** Set when this restates an item already on the board. */
+    duplicate_of: z.string().min(1).optional(),
+  })
+  .superRefine((output, ctx) => {
+    if (output.reproduces === 'yes' && (output.steps ?? []).length === 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['steps'],
+        message: 'a defect that reproduces says what reproduces it',
+      });
+    }
+    // The rule that keeps the scale meaningful. "Critical" applied to everything
+    // is the same as applying it to nothing, and the cheapest guard is refusing
+    // the top of the scale to a defect nobody has managed to trigger.
+    if (output.severity === 'critical' && output.reproduces !== 'yes') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['severity'],
+        message:
+          'a defect nobody has reproduced is not critical yet — reproduce it or lower the severity',
+      });
+    }
+  });
+
 export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/spec-output.schema.json': SpecOutputSchema,
   'schemas/implement-output.schema.json': ImplementOutputSchema,
@@ -570,6 +610,7 @@ export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/release-notes-output.schema.json': ReleaseNotesOutputSchema,
   'schemas/research-output.schema.json': ResearchOutputSchema,
   'schemas/ui-explore-output.schema.json': UiExploreOutputSchema,
+  'schemas/triage-bug-output.schema.json': TriageBugOutputSchema,
 };
 
 export function resolveOutputSchema(ref: string): z.ZodType | undefined {

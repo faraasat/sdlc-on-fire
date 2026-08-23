@@ -40,6 +40,13 @@ const KEBAB_CASE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
  */
 export const SKILL_STAGES = [
   'discovery',
+  /**
+   * The bug-shaped alias for the `discovery` slot: `bug` and
+   * `dependency-upgrade` cards enter the ladder here. Claimed by `triage-bug`
+   * from P6-PAYLOAD-06 — until then no skill claimed it, so a bug's first stage
+   * dispatched no agent where a feature's `discovery` did.
+   */
+  'triage',
   'spec',
   'decompose',
   'plan',
