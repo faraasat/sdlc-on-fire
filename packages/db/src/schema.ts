@@ -238,6 +238,16 @@ export const gates = pgTable(
     policyId: integer('policy_id').references(() => gatePolicies.id),
     result: text('result'),
     evaluatedAt: timestamp('evaluated_at', { withTimezone: true }),
+    /**
+     * When the gate was raised (P6-INSTRUMENT-03, FEAT-MET-002).
+     *
+     * Blocked time is `evaluated_at - created_at`, and it was not derivable
+     * before this existed: `updated_at` is a watermark that the resolving UPDATE
+     * overwrites, so the moment the block *started* was destroyed by the moment
+     * it ended. And `blocked` is deliberately not a lifecycle state, so
+     * `lifecycle_transitions` cannot answer it either.
+     */
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     /** Realtime watermark (contract 01 §3.11). Maintained by trigger, not by callers. */
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -348,6 +358,23 @@ export const runs = pgTable(
     inputTokens: integer('input_tokens'),
     outputTokens: integer('output_tokens'),
     costUsd: numeric('cost_usd', { precision: 12, scale: 6 }),
+    /**
+     * Prompt-cache accounting (P6-INSTRUMENT-03, FEAT-MET-011).
+     *
+     * The *rate*, not the cacheable fraction. `packMetrics.cacheableFraction`
+     * already says how much of a pack could be cached, which is a property of
+     * how it was ordered; whether it actually was is only knowable from what the
+     * provider says it read.
+     */
+    cacheReadTokens: integer('cache_read_tokens'),
+    cacheCreationTokens: integer('cache_creation_tokens'),
+    /**
+     * Turns in the agentic loop, as the target reported them (FEAT-MET-013).
+     *
+     * Not tool calls. `--output-format json` does not carry tool calls, and
+     * reporting turns under that name would be a substitution nobody could see.
+     */
+    turns: integer('turns'),
     /**
      * v0.1 stopgap for the deferred `already_happened_ledger` (contract §6
      * reconciliation call): PR creation is irreversible even in the walking

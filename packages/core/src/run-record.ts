@@ -89,6 +89,27 @@ export interface RunUsage {
   readonly inputTokens?: number | undefined;
   readonly outputTokens?: number | undefined;
   readonly costUsd?: number | undefined;
+  /**
+   * Prompt-cache accounting (P6-INSTRUMENT-03, FEAT-MET-011).
+   *
+   * The **rate**, not the cacheable fraction. `packMetrics.cacheableFraction`
+   * already reports how much of a pack *could* be cached, which is a property of
+   * how the pack was ordered and is knowable without ever running anything.
+   * Whether it *was* cached is only knowable from what the provider says it
+   * read, and those two numbers diverging is the entire point — a pack that is
+   * 80% cacheable and never hits is a stable prefix that keeps changing.
+   */
+  readonly cacheReadTokens?: number | undefined;
+  readonly cacheCreationTokens?: number | undefined;
+  /**
+   * Turns in the agentic loop (FEAT-MET-013).
+   *
+   * Not tool calls, and deliberately not named as though it were. Tool calls
+   * need `--output-format stream-json`; `json` reports turns, and reporting
+   * turns under the name "tool calls" would be a substitution nobody could see
+   * in a dashboard.
+   */
+  readonly turns?: number | undefined;
 }
 
 /** How a run ended. */

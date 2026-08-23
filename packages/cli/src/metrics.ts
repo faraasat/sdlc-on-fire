@@ -19,7 +19,10 @@ import {
   flowEfficiency,
   formatDora,
   leadTime,
+  blockedTime,
   runMetrics,
+  type BlockedTime,
+  type GateInterval,
   type RunMetrics,
   type RunRow,
   rework,
@@ -194,11 +197,15 @@ export async function agentRunReport(root: string): Promise<RunMetrics> {
       input_tokens: number | null;
       output_tokens: number | null;
       cost_usd: string | number | null;
+      cache_read_tokens: number | null;
+      cache_creation_tokens: number | null;
+      turns: number | null;
       started_at: string | null;
       finished_at: string | null;
     }>(
       `SELECT id, work_item_id, skill_id, status, failure_reason,
               input_tokens, output_tokens, cost_usd,
+              cache_read_tokens, cache_creation_tokens, turns,
               started_at::text AS started_at, finished_at::text AS finished_at
          FROM runs ORDER BY started_at ASC;`,
     );
@@ -216,6 +223,10 @@ export async function agentRunReport(root: string): Promise<RunMetrics> {
         // 0, which would turn "no cost recorded" into "cost was zero" — the
         // one confusion the nullable column exists to prevent.
         costUsd: row.cost_usd === null ? null : Number(row.cost_usd),
+        cacheReadTokens: row.cache_read_tokens === null ? null : Number(row.cache_read_tokens),
+        cacheCreationTokens:
+          row.cache_creation_tokens === null ? null : Number(row.cache_creation_tokens),
+        turns: row.turns === null ? null : Number(row.turns),
         startedAt: row.started_at,
         finishedAt: row.finished_at,
       })),
@@ -277,6 +288,29 @@ export function formatAgentRuns(report: RunMetrics): string {
   }
 
   const failures = report.failureReasons.filter((entry) => entry.runs > 0);
+  lines.push('', 'prompt cache:');
+  if (report.cache.hitRate === null) {
+    // Not "0%". No run reporting cache accounting and every run missing the
+    // cache are different facts, and only one of them is a problem to fix.
+    lines.push('  not available — no run reported cache accounting');
+  } else {
+    lines.push(
+      `  ${(report.cache.hitRate * 100).toFixed(1)}% of intake read from cache, over ${String(report.cache.runsReporting)} run(s)`,
+    );
+  }
+
+  lines.push('', 'trajectory:');
+  if (report.trajectory.turnsPerRun === null) {
+    lines.push('  not available — no run reported turns');
+  } else {
+    lines.push(
+      `  ${report.trajectory.turnsPerRun.toFixed(1)} turns per run, over ${String(report.trajectory.runsReporting)} run(s)`,
+    );
+  }
+  // Stated, not omitted. A trajectory section that silently lacks tool counts
+  // reads as "there were none" (FEAT-MET-013).
+  lines.push('  tool calls: not measured — needs `--output-format stream-json`');
+
   lines.push('', 'failure reasons:');
   if (failures.length === 0) {
     lines.push('  none — every recorded run passed');
@@ -285,4 +319,54 @@ export function formatAgentRuns(report: RunMetrics): string {
   }
 
   return lines.join('\n');
+}
+
+/**
+ * `sdlc metrics blocked` (P6-INSTRUMENT-03, FEAT-MET-002).
+ *
+ * Reads gate intervals rather than lifecycle transitions, because `blocked` is
+ * not a lifecycle state — it is an overlay derived from gate status, so the
+ * transition log has nothing to say about it.
+ */
+export async function blockedReport(root: string): Promise<readonly BlockedTime[]> {
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    const rows = await db.query<{
+      work_item_id: string;
+      gate_name: string;
+      created_at: string;
+      resolved_at: string | null;
+    }>(
+      // A gate is "resolved" when it passed. A failing gate is still blocking,
+      // which is the whole reason it exists — counting `fail` as resolved would
+      // report the most blocked cards as the least.
+      `SELECT work_item_id, gate_name, created_at::text AS created_at,
+              CASE WHEN result = 'pass' THEN evaluated_at::text ELSE NULL END AS resolved_at
+         FROM gates ORDER BY created_at ASC;`,
+    );
+    return blockedTime(
+      rows.map((row): GateInterval => ({
+        workItemId: row.work_item_id,
+        gateName: row.gate_name,
+        createdAt: row.created_at,
+        resolvedAt: row.resolved_at,
+      })),
+      new Date().toISOString(),
+    );
+  } finally {
+    await db.close().catch(() => undefined);
+  }
+}
+
+export function formatBlocked(report: readonly BlockedTime[]): string {
+  if (report.length === 0) return 'no gates recorded — nothing has been blocked.';
+  return [
+    `${String(report.length)} work item(s) with gate history`,
+    '',
+    ...report.map(
+      (item) =>
+        `  ${item.workItemId}: ${hours(item.blockedMs)} across ${String(item.episodes)} episode(s)` +
+        (item.stillBlocked ? ' — still blocked, this is a floor' : ''),
+    ),
+  ].join('\n');
 }

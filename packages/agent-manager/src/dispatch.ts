@@ -345,8 +345,16 @@ interface ClaudeCliEnvelope {
    * is quietly false from the first price change onward.
    */
   readonly total_cost_usd?: unknown;
+  /** Turns in the agentic loop. Not tool calls — `json` does not carry those. */
+  readonly num_turns?: unknown;
   readonly usage?:
-    { readonly input_tokens?: unknown; readonly output_tokens?: unknown } | undefined;
+    | {
+        readonly input_tokens?: unknown;
+        readonly output_tokens?: unknown;
+        readonly cache_read_input_tokens?: unknown;
+        readonly cache_creation_input_tokens?: unknown;
+      }
+    | undefined;
 }
 
 /** Pulls usage out of the CLI envelope, keeping only what is actually a number. */
@@ -356,16 +364,20 @@ export function usageFromEnvelope(parsed: unknown): RunUsage | undefined {
   const num = (value: unknown): number | undefined =>
     typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 
+  // Every field is optional and omitted rather than zeroed, so this builds the
+  // object by spreading nothing where the CLI said nothing.
+  const field = (key: keyof RunUsage, value: unknown): Partial<RunUsage> => {
+    const parsedValue = num(value);
+    return parsedValue === undefined ? {} : { [key]: parsedValue };
+  };
+
   const usage: RunUsage = {
-    ...(num(envelope.usage?.input_tokens) === undefined
-      ? {}
-      : { inputTokens: num(envelope.usage?.input_tokens) }),
-    ...(num(envelope.usage?.output_tokens) === undefined
-      ? {}
-      : { outputTokens: num(envelope.usage?.output_tokens) }),
-    ...(num(envelope.total_cost_usd) === undefined
-      ? {}
-      : { costUsd: num(envelope.total_cost_usd) }),
+    ...field('inputTokens', envelope.usage?.input_tokens),
+    ...field('outputTokens', envelope.usage?.output_tokens),
+    ...field('cacheReadTokens', envelope.usage?.cache_read_input_tokens),
+    ...field('cacheCreationTokens', envelope.usage?.cache_creation_input_tokens),
+    ...field('costUsd', envelope.total_cost_usd),
+    ...field('turns', envelope.num_turns),
   };
   // An empty object would record "usage was reported and it was nothing",
   // which is the confusion the nullable columns exist to avoid.

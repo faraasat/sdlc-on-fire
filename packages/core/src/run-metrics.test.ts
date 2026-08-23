@@ -11,6 +11,9 @@ const row = (over: Partial<RunRow> = {}): RunRow => ({
   inputTokens: null,
   outputTokens: null,
   costUsd: null,
+  cacheReadTokens: null,
+  cacheCreationTokens: null,
+  turns: null,
   startedAt: '2026-08-24T00:00:00.000Z',
   finishedAt: '2026-08-24T00:00:10.000Z',
   ...over,
@@ -146,5 +149,54 @@ describe('failure classification', () => {
     // an unrecognised failure at this boundary almost always is.
     expect(failureReasonFor(new Error('ENOENT'))).toBe('transport');
     expect(failureReasonFor('a string')).toBe('transport');
+  });
+});
+
+describe('cache hit rate (P6-INSTRUMENT-03)', () => {
+  it('reports nothing when no run carried cache accounting', () => {
+    // Distinct from a rate of zero. No run reporting and every run missing the
+    // cache are different facts, and only one of them is a problem to fix.
+    expect(runMetrics([row(), row({ id: 'b' })]).cache.hitRate).toBeNull();
+  });
+
+  it('divides by everything the provider had to take in', () => {
+    // Dividing by fresh input alone makes a run that cached nothing report zero
+    // AND a run that cached everything report infinity.
+    const report = runMetrics([
+      row({ id: 'a', inputTokens: 200, cacheReadTokens: 700, cacheCreationTokens: 100 }),
+    ]);
+    expect(report.cache.hitRate).toBeCloseTo(0.7);
+    expect(report.cache.runsReporting).toBe(1);
+  });
+
+  it('reports a genuine zero when the cache was reported and never hit', () => {
+    // The case the null is kept apart from: accounting arrived, and it said the
+    // stable prefix is not stable.
+    const report = runMetrics([
+      row({ id: 'a', inputTokens: 900, cacheReadTokens: 0, cacheCreationTokens: 900 }),
+    ]);
+    expect(report.cache.hitRate).toBe(0);
+  });
+});
+
+describe('trajectory (P6-INSTRUMENT-03)', () => {
+  it('averages turns only over the runs that reported them', () => {
+    // Counting a silent run as zero turns drags the average toward a number no
+    // run actually had.
+    const report = runMetrics([
+      row({ id: 'a', turns: 6 }),
+      row({ id: 'b', turns: 2 }),
+      row({ id: 'c' }),
+    ]);
+    expect(report.trajectory.turns).toBe(8);
+    expect(report.trajectory.turnsPerRun).toBe(4);
+    expect(report.trajectory.runsReporting).toBe(2);
+  });
+
+  it('never reports turns as tool calls', () => {
+    // FEAT-MET-013 asks for tool calls. `--output-format json` does not carry
+    // them, and putting turns under that name would be a substitution nobody
+    // could see in a dashboard.
+    expect(runMetrics([row({ turns: 9 })]).trajectory.toolCalls).toBeNull();
   });
 });

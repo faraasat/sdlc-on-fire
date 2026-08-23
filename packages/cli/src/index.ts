@@ -64,7 +64,9 @@ import { discoverPlugins, formatPlugins, projectRootFromArgv, registerPlugins } 
 import { serve } from './serve.js';
 import {
   agentRunReport,
+  blockedReport,
   formatAgentRuns,
+  formatBlocked,
   doraFromWorkspace,
   flowReport,
   formatDora,
@@ -2643,6 +2645,15 @@ export function buildProgram(): Command {
     .action(async (options: { json?: boolean }) => {
       const report = await agentRunReport(root());
       emit(report, options.json === true, formatAgentRuns);
+    });
+
+  metrics
+    .command('blocked')
+    .description('time each work item spent waiting on a gate')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }) => {
+      const report = await blockedReport(root());
+      emit(report, options.json === true, formatBlocked);
     });
 
   metrics

@@ -23,8 +23,48 @@ export interface RunRow {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly costUsd: number | null;
+  readonly cacheReadTokens: number | null;
+  readonly cacheCreationTokens: number | null;
+  readonly turns: number | null;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
+}
+
+/**
+ * How much of what was sent came out of the prompt cache (FEAT-MET-011).
+ *
+ * The denominator is everything the provider had to take in — cache reads plus
+ * cache writes plus fresh input. Dividing by fresh input alone would make a run
+ * that cached nothing report a rate of zero *and* a run that cached everything
+ * report infinity, which is the arithmetic of a metric nobody checked.
+ *
+ * Distinct from `packMetrics.cacheableFraction`, and the gap between them is the
+ * useful signal: a pack that is 80% cacheable and never hits is a stable prefix
+ * that is not actually stable.
+ */
+export interface CacheSummary {
+  readonly readTokens: number | null;
+  readonly creationTokens: number | null;
+  /** 0..1, or `null` when no run reported cache accounting at all. */
+  readonly hitRate: number | null;
+  readonly runsReporting: number;
+}
+
+export interface TrajectorySummary {
+  /** Total turns across runs that reported them. `null` when none did. */
+  readonly turns: number | null;
+  readonly turnsPerRun: number | null;
+  readonly runsReporting: number;
+  /**
+   * Tool calls are **not** reported, and this says so rather than substituting
+   * turns for them.
+   *
+   * `--output-format json` carries `num_turns` and no tool-call record. Counting
+   * tool calls needs `stream-json`, which is a different transport contract than
+   * the one verified against the real binary. Reporting turns under the name
+   * "tool calls" would be a substitution invisible in a dashboard.
+   */
+  readonly toolCalls: null;
 }
 
 export interface RunCount {
@@ -61,6 +101,8 @@ export interface RunMetrics {
    * from. A raw list leaves the reader to spot it.
    */
   readonly outliers: readonly RunCount[];
+  readonly cache: CacheSummary;
+  readonly trajectory: TrajectorySummary;
 }
 
 function tally(rows: readonly RunRow[], keyOf: (row: RunRow) => string | null): RunCount[] {
@@ -130,5 +172,37 @@ export function runMetrics(rows: readonly RunRow[]): RunMetrics {
       runs: rows.filter((row) => row.failureReason === reason).length,
     })),
     outliers: runOutliers(byWorkItem),
+    cache: cacheSummary(rows),
+    trajectory: trajectorySummary(rows),
+  };
+}
+
+export function cacheSummary(rows: readonly RunRow[]): CacheSummary {
+  const reporting = rows.filter(
+    (row) => row.cacheReadTokens !== null || row.cacheCreationTokens !== null,
+  );
+  const read = sumOrNull(rows.map((row) => row.cacheReadTokens));
+  const creation = sumOrNull(rows.map((row) => row.cacheCreationTokens));
+  const fresh = sumOrNull(rows.map((row) => row.inputTokens)) ?? 0;
+  const denominator = (read ?? 0) + (creation ?? 0) + fresh;
+
+  return {
+    readTokens: read,
+    creationTokens: creation,
+    // `null`, not 0. No run reporting cache accounting and every run missing the
+    // cache are different facts, and only one of them is a problem to fix.
+    hitRate: reporting.length === 0 || denominator === 0 ? null : (read ?? 0) / denominator,
+    runsReporting: reporting.length,
+  };
+}
+
+export function trajectorySummary(rows: readonly RunRow[]): TrajectorySummary {
+  const reporting = rows.filter((row) => row.turns !== null);
+  const turns = sumOrNull(rows.map((row) => row.turns));
+  return {
+    turns,
+    turnsPerRun: turns === null || reporting.length === 0 ? null : turns / reporting.length,
+    runsReporting: reporting.length,
+    toolCalls: null,
   };
 }

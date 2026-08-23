@@ -655,7 +655,10 @@ export class PostgresStorageAdapter implements StoragePort {
               failure_reason = $5,
               input_tokens = $6,
               output_tokens = $7,
-              cost_usd = $8
+              cost_usd = $8,
+              cache_read_tokens = $9,
+              cache_creation_tokens = $10,
+              turns = $11
         WHERE id = $1 AND status = 'running';`,
       [
         run.id,
@@ -672,6 +675,9 @@ export class PostgresStorageAdapter implements StoragePort {
         run.usage?.inputTokens ?? null,
         run.usage?.outputTokens ?? null,
         run.usage?.costUsd ?? null,
+        run.usage?.cacheReadTokens ?? null,
+        run.usage?.cacheCreationTokens ?? null,
+        run.usage?.turns ?? null,
       ],
     );
   }

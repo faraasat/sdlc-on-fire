@@ -47,7 +47,16 @@ export default defineConfig({
     // failures this replaces were wall-clock, with the assertions never
     // reached. The value is still a timeout and still fails a genuine hang; it
     // is sized for the platform rather than for the fastest one.
-    testTimeout: process.platform === 'win32' ? 30_000 : 5_000,
+    //
+    // Raised from 5s to 15s on 2026-08-24 (P6-INSTRUMENT-03). Not to hide
+    // starvation — `maxWorkers` below is still the control for that — but
+    // because the suite itself grew: two more migrations to apply per PGlite
+    // provision, and ~900 more tests sharing the same six workers. The tell was
+    // a different suite going red on each full run and passing alone, while
+    // `maxWorkers` was already bounded. 15s still fails a genuine hang in
+    // seconds; 5s had stopped being a statement about hanging and started being
+    // one about scheduling luck.
+    testTimeout: process.platform === 'win32' ? 30_000 : 15_000,
 
     // The hook budget was left at Vitest's 10s default while `testTimeout` was
     // raised, and that asymmetry is what actually went red on Windows CI: a
