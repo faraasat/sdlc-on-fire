@@ -166,15 +166,73 @@ export interface InitOptions {
  * decisions about its own documentation, and the polite thing is to add as
  * little as possible to them.
  */
-async function hasOwnConventions(layout: { root: string; docsDir: string }): Promise<boolean> {
-  const hasReadme = await fs.access(path.join(layout.root, 'README.md')).then(
-    () => true,
-    () => false,
-  );
-  if (!hasReadme) return false;
+/**
+ * Files that mean "somebody already works here", counted rather than guessed at.
+ *
+ * The first version of this asked for `README.md` **and** a `docs/` directory
+ * containing at least one `.md`. It was validated against hono, which has
+ * exactly that shape, and it silently failed on every repository that does not:
+ *
+ *   * **flask** — `docs/` full of Sphinx `.rst`, not a single `.md`
+ *   * **cobra**, **ripgrep** — no `docs/` directory at all
+ *   * **got** — its documentation lives in `documentation/`
+ *
+ * All four received the full 28-file greenfield scaffold from `0.1.0-alpha.2`,
+ * which is the exact imposition the detection exists to prevent. The rule was
+ * not wrong about hono; it was a JavaScript-ecosystem assumption about where
+ * documentation lives, dressed as a general test.
+ *
+ * So it counts instead. "Does this directory already contain a project" needs
+ * no opinion about languages, documentation formats or folder names, and an
+ * empty directory answers it as clearly as flask does.
+ */
+const BROWNFIELD_FILE_THRESHOLD = 10;
 
-  const docs = await fs.readdir(layout.docsDir).catch(() => [] as string[]);
-  return docs.some((entry) => entry.endsWith('.md'));
+/** Directories never worth walking into to answer this question. */
+const UNCOUNTED = new Set([
+  '.git',
+  'node_modules',
+  '.sdlc',
+  '.sdlcof',
+  'dist',
+  'build',
+  'target',
+  'vendor',
+]);
+
+/**
+ * Files present under `root`, counted no further than `limit`.
+ *
+ * Exported so the bound is checkable rather than merely claimed: the early stop
+ * is invisible in the brownfield verdict — which is the same either way — and an
+ * optimisation nothing observes is one a later reader deletes as dead weight.
+ */
+export async function countExistingFiles(root: string, limit: number): Promise<number> {
+  let count = 0;
+  const queue: string[] = [root];
+  while (queue.length > 0 && count < limit) {
+    const dir = queue.shift();
+    if (dir === undefined) break;
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (UNCOUNTED.has(entry.name)) continue;
+      if (entry.isDirectory()) {
+        queue.push(path.join(dir, entry.name));
+      } else if (entry.isFile()) {
+        count += 1;
+        // Stops as soon as the answer is decided. A monorepo with 40,000 files
+        // must not pay for a full walk to learn what its tenth file already said.
+        if (count >= limit) return count;
+      }
+    }
+  }
+  return count;
+}
+
+async function hasOwnConventions(layout: { root: string; docsDir: string }): Promise<boolean> {
+  return (
+    (await countExistingFiles(layout.root, BROWNFIELD_FILE_THRESHOLD)) >= BROWNFIELD_FILE_THRESHOLD
+  );
 }
 
 /** One `git config` value, or undefined. Never throws: identity degrades, it does not fail. */

@@ -26,11 +26,25 @@ afterEach(async () => {
   await fs.rm(root, { recursive: true, force: true, ...RM_RETRY });
 });
 
-/** Make the directory look like a project that documents itself. */
+/**
+ * Make the directory look like a project somebody already works in.
+ *
+ * The source files are load-bearing, not decoration. This fixture originally
+ * held a README and one doc, and passed against a detection rule that asked for
+ * `README.md` plus a `docs/` containing Markdown — a rule validated on hono and
+ * on nothing else. That rule shipped in `0.1.0-alpha.2` and gave the full
+ * 28-file scaffold to flask, cobra, ripgrep and got, none of which match that
+ * shape. Detection now counts files instead, so a fixture pretending to be an
+ * established project has to look like one.
+ */
 async function withOwnConventions(): Promise<void> {
   await fs.writeFile(path.join(root, 'README.md'), '# their project\n');
   await fs.mkdir(path.join(root, 'docs'), { recursive: true });
   await fs.writeFile(path.join(root, 'docs', 'CONTRIBUTING.md'), '# how to contribute\n');
+  await fs.mkdir(path.join(root, 'src'), { recursive: true });
+  for (let i = 0; i < 12; i += 1) {
+    await fs.writeFile(path.join(root, 'src', `mod${String(i)}.ts`), '// their code\n');
+  }
 }
 
 const rootMarkdown = async (): Promise<string[]> =>
