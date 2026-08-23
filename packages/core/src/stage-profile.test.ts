@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { LIFECYCLE_STAGES } from './lifecycle.js';
-import { CONTEXT_LAYER_KINDS } from './context.js';
+import { CONTEXT_LAYER_KINDS, EFFORT_TIERS } from './context.js';
 import {
   admitsChunk,
+  applyRetrievalBudget,
   mandatoryLayers,
   matchesGlob,
   resolveStageProfile,
@@ -106,5 +107,78 @@ describe('the glob subset', () => {
     // `docs/a.md` exclude `docs/aXmd`, which is a rule nobody wrote.
     expect(matchesGlob('docs/a.md', 'docs/aXmd')).toBe(false);
     expect(matchesGlob('docs/a.md', 'docs/a.md')).toBe(true);
+  });
+});
+
+describe('per-stage budgets and effort tiers (P6-PERSTAGE-02, FEAT-CTX-015)', () => {
+  it('gives every stage a budget and a tier', () => {
+    for (const stage of LIFECYCLE_STAGES) {
+      const profile = resolveStageProfile(stage);
+      expect(profile.retrievalBudget, stage).toBeGreaterThanOrEqual(0);
+      expect(EFFORT_TIERS, stage).toContain(profile.effortTier);
+    }
+  });
+
+  it('gives a stage with no retrieval a budget of zero', () => {
+    // A stage that may not retrieve and carries a budget of 4000 is two rules
+    // disagreeing, and the one that wins is whichever code path reads first.
+    for (const stage of LIFECYCLE_STAGES) {
+      const profile = resolveStageProfile(stage);
+      if (!profile.layers.includes('retrieval')) {
+        expect(profile.retrievalBudget, stage).toBe(0);
+      }
+    }
+  });
+
+  it('gives a stage that may retrieve a budget above zero', () => {
+    // The mirror of the rule above, and the one that catches a stage silently
+    // retrieving nothing because a ceiling of 0 was left behind.
+    for (const stage of LIFECYCLE_STAGES) {
+      const profile = resolveStageProfile(stage);
+      if (profile.layers.includes('retrieval')) {
+        expect(profile.retrievalBudget, stage).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('stops at the first chunk that does not fit', () => {
+    // Not "skip it and try the next". A smaller, worse chunk squeezing past a
+    // better one that just missed is how a budget quietly reorders the results,
+    // and the ranking is what the retriever was for.
+    const result = applyRetrievalBudget(
+      [
+        { tokens: 60, id: 'best' },
+        { tokens: 50, id: 'big' },
+        { tokens: 5, id: 'tiny' },
+      ],
+      100,
+    );
+    expect(result.admitted.map((c) => c.id)).toEqual(['best']);
+    expect(result.dropped.map((c) => c.id)).toEqual(['big', 'tiny']);
+    expect(result.tokensUsed).toBe(60);
+  });
+
+  it('reports what it dropped rather than discarding it', () => {
+    // A pack silently missing its best chunk because of a ceiling is
+    // indistinguishable from one where retrieval found nothing.
+    const result = applyRetrievalBudget([{ tokens: 500, id: 'a' }], 100);
+    expect(result.admitted).toEqual([]);
+    expect(result.dropped.map((c) => c.id)).toEqual(['a']);
+  });
+
+  it('admits everything when it all fits', () => {
+    const result = applyRetrievalBudget(
+      [
+        { tokens: 10, id: 'a' },
+        { tokens: 10, id: 'b' },
+      ],
+      100,
+    );
+    expect(result.admitted).toHaveLength(2);
+    expect(result.dropped).toEqual([]);
+  });
+
+  it('admits nothing at a budget of zero', () => {
+    expect(applyRetrievalBudget([{ tokens: 1, id: 'a' }], 0).admitted).toEqual([]);
   });
 });

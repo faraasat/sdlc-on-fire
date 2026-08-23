@@ -618,6 +618,9 @@ export interface InstructionsResult {
       readonly stage: string;
       readonly layers: readonly string[];
       readonly docTypes: readonly string[];
+      /** Hard ceiling on retrieved content for this stage (P6-PERSTAGE-02). */
+      readonly retrievalBudget: number;
+      readonly effortTier: string;
       readonly because: string;
     };
   } | null;
@@ -824,6 +827,8 @@ export async function instructions(root: string, id: string): Promise<Instructio
         stage: next,
         layers: [...profile.layers],
         docTypes: [...profile.docTypes],
+        retrievalBudget: profile.retrievalBudget,
+        effortTier: profile.effortTier,
         because: profile.because,
       },
     },
