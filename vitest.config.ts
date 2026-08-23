@@ -48,14 +48,18 @@ export default defineConfig({
     // reached. The value is still a timeout and still fails a genuine hang; it
     // is sized for the platform rather than for the fastest one.
     //
-    // Raised from 5s to 15s on 2026-08-24 (P6-INSTRUMENT-03). Not to hide
-    // starvation — `maxWorkers` below is still the control for that — but
-    // because the suite itself grew: two more migrations to apply per PGlite
-    // provision, and ~900 more tests sharing the same six workers. The tell was
-    // a different suite going red on each full run and passing alone, while
-    // `maxWorkers` was already bounded. 15s still fails a genuine hang in
-    // seconds; 5s had stopped being a statement about hanging and started being
-    // one about scheduling luck.
+    // Raised from 5s to 15s on 2026-08-24 (P6-INSTRUMENT-03), for suite growth:
+    // two more migrations to apply per PGlite provision, and ~900 more tests
+    // sharing the same six workers.
+    //
+    // **Correction, same day.** The evidence originally cited for this — "a
+    // different suite goes red on each full run and passes alone" — turned out
+    // to be the disk filling up, not scheduling. The suites leak their temp
+    // directories, 108GB of abandoned PGlite data had accumulated, and ENOSPC
+    // surfaces as a collection failure that names an innocent file. The raise
+    // still stands on the growth argument and 15s still fails a real hang in
+    // seconds; the flake it was reached for had another cause, and the leak is
+    // filed as P6-SURFACE-13.
     testTimeout: process.platform === 'win32' ? 30_000 : 15_000,
 
     // The hook budget was left at Vitest's 10s default while `testTimeout` was

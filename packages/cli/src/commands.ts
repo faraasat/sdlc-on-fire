@@ -746,21 +746,48 @@ export async function instructions(root: string, id: string): Promise<Instructio
   }
 
   const next = nextStage(preset as Preset, workType, stage);
-  if (next === null) {
+
+  // A card that is not on its own ladder cannot be reasoned about at all —
+  // reported before anything else, because every answer below assumes the stage
+  // is a place this card can actually be.
+  if (!ladder.includes(stage)) {
     return {
       workItem,
       ...claim,
       nextStage: null,
-      terminal: isTerminalStage(stage),
+      terminal: false,
       skill: null,
-      reason: isTerminalStage(stage)
-        ? `${id} is at "${stage}", the end of its ladder — nothing comes next.`
-        : `"${stage}" is not on the ${preset}/${workType} ladder (${ladder.join(' → ')}).`,
+      reason: `"${stage}" is not on the ${preset}/${workType} ladder (${ladder.join(' → ')}).`,
       context: null,
     };
   }
 
-  const skill = skillForStage(next);
+  if (isTerminalStage(stage)) {
+    return {
+      workItem,
+      ...claim,
+      nextStage: null,
+      terminal: true,
+      skill: null,
+      reason: `${id} is at "${stage}", the end of its ladder — nothing comes next.`,
+      context: null,
+    };
+  }
+
+  // THE SKILL FOR THE STAGE THE CARD IS AT, not for the one it is going to.
+  //
+  // This read the next stage's skill until 2026-08-24, so a card at `discovery`
+  // was told to run `spec` — and every ladder's ENTRY stage became structurally
+  // unreachable, because nothing ever advances *into* a first stage. Both
+  // `discovery` and `triage-bug` were dead skills for that reason alone: written,
+  // registered, compiled to six targets, and never dispatchable.
+  //
+  // `lifecycle_state: X` means the card is DOING X. That is what the Kanban
+  // projection already says — `triage` renders as the "Discovery" column, and a
+  // column shows where work *is* — and it is what makes "one skill authors one
+  // stage's behaviour" true rather than off by one. `nextStage` stays in the
+  // result as information; it is no longer what decides the prompt.
+  const skill = skillForStage(stage);
   if (skill === undefined) {
     return {
       workItem,
@@ -769,7 +796,7 @@ export async function instructions(root: string, id: string): Promise<Instructio
       terminal: false,
       skill: null,
       reason:
-        next === 'test'
+        stage === 'test'
           ? // Names the command, not the component. A blind evaluation read
             // "the daemon runs verify", went looking for `sdlc daemon`, and
             // found nothing — the long-running daemon is deferred past v0.1, so
@@ -777,14 +804,14 @@ export async function instructions(root: string, id: string): Promise<Instructio
             // them hunting for something that does not exist. What actually runs
             // verify today is this:
             `No agent is dispatched at the test stage — run \`sdlc verify ${id}\`, which executes the card's own \`verify:\` command and records the result as evidence.`
-          : `No skill drives the "${next}" stage in v0.1.`,
+          : `No skill drives the "${stage}" stage in v0.1.`,
       context: null,
     };
   }
 
   // The stage's profile, resolved once. Everything below that decides what may
   // enter the pack reads it — a second lookup would be a second answer.
-  const profile = resolveStageProfile(next);
+  const profile = resolveStageProfile(stage);
   const skillStable = [skill.role, skill.stop_condition].join('\n\n');
   const cardCore = `# ${workItem.title}\n\n${parsed.body.trim()}`;
 
@@ -824,7 +851,7 @@ export async function instructions(root: string, id: string): Promise<Instructio
             1000,
         ) / 1000,
       profile: {
-        stage: next,
+        stage,
         layers: [...profile.layers],
         docTypes: [...profile.docTypes],
         retrievalBudget: profile.retrievalBudget,

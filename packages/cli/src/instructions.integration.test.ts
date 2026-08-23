@@ -65,8 +65,20 @@ describe('finding the card', () => {
   });
 });
 
-describe('computing the next step', () => {
-  it('walks the standard feature ladder from plan to implement', async () => {
+describe('computing what to do now', () => {
+  /*
+   * The skill is the CURRENT stage's, not the next one's (P6-PAYLOAD-06, founder
+   * call 2026-08-24). This suite asserted the opposite until then — a card at
+   * `plan` was handed the `implement` skill — and the consequence was that every
+   * ladder's ENTRY stage was structurally unreachable, since nothing ever
+   * advances *into* a first stage. `discovery` and `triage-bug` were both dead
+   * skills for that reason alone.
+   *
+   * `lifecycle_state: X` means the card is DOING X. The Kanban projection
+   * already said so: `triage` renders as the "Discovery" column, and a column
+   * shows where work is. `nextStage` is still reported, as information.
+   */
+  it('hands a card at plan the planning skill, and still names what comes next', async () => {
     await writeCard('FEAT-001', {
       title: 'CSV export',
       kind: 'feature',
@@ -76,9 +88,32 @@ describe('computing the next step', () => {
     });
 
     const result = await instructions(root, 'FEAT-001');
+    expect(result.skill?.name).toBe('plan-story');
     expect(result.nextStage).toBe('implement');
     expect(result.terminal).toBe(false);
-    expect(result.skill?.name).toBe('implement');
+  });
+
+  it("hands a card at its ladder entry that stage's own skill", async () => {
+    // The case that was unreachable. A freshly created bug sits at `triage` and
+    // nothing advances into a first stage, so under the old reading its skill
+    // could never be dispatched at all.
+    await writeCard('BUG-010', {
+      title: 'Export breaks across DST',
+      kind: 'bug',
+      preset: 'standard',
+      work_type: 'bug',
+      lifecycle_state: 'triage',
+    });
+
+    const result = await instructions(root, 'BUG-010');
+    expect(result.skill?.name).toBe('triage-bug');
+    expect(result.nextStage).toBe('plan');
+    // The assembly profile follows the same stage the skill does. Resolving it
+    // against `next` would hand a triage prompt the plan stage's doc-type
+    // allowlist — a mismatch invisible in the output, since both are real
+    // profiles and the pack still assembles.
+    expect(result.context?.profile.stage).toBe('triage');
+    expect(result.context?.profile.docTypes).toEqual(['bug', 'spec']);
   });
 
   it('reports a stage that has no skill, rather than guessing', async () => {
@@ -95,8 +130,16 @@ describe('computing the next step', () => {
       lifecycle_state: 'implement',
     });
 
-    const result = await instructions(root, 'FEAT-007');
-    expect(result.nextStage).toBe('test');
+    await writeCard('FEAT-008', {
+      title: 'CSV export',
+      kind: 'feature',
+      preset: 'standard',
+      work_type: 'feature',
+      lifecycle_state: 'test',
+    });
+
+    const result = await instructions(root, 'FEAT-008');
+    expect(result.nextStage).toBe('review');
     expect(result.skill).toBeNull();
     // Not the generic "no skill" line: `test` has a *specific* reason and a
     // remedy, and asserting the specific one is what stops it degrading into
@@ -114,10 +157,17 @@ describe('computing the next step', () => {
       lifecycle_state: 'implement',
     });
 
-    // standard/task is implement → test → review → done: verify comes next,
-    // and verify is the daemon's job.
-    const result = await instructions(root, 'TASK-001');
-    expect(result.nextStage).toBe('test');
+    // standard/task is implement → test → review → done. A card sitting AT
+    // `test` is the one with no agent: verify is the daemon's job.
+    await writeCard('TASK-003', {
+      title: 'Rename a column',
+      kind: 'task',
+      preset: 'standard',
+      work_type: 'task',
+      lifecycle_state: 'test',
+    });
+    const result = await instructions(root, 'TASK-003');
+    expect(result.nextStage).toBe('review');
     expect(result.skill).toBeNull();
     // The reason must name a command the user can actually run.
     expect(result.reason).toMatch(/sdlc verify/);
@@ -167,12 +217,12 @@ describe('computing the next step', () => {
       kind: 'feature',
       preset: 'standard',
       work_type: 'feature',
-      lifecycle_state: 'test',
+      lifecycle_state: 'review',
     });
 
     const result = await instructions(root, 'FEAT-003');
-    expect(result.nextStage).toBe('review');
     expect(result.skill?.name).toBe('review');
+    expect(result.nextStage).toBe('done');
   });
 });
 
@@ -219,7 +269,7 @@ describe('the returned template and context', () => {
       kind: 'feature',
       preset: 'standard',
       work_type: 'feature',
-      lifecycle_state: 'plan',
+      lifecycle_state: 'implement',
     });
 
     const result = await instructions(root, 'FEAT-006');
