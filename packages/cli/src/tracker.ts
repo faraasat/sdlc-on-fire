@@ -11,6 +11,7 @@
  */
 
 import { promises as fs } from 'node:fs';
+import { loadCursors, saveCursors } from '@sdlc-on-fire/db';
 import {
   createGithubPort,
   describeConflicts,
@@ -119,4 +120,61 @@ export function renderSyncReport(report: SyncReport): string {
  */
 export function exitCodeFor(report: SyncReport): number {
   return report.ok ? 0 : 1;
+}
+
+/**
+ * The whole command: load cursors, sync, persist the cursors that were earned.
+ *
+ * Cursors are loaded from and written back to the database on every run. Not
+ * doing so is not a missing optimisation — it is a sync that never converges.
+ * With no cursor, every pair is an unlinked first link, so a workspace that is
+ * perfectly in sync reports a conflict on every item, forever, and the operator
+ * is asked to adjudicate a divergence that does not exist.
+ *
+ * Only cursors for work that actually happened are saved, and a dry run saves
+ * none — `runSync` already declines to mint them, and this loop only writes
+ * what it is given.
+ */
+export async function runTrackerSyncCommand(input: {
+  root: string;
+  repo: string;
+  token: string;
+  locals: readonly LocalItem[];
+  db: CursorDb;
+  since?: string | undefined;
+  policy?: ConflictPolicy | undefined;
+  dryRun?: boolean | undefined;
+}): Promise<SyncReport> {
+  const cursors = await loadCursors(input.db);
+  const report = await trackerSync({
+    repo: input.repo,
+    token: input.token,
+    locals: input.locals,
+    cursors,
+    adopt: (remote) =>
+      Promise.resolve({
+        id: `GH-${remote.id}`,
+        title: remote.title,
+        body: remote.body,
+        closed: remote.closed,
+      }),
+    ...(input.since === undefined ? {} : { since: input.since }),
+    ...(input.policy === undefined ? {} : { policy: input.policy }),
+    ...(input.dryRun === undefined ? {} : { dryRun: input.dryRun }),
+  });
+
+  const earned = report.outcomes
+    .map((outcome) => outcome.cursor)
+    .filter((cursor): cursor is SyncCursor => cursor !== undefined);
+  // Persisted even when the run as a whole was not ok. The items that synced
+  // cleanly did sync, and discarding their cursors because a *different* item
+  // conflicted would re-do that work on the next pass and re-ask the same
+  // question about items that were never in question.
+  if (earned.length > 0) await saveCursors(input.db, earned);
+  return report;
+}
+
+/** The narrow database surface this command needs. */
+export interface CursorDb {
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
 }

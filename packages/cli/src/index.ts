@@ -4,7 +4,7 @@
 // module rather than executing the built binary.
 import { existsSync, realpathSync } from 'node:fs';
 import { formatViews, listViews } from './views.js';
-import { exitCodeFor, renderSyncReport, resolveToken, trackerSync } from './tracker.js';
+import { exitCodeFor, renderSyncReport, resolveToken, runTrackerSyncCommand } from './tracker.js';
 import { formatExport, runExport } from './export.js';
 import { archiveChange, checkSpecs, formatSpecCheck, newChange, newSpec } from './spec.js';
 import { formatMap, runMap } from './map.js';
@@ -50,6 +50,7 @@ import {
   syncBatch,
   hooksInstall,
   listWorkItems,
+  openWorkspaceDatabase,
   claimWorkItem,
   captureItem,
   triageItem,
@@ -542,29 +543,28 @@ export function buildProgram(): Command {
         }
         const token = await resolveToken();
         const { items } = await listWorkItems(root());
-        const report = await trackerSync({
-          repo: options.repo,
-          token,
-          locals: items.map((item) => ({
-            id: item.id,
-            title: item.title,
-            body: '',
-            closed: item.lifecycleState === 'done',
-          })),
-          cursors: new Map(),
-          adopt: (remote: { id: string; title: string; body: string; closed: boolean }) =>
-            Promise.resolve({
-              id: `GH-${remote.id}`,
-              title: remote.title,
-              body: remote.body,
-              closed: remote.closed,
-            }),
-          ...(options.since === undefined ? {} : { since: options.since }),
-          policy,
-          dryRun: options.dryRun === true,
-        });
-        emit(report, options.json === true, renderSyncReport);
-        process.exitCode = exitCodeFor(report);
+        const { db } = await openWorkspaceDatabase(root());
+        try {
+          const report = await runTrackerSyncCommand({
+            root: root(),
+            repo: options.repo,
+            token,
+            db,
+            locals: items.map((item) => ({
+              id: item.id,
+              title: item.title,
+              body: '',
+              closed: item.lifecycleState === 'done',
+            })),
+            ...(options.since === undefined ? {} : { since: options.since }),
+            policy,
+            dryRun: options.dryRun === true,
+          });
+          emit(report, options.json === true, renderSyncReport);
+          process.exitCode = exitCodeFor(report);
+        } finally {
+          await db.close();
+        }
       },
     );
 
