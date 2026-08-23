@@ -278,6 +278,34 @@ export const WriteTestsOutputSchema = z
   })
   .strict();
 
+export const SecurityReviewOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    surfaces: z.array(z.string().min(1)),
+    findings: z.array(
+      z.object({
+        surface: z.string().min(1),
+        severity: z.enum(['low', 'medium', 'high', 'critical']),
+        /** The attacker's path, step by step. A finding without one is a smell, not a vulnerability. */
+        attack: z.string().min(1),
+        impact: z.string().min(1),
+        smallest_fix: z.string().min(1),
+      }),
+    ),
+    /**
+     * Where the reviewer did not look.
+     *
+     * Required, and not defaulted. An unstated gap reads as a clean bill of
+     * health, and "I did not examine the session store" is the sentence that
+     * makes the difference between a review and an impression.
+     */
+    not_examined: z.array(z.string().min(1)),
+  })
+  // No verdict field, deliberately. Sign-off belongs to a human in the security
+  // or eng-lead role and the `approvals` trigger refuses an agent outright; a
+  // schema with an `approved` boolean would invite the model to fill it in.
+  .strict();
+
 export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/spec-output.schema.json': SpecOutputSchema,
   'schemas/implement-output.schema.json': ImplementOutputSchema,
@@ -290,6 +318,7 @@ export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/architecture-output.schema.json': ArchitectureOutputSchema,
   'schemas/implementation-planning-output.schema.json': ImplementationPlanningOutputSchema,
   'schemas/write-tests-output.schema.json': WriteTestsOutputSchema,
+  'schemas/security-review-output.schema.json': SecurityReviewOutputSchema,
 };
 
 export function resolveOutputSchema(ref: string): z.ZodType | undefined {

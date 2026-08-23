@@ -21,6 +21,9 @@ import {
 } from '@sdlc-on-fire/evidence';
 import { findWorkItem, openWorkspaceDatabase, readConfig, treeContext } from './commands.js';
 import { readEchoApproval, readEchoBack } from './echo.js';
+import { checkSecurityReview } from './security-gate-check.js';
+import { changedFiles, defaultGit } from './risk.js';
+import type { ChangedFile } from '@sdlc-on-fire/core';
 import { attestItem } from './attest.js';
 import { versionOf, writeCardIfUnchanged } from './lifecycle-write.js';
 import { currentDirtyTreeHash, runVerify } from './verify.js';
@@ -392,6 +395,50 @@ export async function advanceWorkItem(
         );
         if (!verdict.ok) refusals.push(`echo-back: ${verdict.reason}`);
       }
+    }
+
+    // 1a-bis. The security-review gate (FEAT-SEC-006, P6-PAYLOAD-03).
+    //
+    // Evaluated here rather than folded into `evaluateGate` below, because that
+    // call passes an empty approvals array — a role requirement added to the
+    // policy there would be unsatisfiable however many people approved.
+    //
+    // Until this existed the requirement was computed, printed by `sdlc risk`,
+    // and enforced nowhere: `withSecurityReview` and `securityReviewSatisfied`
+    // had only test callers. "Evidence gates, enforced not advisory" is the
+    // product's whole positioning, and this was the gate that was advisory.
+    const changedForRisk = await changedFiles('HEAD', defaultGit(layout.root)).catch(
+      () => [] as readonly ChangedFile[],
+    );
+    if (changedForRisk.length > 0) {
+      const securityApprovals = await db.query<{
+        actor_id: string;
+        kind: string;
+        role_key: string | null;
+        decision: string;
+        revoked_at: Date | string | null;
+      }>(
+        `SELECT ap.actor_id, ac.kind, r.key AS role_key, ap.decision, ap.revoked_at
+           FROM approvals ap
+           JOIN gates g ON g.id = ap.gate_id
+           JOIN actors ac ON ac.id = ap.actor_id
+           LEFT JOIN roles r ON r.id = ap.role_id
+          WHERE g.work_item_id = $1;`,
+        [id],
+      );
+      const outcome = checkSecurityReview(
+        changedForRisk,
+        securityApprovals.map((row) => ({
+          actorId: row.actor_id,
+          actorKind: row.kind === 'agent' ? ('agent' as const) : ('human' as const),
+          roleId: row.role_key,
+          decision:
+            row.decision === 'approve' ? ('approve' as const) : ('request-changes' as const),
+          revokedAt: row.revoked_at === null ? undefined : String(row.revoked_at),
+        })),
+        id,
+      );
+      if (outcome.refusal !== null) refusals.push(outcome.refusal);
     }
 
     // 1b. Definition of Ready (ADR-0031) — entry criteria, evaluated on the way

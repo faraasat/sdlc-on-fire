@@ -11,6 +11,7 @@ import {
   PLAN_STORY_SKILL,
 } from './planning.js';
 import { WRITE_TESTS_SKILL } from './write-tests.js';
+import { SECURITY_REVIEW_SKILL } from './security-review.js';
 
 /**
  * The canonical stage skills (P1-SKILL-01).
@@ -130,6 +131,7 @@ export const CANONICAL_SKILLS: Readonly<Record<string, CanonicalSkill>> = {
   architecture: ARCHITECTURE_SKILL,
   'implementation-planning': IMPLEMENTATION_PLANNING_SKILL,
   'write-tests': WRITE_TESTS_SKILL,
+  'security-review': SECURITY_REVIEW_SKILL,
 };
 
 export function getSkill(name: string): CanonicalSkill | undefined {

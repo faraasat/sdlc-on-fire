@@ -21,7 +21,7 @@ const run = promisify(execFile);
 
 export type GitRunner = (args: readonly string[]) => Promise<string>;
 
-const defaultGit =
+export const defaultGit =
   (cwd: string): GitRunner =>
   async (args) => {
     const { stdout } = await run('git', [...args], { cwd, maxBuffer: 64 * 1024 * 1024 });

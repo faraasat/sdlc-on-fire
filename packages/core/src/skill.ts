@@ -95,6 +95,8 @@ export const SKILL_SITUATIONS = [
   'oversized-story',
   /** A required test tier has no files. Not a stage: it is a gate result. */
   'tier-unsatisfied',
+  /** The diff touched auth, payments, migrations or another tracked surface. */
+  'high-risk-surface',
 ] as const;
 export const SkillSituationSchema = z.enum(SKILL_SITUATIONS);
 export type SkillSituation = z.infer<typeof SkillSituationSchema>;

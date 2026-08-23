@@ -210,6 +210,7 @@ describe('exactly one trigger (contract 04 §2.1, P2-SKILL-07)', () => {
       'crosses-module-boundary',
       'oversized-story',
       'tier-unsatisfied',
+      'high-risk-surface',
     ]);
   });
 });

@@ -32,6 +32,7 @@ describe('canonical skills', () => {
       'resolve-conflict',
       'retrospective',
       'review',
+      'security-review',
       'spec',
       'write-tests',
     ]);
