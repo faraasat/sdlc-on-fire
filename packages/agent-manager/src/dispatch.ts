@@ -2,9 +2,12 @@ import { execFile } from 'node:child_process';
 import { resolveOutputSchema } from './skills/output-schemas.js';
 import {
   assertWithinDepth,
+  failureReasonFor,
   runStatusFor,
   type CanonicalSkill,
+  type RunFailureReason,
   type RunRecorder,
+  type RunUsage,
 } from '@sdlc-on-fire/core';
 import { fillSlots } from './prompt.js';
 
@@ -106,7 +109,18 @@ export type AgentTransport = (input: {
   readonly prompt: string;
   readonly cwd: string;
   readonly timeoutMs: number;
-}) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+}) => Promise<{
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  /**
+   * What the invocation cost, if the target says (P6-INSTRUMENT-02).
+   *
+   * Optional at every level, and absent rather than zero when unknown: a
+   * transport that reports nothing must not look like one that spent nothing.
+   */
+  usage?: RunUsage | undefined;
+}>;
 
 /** Fields a skill result must never carry — verifying is the daemon's job, not the agent's. */
 export const FORBIDDEN_OUTPUT_FIELDS = [
@@ -239,12 +253,28 @@ export async function dispatchSkill(
     });
   }
 
-  const settle = async (threw: boolean, exitCode?: number): Promise<void> => {
+  const settle = async (
+    threw: boolean,
+    exitCode?: number,
+    detail?: { readonly cause?: unknown; readonly usage?: RunUsage | undefined },
+  ): Promise<void> => {
     if (recorder === undefined || runId === undefined) return;
+    const status = runStatusFor({ threw, exitCode });
+    // The reason is derived here, from what actually threw, and only for a run
+    // that did not pass (P6-INSTRUMENT-02). Asking the agent why it failed would
+    // produce a fluent sentence, and a hundred fluent sentences do not group.
+    const failureReason: RunFailureReason | undefined =
+      status === 'pass'
+        ? undefined
+        : detail?.cause === undefined
+          ? 'transport'
+          : failureReasonFor(detail.cause);
     await recorder.finish({
       id: runId,
-      status: runStatusFor({ threw, exitCode }),
+      status,
       finishedAt: new Date().toISOString(),
+      ...(failureReason === undefined ? {} : { failureReason }),
+      ...(detail?.usage === undefined ? {} : { usage: detail.usage }),
     });
   };
 
@@ -255,22 +285,40 @@ export async function dispatchSkill(
     // The failure path finishes the row too. Without this every failed run
     // stays `running` for ever, and "currently running" quietly comes to mean
     // "started at some point since the beginning of time".
-    await settle(true);
+    await settle(true, undefined, { cause });
     throw cause;
   }
   const durationMs = Date.now() - startedAt;
+  const usage = result.usage;
 
   if (result.exitCode !== 0) {
-    await settle(false, result.exitCode);
-    throw new DispatchError(request.skill.name, `target exited ${result.exitCode}`, result.stderr);
+    const error = new DispatchError(
+      request.skill.name,
+      `target exited ${result.exitCode}`,
+      result.stderr,
+    );
+    await settle(false, result.exitCode, { cause: error, usage });
+    throw error;
   }
 
-  await settle(false, 0);
+  // Parsed before the run is settled, so a model that broke its output contract
+  // is recorded as `fail` with the reason rather than as a pass. The tokens were
+  // spent either way, so the usage is recorded on both paths — a failed run that
+  // reports no cost is how an agent-loop budget goes missing.
+  let output: Record<string, unknown>;
+  try {
+    output = extractToolOutput(result.stdout, request.skill);
+  } catch (cause) {
+    await settle(false, 1, { cause, usage });
+    throw cause;
+  }
+
+  await settle(false, 0, { usage });
 
   return {
     skill: request.skill.name,
     target,
-    output: extractToolOutput(result.stdout, request.skill),
+    output,
     durationMs,
     raw: result.stdout,
   };
@@ -287,6 +335,41 @@ interface ClaudeCliEnvelope {
   readonly result?: unknown;
   readonly is_error?: unknown;
   readonly subtype?: unknown;
+  /**
+   * What the CLI charged for this invocation.
+   *
+   * Read rather than derived (P6-INSTRUMENT-02, FEAT-MET-008). The comment above
+   * used to say this field was deliberately not coupled to, which was right
+   * while nothing recorded cost and wrong the moment something had to: the
+   * alternative is a per-model price table multiplied by tokens, and that table
+   * is quietly false from the first price change onward.
+   */
+  readonly total_cost_usd?: unknown;
+  readonly usage?:
+    { readonly input_tokens?: unknown; readonly output_tokens?: unknown } | undefined;
+}
+
+/** Pulls usage out of the CLI envelope, keeping only what is actually a number. */
+export function usageFromEnvelope(parsed: unknown): RunUsage | undefined {
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return undefined;
+  const envelope = parsed as ClaudeCliEnvelope;
+  const num = (value: unknown): number | undefined =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+
+  const usage: RunUsage = {
+    ...(num(envelope.usage?.input_tokens) === undefined
+      ? {}
+      : { inputTokens: num(envelope.usage?.input_tokens) }),
+    ...(num(envelope.usage?.output_tokens) === undefined
+      ? {}
+      : { outputTokens: num(envelope.usage?.output_tokens) }),
+    ...(num(envelope.total_cost_usd) === undefined
+      ? {}
+      : { costUsd: num(envelope.total_cost_usd) }),
+  };
+  // An empty object would record "usage was reported and it was nothing",
+  // which is the confusion the nullable columns exist to avoid.
+  return Object.keys(usage).length === 0 ? undefined : usage;
 }
 
 /**
@@ -304,7 +387,12 @@ interface ClaudeCliEnvelope {
  * that crashed before emitting JSON should surface its actual stderr, not a
  * parse error about it.
  */
-function unwrapCliEnvelope(stdout: string): { text: string; failed: boolean; reason?: string } {
+function unwrapCliEnvelope(stdout: string): {
+  text: string;
+  failed: boolean;
+  reason?: string;
+  usage?: RunUsage | undefined;
+} {
   const trimmed = stdout.trim();
   if (!trimmed.startsWith('{')) return { text: stdout, failed: false };
 
@@ -319,7 +407,10 @@ function unwrapCliEnvelope(stdout: string): { text: string; failed: boolean; rea
   }
 
   const envelope = parsed as ClaudeCliEnvelope;
-  if (typeof envelope.result !== 'string') return { text: stdout, failed: false };
+  // Read before the `is_error` branch: a failed invocation still spent tokens,
+  // and a failure that reports no cost is how an agent-loop budget goes missing.
+  const usage = usageFromEnvelope(parsed);
+  if (typeof envelope.result !== 'string') return { text: stdout, failed: false, usage };
 
   if (envelope.is_error === true) {
     // Report the message, not the subtype. Verified against the real CLI
@@ -332,13 +423,14 @@ function unwrapCliEnvelope(stdout: string): { text: string; failed: boolean; rea
     return {
       text: envelope.result,
       failed: true,
+      usage,
       reason:
         detail.length > 0
           ? `target reported is_error: ${detail}`
           : `target reported is_error (subtype ${subtype}, no message)`,
     };
   }
-  return { text: envelope.result, failed: false };
+  return { text: envelope.result, failed: false, usage };
 }
 
 /**
@@ -400,6 +492,8 @@ export function claudeCodeTransport(binary = 'claude'): AgentTransport {
             // failure so `dispatchSkill` raises instead of parsing an apology.
             stderr: unwrapped.failed ? `${stderr}\n${unwrapped.reason ?? ''}`.trim() : stderr,
             exitCode: unwrapped.failed && exitCode === 0 ? 1 : exitCode,
+            // What it actually charged, as the CLI reported it (FEAT-MET-008).
+            ...(unwrapped.usage === undefined ? {} : { usage: unwrapped.usage }),
           });
         },
       );

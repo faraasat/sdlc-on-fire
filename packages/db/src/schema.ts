@@ -333,6 +333,22 @@ export const runs = pgTable(
     contextPackPath: text('context_pack_path'),
     status: text('status'),
     /**
+     * Why a run did not succeed (P6-INSTRUMENT-02, contract 01 §3.5).
+     *
+     * Closed vocabulary, derived at the dispatch boundary from what actually
+     * threw. Free text here would be uncountable, which is the whole point of
+     * the column.
+     */
+    failureReason: text('failure_reason'),
+    /**
+     * Usage as the transport reported it (FEAT-MET-008). Nullable and left NULL
+     * when nothing was reported — cost is recorded, never computed from a price
+     * table that goes stale on the vendor's schedule.
+     */
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    costUsd: numeric('cost_usd', { precision: 12, scale: 6 }),
+    /**
      * v0.1 stopgap for the deferred `already_happened_ledger` (contract §6
      * reconciliation call): PR creation is irreversible even in the walking
      * skeleton, so the URL of an already-opened PR is recorded here. The full
@@ -352,6 +368,10 @@ export const runs = pgTable(
     index('runs_work_item_idx').on(table.workItemId),
     index('runs_updated_at_idx').on(table.updatedAt),
     check('runs_status_check', sql`${table.status} IN ('pending','running','pass','fail','error')`),
+    check(
+      'runs_failure_reason_check',
+      sql`${table.failureReason} IS NULL OR ${table.failureReason} IN ('output-contract','forbidden-claim','transport','timeout','depth-cap')`,
+    ),
   ],
 );
 

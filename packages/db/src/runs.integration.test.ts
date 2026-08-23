@@ -137,3 +137,90 @@ describe('run rows', () => {
     }
   }, 90_000);
 });
+
+describe('run usage and failure reasons (P6-INSTRUMENT-02)', () => {
+  it('records what the transport reported, and NULL when it reported nothing', async () => {
+    // The one confusion the nullable columns exist to prevent: a cost of 0
+    // because nothing was recorded and one because nothing was spent look
+    // identical in a report, and one of them is wrong.
+    const { db, port } = await fresh();
+    try {
+      await port.startRun(START);
+      await port.finishRun({
+        id: 'run-1',
+        status: 'pass',
+        finishedAt: '2026-08-24T10:05:00.000Z',
+        usage: { inputTokens: 1200, outputTokens: 80, costUsd: 0.0431 },
+      });
+      await port.startRun({ ...START, id: 'run-2' });
+      await port.finishRun({ id: 'run-2', status: 'pass', finishedAt: '2026-08-24T10:06:00.000Z' });
+
+      const rows = await db.query<{
+        id: string;
+        input_tokens: number | null;
+        cost_usd: string | null;
+      }>('SELECT id, input_tokens, cost_usd FROM runs ORDER BY id;');
+      const byId = new Map(rows.map((row) => [row.id, row]));
+      expect(byId.get('run-1')?.input_tokens).toBe(1200);
+      expect(Number(byId.get('run-1')?.cost_usd)).toBeCloseTo(0.0431);
+      expect(byId.get('run-2')?.input_tokens).toBeNull();
+      expect(byId.get('run-2')?.cost_usd).toBeNull();
+    } finally {
+      await db.close();
+    }
+  }, 90_000);
+
+  it('refuses a failure reason outside the vocabulary', async () => {
+    // The column's whole value is that it can be counted. Free text here would
+    // be as uncountable as asking the agent why it failed.
+    const { db, port } = await fresh();
+    try {
+      await port.startRun(START);
+      await expect(
+        db.query("UPDATE runs SET failure_reason = 'it got confused' WHERE id = 'run-1';"),
+      ).rejects.toThrow();
+    } finally {
+      await db.close();
+    }
+  }, 90_000);
+
+  it('never stores a failure reason on a run that passed', async () => {
+    // A reason on a passing run is a contradiction, and it would be counted as a
+    // failure by every query that reads the column looking for one.
+    const { db, port } = await fresh();
+    try {
+      await port.startRun(START);
+      await port.finishRun({
+        id: 'run-1',
+        status: 'pass',
+        finishedAt: '2026-08-24T10:05:00.000Z',
+        failureReason: 'transport',
+      });
+      const [row] = await db.query<{ failure_reason: string | null }>(
+        "SELECT failure_reason FROM runs WHERE id = 'run-1';",
+      );
+      expect(row?.failure_reason).toBeNull();
+    } finally {
+      await db.close();
+    }
+  }, 90_000);
+
+  it('stores the reason on a run that failed', async () => {
+    const { db, port } = await fresh();
+    try {
+      await port.startRun(START);
+      await port.finishRun({
+        id: 'run-1',
+        status: 'fail',
+        finishedAt: '2026-08-24T10:05:00.000Z',
+        failureReason: 'forbidden-claim',
+      });
+      const [row] = await db.query<{ failure_reason: string | null }>(
+        "SELECT failure_reason FROM runs WHERE id = 'run-1';",
+      );
+      expect(row?.failure_reason).toBe('forbidden-claim');
+    } finally {
+      await db.close();
+    }
+  }, 90_000);
+});

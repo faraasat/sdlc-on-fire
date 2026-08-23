@@ -49,12 +49,83 @@ export interface RunStart {
   readonly startedAt: string;
 }
 
+/**
+ * Why a run did not succeed (P6-INSTRUMENT-02, FEAT-MET-010).
+ *
+ * **Closed, and derived from what actually threw** — never free text, and never
+ * the agent's own account of its failure. A model asked why it failed writes a
+ * fluent sentence, and a hundred fluent sentences do not group; the whole value
+ * of this field is that it can be counted.
+ *
+ * The split that matters is `output-contract` versus `forbidden-claim`. Both are
+ * a schema rejection at the same boundary, and they mean opposite things: the
+ * first is a model that could not produce the shape, the second is a model that
+ * tried to certify its own work. One is a prompt problem and the other is the
+ * thing this product exists to prevent, and a single "invalid output" bucket
+ * would hide the second inside the first.
+ */
+export const RUN_FAILURE_REASONS = [
+  'output-contract',
+  'forbidden-claim',
+  'transport',
+  'timeout',
+  'depth-cap',
+] as const;
+export type RunFailureReason = (typeof RUN_FAILURE_REASONS)[number];
+
+/**
+ * What a dispatch cost, as the transport reported it (FEAT-MET-008).
+ *
+ * Every field optional and left absent rather than zeroed. A cost of 0 because
+ * nothing was recorded and one because nothing was spent render identically, and
+ * one of them is wrong — the same rule the DORA report already follows.
+ *
+ * Cost is **recorded, not computed**. The obvious implementation is a per-model
+ * price table times token counts, and it decays: prices change on the vendor's
+ * schedule and a stale table reports a confident number that is quietly false.
+ * The Claude CLI already returns `total_cost_usd` per invocation.
+ */
+export interface RunUsage {
+  readonly inputTokens?: number | undefined;
+  readonly outputTokens?: number | undefined;
+  readonly costUsd?: number | undefined;
+}
+
 /** How a run ended. */
 export interface RunFinish {
   readonly id: string;
   readonly status: RunOutcome;
   readonly finishedAt: string;
   readonly prUrl?: string | undefined;
+  /** Only on `fail`/`error`. A reason on a passing run is a contradiction. */
+  readonly failureReason?: RunFailureReason | undefined;
+  readonly usage?: RunUsage | undefined;
+}
+
+/**
+ * Classifies a thrown dispatch failure.
+ *
+ * Keyed on the error's `name` rather than on `instanceof`: the error classes
+ * live in `agent-manager`, this is `core`, and making core depend on the layer
+ * above it to name a failure would invert the dependency for a string compare.
+ * The names are stable — they are the `override readonly name` on each class.
+ */
+export function failureReasonFor(cause: unknown): RunFailureReason {
+  const error = cause as { name?: unknown; message?: unknown };
+  const name = typeof error?.name === 'string' ? error.name : '';
+  const message = typeof error?.message === 'string' ? error.message : '';
+
+  if (name === 'OutputContractError') {
+    // The forbidden-field guard produces this exact phrase, and it is the one
+    // rejection that means the agent tried to certify its own work.
+    return /claims verification results/.test(message) ? 'forbidden-claim' : 'output-contract';
+  }
+  if (/depth/i.test(message) && /(?:cap|limit|exceed)/i.test(message)) return 'depth-cap';
+  // Node reports a killed child as ETIMEDOUT / SIGTERM; the transport's own
+  // timeout says so in words. Checked before `transport`, since a timeout is a
+  // transport failure and the more specific answer is the useful one.
+  if (/timed? ?out|ETIMEDOUT|SIGTERM/i.test(message)) return 'timeout';
+  return 'transport';
 }
 
 /**

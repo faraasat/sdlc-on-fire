@@ -649,9 +649,30 @@ export class PostgresStorageAdapter implements StoragePort {
   async finishRun(run: RunFinish): Promise<void> {
     await this.#executor.query(
       `UPDATE runs
-          SET status = $2, finished_at = $3, pr_url = COALESCE($4, pr_url)
+          SET status = $2,
+              finished_at = $3,
+              pr_url = COALESCE($4, pr_url),
+              failure_reason = $5,
+              input_tokens = $6,
+              output_tokens = $7,
+              cost_usd = $8
         WHERE id = $1 AND status = 'running';`,
-      [run.id, run.status, run.finishedAt, run.prUrl ?? null],
+      [
+        run.id,
+        run.status,
+        run.finishedAt,
+        run.prUrl ?? null,
+        // Only on a failing run. A reason on a passing one is a contradiction,
+        // and it would be counted as a failure by every query that reads this
+        // column looking for one (P6-INSTRUMENT-02).
+        run.status === 'pass' ? null : (run.failureReason ?? null),
+        // NULL, not 0, when the transport reported nothing. Zero cost because
+        // nothing was recorded and zero because nothing was spent render
+        // identically, and one of them is wrong.
+        run.usage?.inputTokens ?? null,
+        run.usage?.outputTokens ?? null,
+        run.usage?.costUsd ?? null,
+      ],
     );
   }
 

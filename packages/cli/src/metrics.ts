@@ -19,6 +19,9 @@ import {
   flowEfficiency,
   formatDora,
   leadTime,
+  runMetrics,
+  type RunMetrics,
+  type RunRow,
   rework,
   stageStats,
   visitsByCard,
@@ -170,3 +173,116 @@ export async function doraFromWorkspace(
 }
 
 export { formatDora };
+
+/**
+ * `sdlc metrics agents` (P6-INSTRUMENT-02; FEAT-MET-003/008/010).
+ *
+ * Reads the run rows P6-WRITEPATH-01 started writing. Before that this report
+ * could only ever have said zero, which is why it was not built earlier: a
+ * dashboard over an empty table is the failure mode this phase exists to close,
+ * not a head start on it.
+ */
+export async function agentRunReport(root: string): Promise<RunMetrics> {
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    const rows = await db.query<{
+      id: string;
+      work_item_id: string;
+      skill_id: string | null;
+      status: string | null;
+      failure_reason: string | null;
+      input_tokens: number | null;
+      output_tokens: number | null;
+      cost_usd: string | number | null;
+      started_at: string | null;
+      finished_at: string | null;
+    }>(
+      `SELECT id, work_item_id, skill_id, status, failure_reason,
+              input_tokens, output_tokens, cost_usd,
+              started_at::text AS started_at, finished_at::text AS finished_at
+         FROM runs ORDER BY started_at ASC;`,
+    );
+
+    return runMetrics(
+      rows.map((row): RunRow => ({
+        id: row.id,
+        workItemId: row.work_item_id,
+        skillId: row.skill_id,
+        status: row.status,
+        failureReason: row.failure_reason,
+        inputTokens: row.input_tokens === null ? null : Number(row.input_tokens),
+        outputTokens: row.output_tokens === null ? null : Number(row.output_tokens),
+        // NUMERIC comes back as a string from both drivers. `Number(null)` is
+        // 0, which would turn "no cost recorded" into "cost was zero" — the
+        // one confusion the nullable column exists to prevent.
+        costUsd: row.cost_usd === null ? null : Number(row.cost_usd),
+        startedAt: row.started_at,
+        finishedAt: row.finished_at,
+      })),
+    );
+  } finally {
+    await db.close().catch(() => undefined);
+  }
+}
+
+export function formatAgentRuns(report: RunMetrics): string {
+  if (report.runs === 0) {
+    // Deliberately does not name a command. The first version said "dispatched
+    // through `sdlc advance`" and that was false: `advance` moves a stage, it
+    // does not dispatch. Naming a command that would not have produced a row
+    // sends a reader to check the one thing that was never going to help.
+    return 'no agent runs recorded yet — nothing has dispatched a skill in this workspace.';
+  }
+
+  const lines = [`${String(report.runs)} agent run(s)`, ''];
+
+  lines.push('by work item:');
+  for (const count of report.byWorkItem.slice(0, 10)) {
+    lines.push(
+      `  ${count.key}: ${String(count.runs)} run(s) — ${String(count.passed)} passed, ${String(count.failed)} failed, ${String(count.errored)} errored`,
+    );
+  }
+
+  if (report.outliers.length > 0) {
+    lines.push('', 'unusually many runs (at least double the median):');
+    // The whole point of counting runs. A card at eleven attempts is a proxy for
+    // a spec nobody could work from, and it is invisible in a sorted list.
+    for (const outlier of report.outliers) {
+      lines.push(`  ${outlier.key}: ${String(outlier.runs)} run(s)`);
+    }
+  }
+
+  lines.push('', 'by skill:');
+  for (const count of report.bySkill.slice(0, 10)) {
+    lines.push(`  ${count.key}: ${String(count.runs)} run(s)`);
+  }
+
+  lines.push('', 'cost:');
+  if (report.cost.totalUsd === null) {
+    // Not "$0.00". A transport that reports nothing and one that spent nothing
+    // render identically, and one of them is excellent news.
+    lines.push('  not available — no run reported usage');
+  } else {
+    lines.push(
+      `  $${report.cost.totalUsd.toFixed(4)} over ${String(report.cost.runsWithUsage)} of ${String(report.cost.runs)} run(s)`,
+    );
+    if (report.cost.runsWithUsage < report.cost.runs) {
+      lines.push('  (partial — the rest reported no usage, so the total is a floor)');
+    }
+    if (report.cost.inputTokens !== null || report.cost.outputTokens !== null) {
+      lines.push(
+        `  tokens: ${String(report.cost.inputTokens ?? 0)} in, ${String(report.cost.outputTokens ?? 0)} out`,
+      );
+    }
+  }
+
+  const failures = report.failureReasons.filter((entry) => entry.runs > 0);
+  lines.push('', 'failure reasons:');
+  if (failures.length === 0) {
+    lines.push('  none — every recorded run passed');
+  } else {
+    for (const entry of failures) lines.push(`  ${entry.reason}: ${String(entry.runs)}`);
+  }
+
+  return lines.join('\n');
+}

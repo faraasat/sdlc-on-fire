@@ -62,7 +62,14 @@ import {
 } from './commands.js';
 import { discoverPlugins, formatPlugins, projectRootFromArgv, registerPlugins } from './plugins.js';
 import { serve } from './serve.js';
-import { doraFromWorkspace, flowReport, formatDora, formatFlow } from './metrics.js';
+import {
+  agentRunReport,
+  formatAgentRuns,
+  doraFromWorkspace,
+  flowReport,
+  formatDora,
+  formatFlow,
+} from './metrics.js';
 import { advanceWorkItem } from './advance.js';
 import { reopenWorkItem, verifyWorkItem } from './advance.js';
 import { auditDependencies } from './audit.js';
@@ -2627,6 +2634,15 @@ export function buildProgram(): Command {
     .action(async (options: { json?: boolean }) => {
       const report = await flowReport(root());
       emit(report, options.json === true, formatFlow);
+    });
+
+  metrics
+    .command('agents')
+    .description('agent-run count, cost and failure reasons, from the recorded runs')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }) => {
+      const report = await agentRunReport(root());
+      emit(report, options.json === true, formatAgentRuns);
     });
 
   metrics
