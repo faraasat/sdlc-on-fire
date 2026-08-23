@@ -1,8 +1,8 @@
 # @sdlc-on-fire/evidence
 
-Parses real tool output into typed evidence, and decides whether a gate opens. 236 exports across 52 files. This is the package the product is actually about.
+Turns real tool output into typed evidence, then decides whether a gate may open. A claim is not evidence here.
 
-> **Internal package, prerelease `0.1.0-alpha.0`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
+> **Internal package, prerelease `0.1.0-alpha.1`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
 
 ## `evaluateGate` is pure and three-valued
 

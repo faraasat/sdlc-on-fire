@@ -1,8 +1,8 @@
 # @sdlc-on-fire/core
 
-Schemas, pure decision logic, and the `StoragePort` interface. 762 exports across 128 files, one runtime dependency (`zod`), and no I/O anywhere in the package.
+The schemas, the pure decision logic, and the `StoragePort` every reader and writer goes through.
 
-> **Internal package, prerelease `0.1.0-alpha.0`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
+> **Internal package, prerelease `0.1.0-alpha.1`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
 
 ## Why there is no filesystem access in here
 

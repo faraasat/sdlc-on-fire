@@ -13,12 +13,45 @@ TASK-001: BLOCKED at "implement" (wanted "test")
   ✗ gate: test failing evidence says the check did not pass — fix the code, then re-verify
 ```
 
-> **Prerelease.** Published under the `next` tag as `0.1.0-alpha.0`. `npm install sdlc-on-fire` will not install this — you have to ask for it by name. Interfaces change without warning, and the [remaining roadmap](#what-is-not-built-yet) is substantial. Kick the tyres; don't build on it.
+> **Prerelease `0.1.0-alpha.1`, and it is now what `npm install sdlc-on-fire` gives you** — `latest` was moved onto it once `alpha.0`'s `tiers` defect was fixed. Interfaces change between alphas and [a real slice is unfinished](#what-is-not-built-yet). Kick the tyres; don't build a company process on it yet.
+
+## You do not live in this CLI
+
+Worth saying early, because most tools in this space get it backwards.
+
+**You work where you already work** — Claude Code, Cursor, Copilot, Gemini, OpenCode, or an MCP client. `sdlc` compiles its skills into whatever agent surface you use, and your agent loads them like any other skill. No new chat window, no new editor, no second place to keep things in sync.
+
+```console
+$ sdlc skills compile --target claude-code
+compiled 5 skill(s) → claude-code
+  ✎ .claude/skills/implement/SKILL.md  (4691 bytes)
+  ✎ .claude/skills/resolve-conflict/SKILL.md  (6362 bytes)
+  ✎ .claude/skills/retrospective/SKILL.md  (2517 bytes)
+  ✎ .claude/skills/review/SKILL.md  (5119 bytes)
+  ✎ .claude/skills/spec/SKILL.md  (4713 bytes)
+```
+
+One canonical source, six targets. Change a skill once and recompile; you are not maintaining six copies by hand and discovering the drift later.
+
+The CLI is the **spine**, not the interface. You touch it to ask what happens next —
+
+```console
+$ sdlc instructions FEAT-001
+FEAT-001 — CSV export for reports
+  stage:  discovery (standard/feature)
+  next:   spec
+  skill:  spec → spec_output
+  tokens: ~110 (98 cacheable, 89%)
+```
+
+— and to let the daemon check the work. Everything in between happens in your agent, in your editor, in the loop you already have.
+
+And notice what the compiled skills deliberately do **not** contain: any instruction to run the tests and report the result. A skill that says *"run the suite and tell me how it went"* has handed grading back to the thing being graded. The `implement` skill says the opposite in as many words — *"Do not report that tests pass — the daemon runs verify and reads the output itself."*
 
 ## Install
 
 ```bash
-npm install -g sdlc-on-fire@next
+npm install -g sdlc-on-fire
 ```
 
 Node 20 or newer. The first `sdlc init` provisions a local PGlite database inside the workspace — no Docker, no connection string, nothing to configure.
@@ -33,7 +66,7 @@ Everything below is real terminal output, copied from a scratch workspace, not a
 $ sdlc init
 Workspace initialised.
   root:    /tmp/demo
-  created: 29 file(s)
+  created: 30 file(s)
   skipped: 0 existing file(s)
   db:      PGlite ready
 ```

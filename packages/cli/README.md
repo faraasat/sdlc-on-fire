@@ -1,152 +1,152 @@
 # sdlc-on-fire
 
-A tool that will not let a coding agent mark its own work done.
+**A daemon that will not let a coding agent mark its own work done.**
 
-Coding agents mark their own work done. They report that tests pass, that the change is complete, that the edge case is handled — and the report comes from the same process that wrote the code, with the same blind spots. When it is wrong, nothing downstream can tell.
+Your agent says the tests pass. It says the edge case is handled, the change is complete, the migration is safe. That report comes from the same process that wrote the code, carrying the same blind spots, and when it is wrong there is nothing downstream that can tell.
 
-This puts a process between the agent and "done". The agent writes the code. The tool runs the checks, reads the output, and decides whether the work item may move.
-
-```console
-$ sdlc advance TASK-001
-TASK-001: BLOCKED at "implement" (wanted "test")
-  ✗ gate: test failing evidence says the check did not pass — fix the code, then re-verify
-```
-
-> **Prerelease — `0.1.0-alpha.0`, published under the `next` tag.** Interfaces change without warning and several subsystems are unfinished. Worth trying; not worth building on yet.
-
-## Install
-
-```bash
-npm install -g sdlc-on-fire@next
-```
-
-Node 20 or newer. `sdlc init` provisions a local PGlite database inside the workspace — no Docker, no connection string.
-
-## A real run
-
-Every block below is copied terminal output, not an illustration.
+This puts something between the agent and the word "done". The agent writes the code. **The daemon runs the checks, reads the real output, and decides whether the work item may move.** Not a linter you can disable, not a prompt asking the model to be careful — a separate process that runs your actual test command and looks at the actual exit code.
 
 ```console
-$ sdlc init
-Workspace initialised.
-  root:    /tmp/demo
-  created: 29 file(s)
-  skipped: 0 existing file(s)
-  db:      PGlite ready
-
-$ sdlc new task "Add CSV export"
-Created TASK-001 at /tmp/demo/kanban/_inbox/TASK-001.md
+$ sdlc advance FEAT-001
+FEAT-001: BLOCKED at "discovery" (wanted "spec")
+  ✗ echo-back: FEAT-001 has not restated what it understood. Building the wrong
+    thing is the most common way this goes wrong, and it is cheapest to catch
+    here — record the restatement, then `sdlc echo approve`.
+  ✗ gate: test failing evidence says the check did not pass — fix the code,
+    then re-verify
 ```
 
-The card declares its own `verify:` command. The tool runs it and reads the output:
+> **Prerelease: `0.1.0-alpha.1`.** Interfaces move between alphas and parts of the product are unfinished — there is [an honest list](#what-is-not-finished) below rather than a roadmap that implies otherwise. Worth trying on a real repo. Not worth building a company process on yet.
+
+---
+
+## You do not live in this CLI
+
+That is the part most tools get backwards, so it is worth saying early.
+
+**You work where you already work** — Claude Code, Cursor, Copilot, Gemini, OpenCode, or an MCP client. `sdlc` compiles its skills into whatever agent surface you use, and your agent loads them the way it loads any other skill. There is no new chat window and no new editor.
 
 ```console
-$ sdlc verify TASK-001
-TASK-001: passed (2/2 tests)
-  command:  node --test --test-reporter=tap test.js
-  exit:     0  (71ms)
-  evidence: #2 recorded by the daemon, not claimed by an agent
+$ sdlc skills compile --target claude-code
+compiled 5 skill(s) → claude-code
+  ✎ .claude/skills/implement/SKILL.md  (4691 bytes)
+  ✎ .claude/skills/resolve-conflict/SKILL.md  (6362 bytes)
+  ✎ .claude/skills/retrospective/SKILL.md  (2517 bytes)
+  ✎ .claude/skills/review/SKILL.md  (5119 bytes)
+  ✎ .claude/skills/spec/SKILL.md  (4713 bytes)
 ```
 
-**Exit 0 is not "tests passed", and it says so.** Point it at a command with no machine-readable output:
+One canonical source, six targets, compiled — not six copies you keep in sync by hand.
+
+The CLI is the **spine**, not the interface. You touch it to ask what happens next and to let the daemon check the work. Everything in between happens in your agent, in your editor, in your normal loop.
+
+And notice what the compiled skills do **not** contain: any instruction to run the tests and report back. That is deliberate. A skill that says *"run the suite and tell me the result"* has handed the grading back to the thing being graded. The `implement` skill says the opposite, in as many words:
+
+> *Do not report that tests pass — the daemon runs verify and reads the output itself.*
+
+---
+
+## The loop
+
+Ask what is next. The answer includes which skill to load and the context to load it with:
 
 ```console
-$ sdlc verify TASK-001
-TASK-001: exited 0 — no test report was parsed, so no test count was observed
+$ sdlc instructions FEAT-001
+FEAT-001 — CSV export for reports
+  stage:  discovery (standard/feature)
+  next:   spec
+  skill:  spec → spec_output
+  tokens: ~110 (98 cacheable, 89%)
+
+Write the spec for FEAT-001. Every acceptance criterion MUST be in
+GIVEN/WHEN/THEN form and MUST be checkable by a command, not by reading.
+State non-goals explicitly.
+```
+
+That `89% cacheable` is not decoration. Packs are assembled stable-content-first so your provider's prompt cache actually hits, and the number is reported so you can see when it stops.
+
+Your agent does the work. Then the daemon checks it — **it runs your command itself**:
+
+```console
+$ sdlc verify FEAT-001
+FEAT-001: FAILED (exit 1)
+  command:  ./run-tests.sh
+  exit:     1  (1694ms)
+  evidence: #1 recorded by the daemon, not claimed by an agent
   ⚠ no test count could be read — this is exit-code-only evidence (confidence 0.6).
     Add a machine-readable reporter to the verify command (e.g. `--reporter=json`
     for Vitest/Jest, or `--test-reporter=tap` for node:test) to record real counts.
 ```
 
-Break the code and the gate closes. `advance` exits non-zero, so CI can depend on it:
+Two things there are the whole point. **"recorded by the daemon, not claimed by an agent"** — the evidence has a provenance, and a claim is not evidence. And the warning: an exit code alone is weak evidence, so it is scored 0.6 and *says so*, with the fix. A tool that silently treated `exit 0` as "tests passed" is how you end up trusting a suite that ran zero tests.
+
+Then the gate decides. Green evidence, and the card moves. Red, and it does not.
+
+---
+
+## Install
+
+```bash
+npm install -g sdlc-on-fire
+```
+
+Node 20+. `sdlc init` provisions a local PGlite database inside the workspace — no Docker, no connection string, no `docker compose up` before you can try anything. Point it at a real Postgres later by setting `database.url`; the schema and every code path are identical.
 
 ```console
-$ sdlc verify TASK-001
-TASK-001: FAILED (exit 1)
-
-$ sdlc advance TASK-001
-TASK-001: BLOCKED at "implement" (wanted "test")
-  ✗ gate: test failing evidence says the check did not pass — fix the code, then re-verify
+$ sdlc init
+Workspace initialised.
+  root:    /tmp/demo
+  created: 30 file(s)
+  db:      PGlite ready
 ```
 
-Fix it, and the same command moves the item. Nothing was asked to reconsider; the evidence changed.
+---
 
-```console
-$ sdlc verify TASK-001
-TASK-001: passed (2/2 tests)
+## Content in git, state in the database
 
-$ sdlc advance TASK-001
-TASK-001: implement → test
+Your specs, plans, decisions and cards are **Markdown and YAML in your repo**. They diff, they review in a PR, they survive this tool being deleted. The database is a mirror — state, embeddings, retrieval indexes — and it is rebuildable from git alone:
+
+```bash
+sdlc db:rebuild   # drops the mirror, reconstructs it from the files
 ```
 
-Every command has a `--json` twin.
+If that command ever cannot reproduce your project, the tool has a bug. That is the invariant, and it is why the database is never allowed to be the only place something lives.
 
-## Commands worth knowing
+---
 
-|                           |                                                                  |
-| ------------------------- | ---------------------------------------------------------------- |
-| `sdlc init`               | Scaffold a workspace. Never overwrites an existing file.         |
-| `sdlc new <kind> <title>` | Create a work item as a Markdown file with typed frontmatter     |
-| `sdlc verify <id>`        | Run the item's own verify command; record what actually happened |
-| `sdlc advance <id>`       | Move to the next stage, if the guards and the gate allow it      |
-| `sdlc queue`              | What can be worked on now, and what is waiting on what           |
-| `sdlc pr <id>`            | A PR title and body rendered from the recorded evidence          |
-| `sdlc deps check`         | Install gate: typosquats, licences, live OSV advisories          |
-| `sdlc scan`               | Secrets and prompt-injection patterns across the workspace       |
-| `sdlc conflicts`          | Lay out both sides of a merge conflict; check a resolution       |
-| `sdlc instructions <id>`  | The next step, its skill prompt, and the assembled context       |
+## Coming from another tool
 
-`sdlc --help` lists all 46.
+You do not have to start over. Point it at what you already have:
 
-## Design rules it actually enforces
-
-- **Evidence is bound to a commit.** Edit a file after the suite passed and the evidence goes stale; the gate asks for a re-run rather than accepting a result describing code that is no longer there.
-- **Markdown in git is the source of truth.** The database is a rebuildable mirror — `sdlc db:rebuild` reconstructs it from the files alone.
-- **Agents are actors, never approvers.** Where a human sign-off is required, the check is on the actor's _kind_. A role can be granted to a service account; "is this a human" cannot be argued with.
-
-## Adding a command without waiting for a release
-
-A package the project depends on can add commands to `sdlc`. Declare it in your own `package.json`:
-
-```json
-{
-  "type": "module",
-  "sdlc-on-fire": { "api": 1, "plugin": "./dist/plugin.js" },
-  "peerDependencies": { "@sdlc-on-fire/core": "^0.1.0" }
-}
+```bash
+sdlc detect          # what is this repo already using?
+sdlc import --from openspec
 ```
 
-and export a `register` that gets the commander program:
+Importers exist for **Spec Kit, OpenSpec, GSD and BMAD**, with per-tool fidelity that is *declared rather than assumed* — the exporter states what it drops, and a round-trip gate fails if reality disagrees with the declaration. That gate caught our own GSD exporter claiming `moderate` fidelity while silently dropping identifiers.
 
-```js
-export const plugin = {
-  name: 'demo',
-  register(program) {
-    program.command('demo').action(() => console.log('from an installed layer'));
-  },
-};
-```
+---
 
-`npm install` is the whole adoption step — there is no list to add yourself to. `sdlc plugins` shows what loaded and, more importantly, what did not:
+## What is not finished
 
-```
-Loaded 1 layer(s):
-  ✓ @acme/demo-layer — Demo layer
+Every feature was audited against the code at a *reachable and tested* bar. **~68% built, ~15% partial, ~16% missing.** The gaps that would affect you most:
 
-Refused 1:
-  ✗ @acme/from-the-future [api-mismatch] plugin targets API 99, this host speaks 1
-```
+- **Five skills ship, not thirty.** `spec`, `implement`, `review`, `retrospective`, `resolve-conflict`. The compiler and all six targets are done; the library is thin. Planning skills (`discovery`, `decompose`, `architecture`) are the next batch.
+- **Retrieval precision is not measured yet.** Hybrid search works and the cache-aware assembly is real, but until precision@k is reported, "a context engine that doesn't rot" is an architecture claim without an instrument behind it.
+- **Agent runs are not recorded.** The table and the API exist; nothing writes rows yet, so the run viewer is empty.
+- **`db:up` / `db:down` do not exist.** Use `sdlc db:rebuild`.
+- **Two-way tracker sync ships for GitHub Issues only.** Linear and Jira are built on the same primitives and waiting on credentials to verify against.
 
-Two things are worth knowing before you rely on it. **Only declared dependencies are loaded** — a package sitting in `node_modules` that nothing depends on is ignored, deliberately, so that cloning a repository and running `sdlc` cannot execute code you never installed. And an **API mismatch refuses rather than warns**, in both directions: a layer built against a different API reports on a contract this host does not implement, and wrong evidence is worse here than a missing layer.
+Nothing above is hidden behind a "coming soon". The full audit, feature by feature, is in the repository.
 
-## Not built yet
+---
 
-No UI — the Kanban board is a directory of Markdown files. No long-running background daemon; the CLI does the work in-process. Skills compile to Claude Code and MCP, and nothing else. Metrics (DORA, cycle time) are planned and unbuilt. And it has not been validated by anyone outside its own repository, which is a release gate it has not passed.
+## Reading the room
 
-Roles and gate policies _are_ enforced as of `0.1.0-alpha.0`: `sdlc access` and `sdlc gates` are real, agents structurally cannot hold a role, and approval quorum is checked per required role rather than as a count.
+If you want the fastest possible path from prompt to code, this is not that — it deliberately adds a step where something checks the work. If you have been burned by an agent that confidently shipped a broken change, that step is the entire product.
 
-Full detail, including the roadmap: [github.com/faraasat/sdlc-on-fire](https://github.com/faraasat/sdlc-on-fire).
+---
 
 ## Licence
 
-MIT.
+MIT. Free forever, no paywalled QA tier, no enterprise edition.

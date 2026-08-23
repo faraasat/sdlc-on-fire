@@ -1,8 +1,8 @@
 # @sdlc-on-fire/importers
 
-Reads other spec-driven tools' formats into one intermediate representation. 58 exports, 16 files.
+Reads other spec-driven tools' formats into one intermediate representation — and states what it drops rather than pretending it dropped nothing.
 
-> **Internal package, prerelease `0.1.0-alpha.0`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
+> **Internal package, prerelease `0.1.0-alpha.1`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
 
 ## Supported, with honest fidelity tiers
 

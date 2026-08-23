@@ -1,8 +1,8 @@
 # @sdlc-on-fire/agent-manager
 
-Canonical skills, the agent surfaces they compile to, and tier routing. 112 exports across 32 files.
+Canonical skills, the six agent surfaces they compile to, and the tier routing that decides which model does what.
 
-> **Internal package, prerelease `0.1.0-alpha.0`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
+> **Internal package, prerelease `0.1.0-alpha.1`.** Published so `sdlc-on-fire` installs resolve. No stability guarantee before `0.1.0` — exports move and disappear between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI.
 
 ## One skill definition, many targets
 
