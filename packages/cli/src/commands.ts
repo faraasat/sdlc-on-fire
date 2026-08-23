@@ -422,7 +422,7 @@ export async function init(root: string, options: InitOptions = {}): Promise<Ini
 }
 
 /** A throw rendered for a person, whatever shape it arrived in. */
-function describeCause(cause: unknown): string {
+export function describeCause(cause: unknown): string {
   if (cause instanceof Error) return cause.message === '' ? cause.name : cause.message;
   if (typeof cause === 'string') return cause;
   try {

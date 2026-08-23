@@ -105,3 +105,41 @@ describe('advance and the security-review gate', () => {
     expect(result.refusals.join('\n')).not.toContain('security-review');
   }, 90_000);
 });
+
+describe('advance records the risk artifacts (P6-WRITEPATH-02)', () => {
+  it('writes a record for the surface it just blocked on', async () => {
+    // `riskCardsFor` has produced cards since P2-SEC-03 and `sdlc risk` has
+    // printed "risk card(s) to create:" ever since. Nothing created them —
+    // seventh read path with no writer this phase, and the tell was in the
+    // output all along.
+    await touchAuth();
+    const result = await advanceWorkItem(root, 'FEAT-001');
+    expect(result.moved).toBe(false);
+    expect(result.riskNotes?.join('\n')).toContain('RISK-001');
+
+    const file = path.join(root, 'kanban', '_risks', 'RISK-001.md');
+    const text = await fs.readFile(file, 'utf8');
+    expect(text).toContain('work_item_id: FEAT-001');
+    expect(text).toContain('surface: auth');
+    expect(text).toContain('status: open');
+  }, 90_000);
+
+  it('does not multiply records across repeated attempts', async () => {
+    // An advance that is blocked gets retried. A writer that appended would turn
+    // one auth risk into one per attempt.
+    await touchAuth();
+    await advanceWorkItem(root, 'FEAT-001');
+    await advanceWorkItem(root, 'FEAT-001');
+    const files = await fs.readdir(path.join(root, 'kanban', '_risks'));
+    expect(files).toEqual(['RISK-001.md']);
+  }, 120_000);
+
+  it('writes nothing for a change that touches no tracked surface', async () => {
+    await fs.mkdir(path.join(root, 'src'), { recursive: true });
+    await fs.writeFile(path.join(root, 'src', 'format.ts'), 'export const n = 1;\n', 'utf8');
+    await run('git', ['add', '-A'], { cwd: root });
+    await advanceWorkItem(root, 'FEAT-001');
+    const files = await fs.readdir(path.join(root, 'kanban', '_risks')).catch(() => []);
+    expect(files).toEqual([]);
+  }, 90_000);
+});

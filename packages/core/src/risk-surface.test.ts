@@ -150,3 +150,34 @@ describe('detectRiskSurfaces — shape of the result', () => {
     expect(surfacesTouched([])).toEqual([]);
   });
 });
+
+describe('plural directory names (P6-WRITEPATH-02)', () => {
+  it('detects the plural forms of the surfaces named after them', () => {
+    // Found while building the risk artifacts: `src/payments/charge.ts` matched
+    // nothing. Some rules already carried `s?` — `secrets?`, `permissions?`,
+    // `migrations?` — and some did not, so the inconsistency was an oversight
+    // rather than a decision. A false negative here is a security gate that does
+    // not fire, which is the most expensive kind of quiet.
+    const plurals: readonly (readonly [string, string])[] = [
+      ['src/payments/charge.ts', 'payments'],
+      ['src/invoices/render.ts', 'payments'],
+      ['src/subscriptions/renew.ts', 'payments'],
+      ['src/uploads/handler.ts', 'uploads'],
+      ['src/attachments/store.ts', 'uploads'],
+      ['src/sessions/create.ts', 'auth'],
+    ];
+    for (const [path, surface] of plurals) {
+      const found = detectRiskSurfaces([{ path }]);
+      expect(
+        found.map((f) => f.surface),
+        path,
+      ).toContain(surface);
+    }
+  });
+
+  it('still requires a path segment, not a substring', () => {
+    // The anchor is unchanged: `s?` widens the word, it does not loosen where
+    // the word has to sit.
+    expect(detectRiskSurfaces([{ path: 'src/prepayments-report.ts' }])).toEqual([]);
+  });
+});

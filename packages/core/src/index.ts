@@ -54,6 +54,7 @@ export * from './secret-scan.js';
 export * from './secret-allowlist.js';
 export * from './risk-surface.js';
 export * from './ui-surface.js';
+export * from './risk-record.js';
 export * from './situations.js';
 export * from './research-subtype.js';
 export * from './license-policy.js';

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   checkEchoBack,
+  detectRiskSurfaces,
   isLifecycleStage,
   isTerminalStage,
   kanbanColumnForStage,
@@ -22,6 +23,8 @@ import {
 import { findWorkItem, openWorkspaceDatabase, readConfig, treeContext } from './commands.js';
 import { readEchoApproval, readEchoBack } from './echo.js';
 import { checkSecurityReview } from './security-gate-check.js';
+import { recordRisks } from './risk-record-store.js';
+import { describeCause } from './commands.js';
 import { changedFiles, defaultGit } from './risk.js';
 import type { ChangedFile } from '@sdlc-on-fire/core';
 import { attestItem } from './attest.js';
@@ -289,6 +292,14 @@ export interface AdvanceResult {
    * under-specified. Under `strict` they arrive in `refusals` instead.
    */
   readonly readiness?: readonly string[] | undefined;
+  /**
+   * What happened to the risk register on this attempt (P6-WRITEPATH-02).
+   *
+   * Reported on refusal *and* on success. A risk that was signed off is still a
+   * risk, and a register that only records what blocked is a register of
+   * arguments rather than of surfaces touched.
+   */
+  readonly riskNotes?: readonly string[] | undefined;
 }
 
 /**
@@ -358,6 +369,7 @@ export async function advanceWorkItem(
     });
 
     const refusals: string[] = [];
+    const riskNotes: string[] = [];
 
     // 0. Whose work is this? Checked before the guards, because "you do not hold
     // this item" is a more useful thing to be told than a gate verdict about an
@@ -439,6 +451,30 @@ export async function advanceWorkItem(
         id,
       );
       if (outcome.refusal !== null) refusals.push(outcome.refusal);
+
+      // The risk artifacts, written here rather than by `sdlc risk`
+      // (P6-WRITEPATH-02, FEAT-SEC-005 "automatically").
+      //
+      // `advance` is already a mutating command and is the moment the risk
+      // actually matters — a query command that wrote files as a side effect
+      // would be a surprise, and one that required a flag would be a feature
+      // called "automatic" that depends on somebody remembering. Recorded even
+      // when the gate passes: a risk that was signed off is still a risk, and
+      // the register is the record of what was touched, not of what blocked.
+      //
+      // Never fails the advance. A register that can stop the work is worse
+      // than none — but the failure is reported, because a writer that quietly
+      // does nothing is how `runs` and the context packs stayed empty.
+      try {
+        const recorded = await recordRisks(layout.root, id, detectRiskSurfaces(changedForRisk));
+        if (recorded.created.length > 0) {
+          riskNotes.push(
+            `recorded ${String(recorded.created.length)} risk artifact(s) under ${recorded.dir}: ${recorded.created.map((r) => `${r.id} (${r.surface}, ${r.severity})`).join(', ')}`,
+          );
+        }
+      } catch (cause) {
+        riskNotes.push(`risk artifacts were NOT recorded: ${describeCause(cause)}`);
+      }
     }
 
     // 1b. Definition of Ready (ADR-0031) — entry criteria, evaluated on the way
@@ -658,6 +694,7 @@ export async function advanceWorkItem(
         moved: false,
         refusals,
         ...(readiness === undefined ? {} : { readiness }),
+        ...(riskNotes.length === 0 ? {} : { riskNotes }),
       };
     }
 
@@ -699,6 +736,7 @@ export async function advanceWorkItem(
       moved: true,
       refusals: [],
       ...(readiness === undefined ? {} : { readiness }),
+      ...(riskNotes.length === 0 ? {} : { riskNotes }),
     };
   } finally {
     await db.close();

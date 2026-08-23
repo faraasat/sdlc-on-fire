@@ -57,7 +57,7 @@ interface SurfaceRule {
 const RULES: readonly SurfaceRule[] = [
   {
     surface: 'auth',
-    path: /(?:^|\/)(?:auth|authn|authz|login|logout|session|oauth|saml|sso|passport|identity)[/.]/i,
+    path: /(?:^|\/)(?:auth|authn|authz|login|logout|sessions?|oauth|saml|sso|passport|identity)[/.]/i,
     label: 'path is authentication code',
   },
   {
@@ -68,7 +68,10 @@ const RULES: readonly SurfaceRule[] = [
   },
   {
     surface: 'payments',
-    path: /(?:^|\/)(?:payment|billing|checkout|invoice|subscription|stripe|paypal|braintree)[/.]/i,
+    // Plurals matter here more than anywhere: `src/payments/` is at least as
+    // common a directory name as `src/payment/`, and it read as clean until
+    // P6-WRITEPATH-02 tried to record a risk for one and got nothing back.
+    path: /(?:^|\/)(?:payments?|billing|checkouts?|invoices?|subscriptions?|stripe|paypal|braintree)[/.]/i,
     label: 'path is payment code',
   },
   {
@@ -89,7 +92,7 @@ const RULES: readonly SurfaceRule[] = [
   },
   {
     surface: 'uploads',
-    path: /(?:^|\/)(?:upload|attachment|multipart|storage-bucket)[/.]/i,
+    path: /(?:^|\/)(?:uploads?|attachments?|multipart|storage-bucket)[/.]/i,
     label: 'path handles file uploads',
   },
   {

@@ -88,6 +88,7 @@ import { detectTools, formatDetect } from './detect.js';
 import { checkDependencies, formatDepsCheck } from './deps.js';
 import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
+import { recordRisks } from './risk-record-store.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
@@ -1746,13 +1747,33 @@ export function buildProgram(): Command {
     .command('risk')
     .description('detect high-risk surfaces in a diff and the review they require (P2-SEC-03)')
     .option('--base <ref>', 'compare against this ref', 'HEAD')
+    // `sdlc advance` records these on its own (P6-WRITEPATH-02). The flag is for
+    // recording a risk against a card without attempting a transition — a review
+    // that found something, not a step that was blocked.
+    .option('--record <work-item-id>', 'write the risk artifacts for this work item')
     .option('--json', 'emit JSON')
-    .action(async (options: { base?: string; json?: boolean }): Promise<void> => {
+    .action(async (options: { base?: string; record?: string; json?: boolean }): Promise<void> => {
       const result = await checkRisk(root(), {
         ...(options.base === undefined ? {} : { base: options.base }),
       });
-      emit(result, options.json === true, (r: Awaited<ReturnType<typeof checkRisk>>) =>
-        formatRisk(r),
+      if (options.record === undefined) {
+        emit(result, options.json === true, (r: Awaited<ReturnType<typeof checkRisk>>) =>
+          formatRisk(r),
+        );
+        return;
+      }
+      const recorded = await recordRisks(root(), options.record, result.findings);
+      emit(
+        { ...result, recorded },
+        options.json === true,
+        (r: typeof result & { recorded: Awaited<ReturnType<typeof recordRisks>> }) =>
+          [
+            formatRisk(r),
+            '',
+            r.recorded.created.length === 0
+              ? `no new risk artifacts — ${String(r.recorded.alreadyRecorded.length)} already recorded under ${r.recorded.dir}`
+              : `recorded under ${r.recorded.dir}:\n${r.recorded.created.map((rec) => `  ${rec.id} — ${rec.surface} (${rec.severity})`).join('\n')}`,
+          ].join('\n'),
       );
     });
 
