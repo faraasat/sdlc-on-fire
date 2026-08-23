@@ -115,6 +115,11 @@ export const MCP_CAPABILITY_TABLE: readonly CapabilityRow[] = [
   { field: 'description', support: 'mapped', nativeField: 'tools[].description' },
   { field: 'stage', support: 'dropped', note: 'lifecycle concern; daemon-side dispatch' },
   { field: 'situation', support: 'dropped', note: 'as `stage` — dispatch, not artifact' },
+  {
+    field: 'user_invoked',
+    support: 'dropped',
+    note: 'dispatch trigger; the invocation IS the user',
+  },
   { field: 'tier', support: 'dropped', note: 'dispatch-time concern, same as Codex' },
   { field: 'context_pack_spec_ref', support: 'dropped', note: 'MCP resource form deferred (§4.3)' },
   {

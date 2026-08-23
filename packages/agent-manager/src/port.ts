@@ -92,6 +92,9 @@ export const CANONICAL_SKILL_FIELDS = [
   // here, so every adapter's capability table had a hole the totality check
   // could not see — the one failure mode this list exists to make impossible.
   'situation',
+  // Same reason, P6-PAYLOAD-04: a trigger field that no adapter table mentions
+  // is a hole the totality check cannot see.
+  'user_invoked',
   'tier',
   'context_pack_spec_ref',
   'role',

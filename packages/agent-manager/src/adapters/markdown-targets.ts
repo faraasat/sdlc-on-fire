@@ -57,6 +57,11 @@ const DROPPED: readonly CapabilityRow[] = [
   { field: 'schema_version', support: 'dropped', note: 'compiler-side gate; not agent-facing' },
   { field: 'stage', support: 'dropped', note: 'lifecycle concern; daemon-side' },
   { field: 'situation', support: 'dropped', note: 'dispatch trigger; daemon-side' },
+  {
+    field: 'user_invoked',
+    support: 'dropped',
+    note: 'dispatch trigger; the invocation IS the user',
+  },
   { field: 'tier', support: 'dropped', note: 'no effort or model control in this format' },
   { field: 'context_pack_spec_ref', support: 'dropped', note: 'resolved at assembly time' },
   { field: 'constitution_excerpt_ref', support: 'dropped', note: 'resolved into the context pack' },

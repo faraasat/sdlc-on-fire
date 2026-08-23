@@ -163,6 +163,22 @@ export const CanonicalSkillSchema = z
     stage: SkillStageSchema.optional(),
     /** Present on situational skills — dispatched by an event, not by a stage. */
     situation: SkillSituationSchema.optional(),
+    /**
+     * Present on skills nothing dispatches — a person asks for them by name
+     * (contract 04 §2.1, P6-PAYLOAD-04).
+     *
+     * A third kind rather than five more situations. A situation is a condition
+     * something *detects*: `merge-conflict`, `tier-unsatisfied` and
+     * `high-risk-surface` are computed by code that then looks for a skill.
+     * Nothing computes "the user wants to start a project", and five values in a
+     * closed enum that no detector will ever produce read in review exactly like
+     * five dispatch paths that exist.
+     *
+     * Literal `true`, not a boolean: `user_invoked: false` would be a third way
+     * of saying "no trigger", indistinguishable in a diff from having thought
+     * about it.
+     */
+    user_invoked: z.literal(true).optional(),
     tier: SkillTierSchema,
     /** Reference, never an inline copy — pack tuning and skill edits move on different cadences. */
     context_pack_spec_ref: z.string().min(1),
@@ -186,15 +202,17 @@ export const CanonicalSkillSchema = z
     // Exactly one trigger. Neither means nothing dispatches the skill; both
     // means it claims two, and which one wins would be settled by whichever
     // code path read the file first rather than by anything written down.
-    const triggers = [skill.stage, skill.situation].filter((value) => value !== undefined);
+    const triggers = [skill.stage, skill.situation, skill.user_invoked].filter(
+      (value) => value !== undefined,
+    );
     if (triggers.length !== 1) {
       ctx.addIssue({
         code: 'custom',
         path: ['stage'],
         message:
           triggers.length === 0
-            ? 'a skill declares exactly one of `stage` or `situation` — with neither, nothing dispatches it (contract 04 §2.1)'
-            : 'a skill declares exactly one of `stage` or `situation`, never both (contract 04 §2.1)',
+            ? 'a skill declares exactly one of `stage`, `situation` or `user_invoked` — with none, nothing dispatches it (contract 04 §2.1)'
+            : 'a skill declares exactly one of `stage`, `situation` or `user_invoked`, never more (contract 04 §2.1)',
       });
     }
 

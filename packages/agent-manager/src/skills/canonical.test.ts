@@ -1,4 +1,4 @@
-import { CanonicalSkillSchema } from '@sdlc-on-fire/core';
+import { CanonicalSkillSchema, LIFECYCLE_STAGES } from '@sdlc-on-fire/core';
 import { describe, expect, it } from 'vitest';
 import { ClaudeCodeAdapter } from '../adapters/claude-code.js';
 import { runDoctor } from '../doctor.js';
@@ -19,21 +19,29 @@ describe('canonical skills', () => {
   it('ships exactly the skills it claims to', () => {
     // spec + implement (P1-SKILL-01), review (P1-SKILL-02), retrospective
     // (P1-SKILL-03), resolve-conflict (P2-SKILL-07), the five planning
-    // skills (P6-PAYLOAD-01) and write-tests (P6-PAYLOAD-02). `review` was once built but never registered,
-    // which made it invisible to stage resolution — hence this census, and
-    // hence updating it deliberately rather than letting it drift.
+    // skills (P6-PAYLOAD-01), write-tests (P6-PAYLOAD-02), security-review
+    // (P6-PAYLOAD-03) and the six delivery skills (P6-PAYLOAD-04). `review` was
+    // once built but never registered, which made it invisible to stage
+    // resolution — hence this census, and hence updating it deliberately rather
+    // than letting it drift.
     expect(Object.keys(CANONICAL_SKILLS).sort()).toEqual([
       'architecture',
+      'capture',
       'decompose',
       'discovery',
       'implement',
       'implementation-planning',
+      'import',
+      'new-project',
       'plan-story',
+      'pr',
+      'release-notes',
       'resolve-conflict',
       'retrospective',
       'review',
       'security-review',
       'spec',
+      'triage-capture',
       'write-tests',
     ]);
   });
@@ -48,12 +56,42 @@ describe('canonical skills', () => {
   });
 
   it('gives every skill exactly one trigger', () => {
-    // Contract 04 §2.1. Neither means nothing dispatches it; both means it
-    // claims two and which wins is decided by whichever code path reads it.
+    // Contract 04 §2.1. None means nothing dispatches it; more than one means it
+    // claims several and which wins is decided by whichever code path reads it.
     for (const skill of skills) {
-      const triggers = [skill.stage, skill.situation].filter((v) => v !== undefined);
+      const triggers = [skill.stage, skill.situation, skill.user_invoked].filter(
+        (v) => v !== undefined,
+      );
       expect(triggers.length, skill.name).toBe(1);
     }
+  });
+
+  it('keeps the user-invoked set closed', () => {
+    // `user_invoked` is the trigger with no detector behind it, which makes it
+    // the one a skill reaches for when its dispatch was never thought through.
+    // A census, like SKILL_STAGES_OUTSIDE_LIFECYCLE, so adding one is an edit a
+    // reviewer sees rather than a field somebody quietly sets (P6-PAYLOAD-04).
+    const invoked = skills.filter((skill) => skill.user_invoked === true).map((s) => s.name);
+    expect(invoked.sort()).toEqual([
+      'capture',
+      'import',
+      'new-project',
+      'pr',
+      'release-notes',
+      'triage-capture',
+    ]);
+  });
+
+  it('never gives one word two dispatch paths', () => {
+    // `triage` means two things here: `sdlc triage` promotes a capture, and
+    // `triage` is the lifecycle stage bug and dependency-upgrade cards enter at
+    // (the bug-shaped alias for the `discovery` slot). The capture skill is
+    // named `triage-capture` for that reason. This pins it: four times now this
+    // repository has found two copies of a vocabulary that had never been in the
+    // same room, and each time the copies agreed right up until they did not.
+    const byName = Object.keys(CANONICAL_SKILLS);
+    expect(byName).not.toContain('triage');
+    expect(LIFECYCLE_STAGES).toContain('triage');
   });
 
   it('resolves a situation to its skill, separately from stages', () => {

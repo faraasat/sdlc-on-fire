@@ -1,9 +1,17 @@
-import { TEST_TIERS } from '@sdlc-on-fire/core';
+import { PRESETS, TEST_TIERS } from '@sdlc-on-fire/core';
 import { z } from 'zod';
 import { AuthoredHandoffSchema } from '@sdlc-on-fire/core';
 
 /**
  * What each skill's output contract actually means (P1-SKILL-01..03).
+ *
+ * **Every object here is strict, nested ones included** (P6-PAYLOAD-04). The
+ * outer schemas carried `.strict()` from the start; the objects inside their
+ * arrays did not, and Zod strips unknown keys silently rather than refusing
+ * them — so an agent could put a `kind` on a capture, or a `tests_pass` on a
+ * finding, and the field would vanish between the tool call and the record with
+ * nothing said. The strictness was already the intended contract; it was
+ * enforced one level deep. Found by a test written to prove the opposite.
  *
  * Every canonical skill declared a `json_schema_ref` — `schemas/spec-output.schema.json`
  * and friends — and the prompt told the agent its arguments "must validate
@@ -174,8 +182,10 @@ export const DiscoveryOutputSchema = z
   .object({
     work_item_id: z.string().min(1),
     problem: z.string().min(1),
-    affected: z.array(z.object({ who: z.string().min(1), evidence: z.string().min(1) })),
-    constraints: z.array(z.object({ constraint: z.string().min(1), source: z.string().min(1) })),
+    affected: z.array(z.strictObject({ who: z.string().min(1), evidence: z.string().min(1) })),
+    constraints: z.array(
+      z.strictObject({ constraint: z.string().min(1), source: z.string().min(1) }),
+    ),
     open_questions: z.array(z.string().min(1)),
     // Kept apart on purpose: a reader must be able to tell what somebody said
     // from what the agent worked out, and a single list loses that forever.
@@ -188,7 +198,7 @@ export const DecomposeOutputSchema = z
   .object({
     work_item_id: z.string().min(1),
     children: z.array(
-      z.object({
+      z.strictObject({
         title: z.string().min(1),
         kind: z.enum(['story', 'task', 'bug']),
         acceptance_criteria: z.array(z.string().min(1)).min(1),
@@ -206,7 +216,7 @@ export const PlanStoryOutputSchema = z
   .object({
     work_item_id: z.string().min(1),
     steps: z.array(
-      z.object({
+      z.strictObject({
         step: z.string().min(1),
         files: z.array(z.string().min(1)).default([]),
       }),
@@ -221,10 +231,10 @@ export const PlanStoryOutputSchema = z
 export const ArchitectureOutputSchema = z
   .object({
     work_item_id: z.string().min(1),
-    boundaries: z.array(z.object({ module: z.string().min(1), owns: z.string().min(1) })),
+    boundaries: z.array(z.strictObject({ module: z.string().min(1), owns: z.string().min(1) })),
     crossings: z.array(z.string().min(1)).default([]),
     decisions: z.array(
-      z.object({
+      z.strictObject({
         decision: z.string().min(1),
         // Required, both of them. A decision with no rejected alternative was
         // not a decision, and one with no reversal condition cannot be revisited
@@ -241,7 +251,7 @@ export const ImplementationPlanningOutputSchema = z
   .object({
     work_item_id: z.string().min(1),
     sequence: z.array(
-      z.object({
+      z.strictObject({
         step: z.string().min(1),
         preconditions: z.array(z.string().min(1)).default([]),
         /** A checkpoint that cannot fail is not a checkpoint. */
@@ -259,7 +269,7 @@ export const WriteTestsOutputSchema = z
     work_item_id: z.string().min(1),
     tier: z.enum(TEST_TIERS),
     tests: z.array(
-      z.object({
+      z.strictObject({
         file: z.string().min(1),
         name: z.string().min(1),
         /**
@@ -283,7 +293,7 @@ export const SecurityReviewOutputSchema = z
     work_item_id: z.string().min(1),
     surfaces: z.array(z.string().min(1)),
     findings: z.array(
-      z.object({
+      z.strictObject({
         surface: z.string().min(1),
         severity: z.enum(['low', 'medium', 'high', 'critical']),
         /** The attacker's path, step by step. A finding without one is a smell, not a vulnerability. */
@@ -306,6 +316,160 @@ export const SecurityReviewOutputSchema = z
   // schema with an `approved` boolean would invite the model to fill it in.
   .strict();
 
+/* ---------------------------------------------------------------------------
+ * The delivery skills (P6-PAYLOAD-04).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * `new-project`. `open_questions` is required and may be empty only when the
+ * description really did settle everything, which is rare — the field exists so
+ * that "I inferred this" has somewhere to go other than the plan.
+ */
+export const NewProjectOutputSchema = z
+  .object({
+    project_name: z.string().min(1),
+    preset: z.enum(PRESETS),
+    /** Why this preset and not the others. A preset with no reason is a default. */
+    preset_rationale: z.string().min(1),
+    /**
+     * Constitution MUSTs specific to this project. Rules true of all software
+     * are excluded by the prompt, so this list is short by design.
+     */
+    constitution_rules: z.array(z.string().min(1)),
+    first_work_items: z
+      .array(
+        z.strictObject({
+          title: z.string().min(1),
+          kind: z.string().min(1),
+          /** The sentence in the description that put this item here. */
+          grounded_in: z.string().min(1),
+        }),
+      )
+      .min(1),
+    /** Everything inferred rather than read. Frequently longer than the backlog. */
+    open_questions: z.array(z.string().min(1)),
+  })
+  .strict();
+
+/** `capture`. A list, because one observation per capture is the rule. */
+export const CaptureOutputSchema = z
+  .object({
+    captures: z
+      .array(
+        z.strictObject({
+          id: z.string().min(1),
+          /** The observation as it was noticed. Not a summary — the wording is the record. */
+          note: z.string().min(1),
+        }),
+      )
+      .min(1),
+  })
+  // No kind, no parent, no estimate, no stage. Adding any of them here would
+  // reintroduce the classification step `sdlc capture` exists to defer, through
+  // the output contract rather than through the prompt.
+  .strict();
+
+/**
+ * `triage-capture`. This verdict really is the agent's — a capture is being
+ * classified, not approved — and `drop` is a first-class outcome, because an
+ * inbox where everything becomes a work item has moved the backlog, not triaged it.
+ */
+export const TriageCaptureOutputSchema = z
+  .object({
+    capture_id: z.string().min(1),
+    verdict: z.enum(['promote', 'merge', 'drop']),
+    reason: z.string().min(1),
+    /** Set when promoting. The kind decides the lifecycle the card gets. */
+    kind: z.string().min(1).optional(),
+    /** Set when merging: the existing item this capture restates. */
+    merged_into: z.string().min(1).optional(),
+  })
+  .strict()
+  .superRefine((output, ctx) => {
+    // Each verdict names the thing it depends on, or it is not actionable —
+    // "promote" with no kind cannot be run, and "merge" with no target is a drop
+    // wearing a kinder word.
+    if (output.verdict === 'promote' && output.kind === undefined) {
+      ctx.addIssue({ code: 'custom', path: ['kind'], message: 'a promote verdict names the kind' });
+    }
+    if (output.verdict === 'merge' && output.merged_into === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['merged_into'],
+        message: 'a merge verdict names the work item it merges into',
+      });
+    }
+  });
+
+/**
+ * `import`. `unmapped` is required and not defaulted: an import that reports
+ * only its successes reads as complete, and the gap surfaces weeks later as a
+ * document nobody can find.
+ */
+export const ImportOutputSchema = z
+  .object({
+    source: z.string().min(1),
+    written: z.array(z.string().min(1)),
+    conflicts: z.array(z.string().min(1)),
+    /** Source concepts with no equivalent here, and what was lost with each. */
+    unmapped: z.array(
+      z.strictObject({ concept: z.string().min(1), consequence: z.string().min(1) }),
+    ),
+  })
+  .strict();
+
+/**
+ * `pr`. There is deliberately no field for test results, gate status or
+ * evidence: `sdlc pr` renders those from recorded runs, and a place for the
+ * model to describe them is an invitation to describe them.
+ */
+export const PrOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    why: z.string().min(1),
+    approach: z.string().min(1),
+    /** What was deliberately left out. Absent scope decisions read as oversights. */
+    not_in_scope: z.array(z.string().min(1)),
+    /** A specific file and a specific worry. "Review carefully" is not a review request. */
+    review_focus: z
+      .array(z.strictObject({ path: z.string().min(1), concern: z.string().min(1) }))
+      .min(1),
+  })
+  .strict();
+
+/**
+ * `release-notes`. Every entry carries `work_item_id`, required — the unsourced
+ * changelog line is the defect this schema exists to make unwritable.
+ */
+export const ReleaseNotesOutputSchema = z
+  .object({
+    range: z.string().min(1),
+    entries: z.array(
+      z.strictObject({
+        work_item_id: z.string().min(1),
+        /** In the terms of the person affected, not the diff's. */
+        summary: z.string().min(1),
+        breaking: z.boolean(),
+        /** Required when breaking: what a reader must do about it. */
+        migration: z.string().min(1).optional(),
+      }),
+    ),
+  })
+  .strict()
+  .superRefine((output, ctx) => {
+    output.entries.forEach((entry, index) => {
+      // A breaking change with no migration note is the one a user finds out
+      // about by upgrading, which is the case the flag exists to prevent.
+      if (entry.breaking && entry.migration === undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['entries', index, 'migration'],
+          message: 'a breaking entry says what a reader must do about it',
+        });
+      }
+    });
+  });
+
 export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/spec-output.schema.json': SpecOutputSchema,
   'schemas/implement-output.schema.json': ImplementOutputSchema,
@@ -319,6 +483,12 @@ export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/implementation-planning-output.schema.json': ImplementationPlanningOutputSchema,
   'schemas/write-tests-output.schema.json': WriteTestsOutputSchema,
   'schemas/security-review-output.schema.json': SecurityReviewOutputSchema,
+  'schemas/new-project-output.schema.json': NewProjectOutputSchema,
+  'schemas/capture-output.schema.json': CaptureOutputSchema,
+  'schemas/triage-capture-output.schema.json': TriageCaptureOutputSchema,
+  'schemas/import-output.schema.json': ImportOutputSchema,
+  'schemas/pr-output.schema.json': PrOutputSchema,
+  'schemas/release-notes-output.schema.json': ReleaseNotesOutputSchema,
 };
 
 export function resolveOutputSchema(ref: string): z.ZodType | undefined {

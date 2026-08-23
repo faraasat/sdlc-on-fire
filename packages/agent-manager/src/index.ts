@@ -35,3 +35,4 @@ export * from './adapters/markdown-targets.js';
 export * from './skills/planning.js';
 export * from './skills/write-tests.js';
 export * from './skills/security-review.js';
+export * from './skills/delivery.js';

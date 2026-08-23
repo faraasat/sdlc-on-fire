@@ -196,7 +196,33 @@ describe('exactly one trigger (contract 04 §2.1, P2-SKILL-07)', () => {
       situation: 'merge-conflict',
     });
     expect(result.success).toBe(false);
-    expect(JSON.stringify(result)).toContain('never both');
+    expect(JSON.stringify(result)).toContain('never more');
+  });
+
+  it('accepts a user-invoked skill', () => {
+    // Nothing dispatches these; a person asks for them by name. A third kind
+    // rather than more situations, because a situation is a condition something
+    // detects, and nothing computes "the user wants to start a project"
+    // (contract 04 §2.1, P6-PAYLOAD-04).
+    expect(CanonicalSkillSchema.safeParse({ ...base, user_invoked: true }).success).toBe(true);
+  });
+
+  it('refuses `user_invoked: false`', () => {
+    // A literal, not a boolean. `false` would be a second way of saying "no
+    // trigger" — indistinguishable in a diff from having thought about it, and
+    // it would leave the skill undispatchable while looking declared.
+    const result = CanonicalSkillSchema.safeParse({ ...base, user_invoked: false });
+    expect(result.success).toBe(false);
+  });
+
+  it('refuses a user-invoked skill that also claims a stage', () => {
+    const result = CanonicalSkillSchema.safeParse({
+      ...base,
+      stage: 'implement',
+      user_invoked: true,
+    });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).toContain('never more');
   });
 
   it('keeps the situation vocabulary closed', () => {

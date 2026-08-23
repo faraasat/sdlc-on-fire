@@ -12,6 +12,14 @@ import {
 } from './planning.js';
 import { WRITE_TESTS_SKILL } from './write-tests.js';
 import { SECURITY_REVIEW_SKILL } from './security-review.js';
+import {
+  CAPTURE_SKILL,
+  IMPORT_SKILL,
+  NEW_PROJECT_SKILL,
+  PR_SKILL,
+  RELEASE_NOTES_SKILL,
+  TRIAGE_CAPTURE_SKILL,
+} from './delivery.js';
 
 /**
  * The canonical stage skills (P1-SKILL-01).
@@ -132,6 +140,14 @@ export const CANONICAL_SKILLS: Readonly<Record<string, CanonicalSkill>> = {
   'implementation-planning': IMPLEMENTATION_PLANNING_SKILL,
   'write-tests': WRITE_TESTS_SKILL,
   'security-review': SECURITY_REVIEW_SKILL,
+  // P6-PAYLOAD-04. The first `user_invoked` skills: nothing dispatches these,
+  // a person asks for them by name (contract 04 §2.1).
+  'new-project': NEW_PROJECT_SKILL,
+  capture: CAPTURE_SKILL,
+  'triage-capture': TRIAGE_CAPTURE_SKILL,
+  import: IMPORT_SKILL,
+  pr: PR_SKILL,
+  'release-notes': RELEASE_NOTES_SKILL,
 };
 
 export function getSkill(name: string): CanonicalSkill | undefined {

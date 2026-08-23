@@ -47,6 +47,11 @@ export const CLAUDE_CAPABILITY_TABLE: readonly CapabilityRow[] = [
   { field: 'description', support: 'mapped', nativeField: 'description' },
   { field: 'stage', support: 'dropped', note: 'lifecycle concern; daemon-side' },
   { field: 'situation', support: 'dropped', note: 'dispatch trigger; daemon-side, as `stage`' },
+  {
+    field: 'user_invoked',
+    support: 'dropped',
+    note: 'dispatch trigger; the invocation IS the user',
+  },
   { field: 'tier', support: 'mapped', nativeField: 'effort' },
   { field: 'context_pack_spec_ref', support: 'dropped', note: 'resolved at assembly time' },
   { field: 'role', support: 'mapped', nativeField: 'body' },
