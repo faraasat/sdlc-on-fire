@@ -100,6 +100,8 @@ import { checkDependencies, formatDepsCheck } from './deps.js';
 import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
 import { recordRisks } from './risk-record-store.js';
+import { dbDown, dbUp, formatDbDown, formatDbUp } from './db-lifecycle.js';
+import { formatWorkspaceDoctor, workspaceDoctor } from './doctor.js';
 import { formatRetrieval, retrievalReport } from './retrieval-eval-run.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
@@ -575,6 +577,37 @@ export function buildProgram(): Command {
         }
         return lines.join('\n');
       });
+    });
+
+  program
+    .command('doctor')
+    .description('diagnose this workspace: config, content, git, database, runtime')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const report = await workspaceDoctor(root());
+      emit(report, options.json === true, formatWorkspaceDoctor);
+      // A failing diagnosis exits non-zero so a setup script can branch on it.
+      // Exiting 0 while printing "3 checks failed" is the shape of gate that
+      // gets wrapped in `|| true` and then never read again.
+      if (!report.healthy) process.exitCode = 1;
+    });
+
+  program
+    .command('db:up')
+    .description('make the workspace database reachable and migrated')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await dbUp(root());
+      emit(result, options.json === true, formatDbUp);
+    });
+
+  program
+    .command('db:down')
+    .description("release this workspace's hold on its database")
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await dbDown(root());
+      emit(result, options.json === true, formatDbDown);
     });
 
   program

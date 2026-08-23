@@ -42,6 +42,7 @@ import {
 import { estimateTokens } from '@sdlc-on-fire/context';
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import { attestAll, attestItem, type Attestation, type TreeContext } from './attest.js';
+import { explainFilesystemError, explainYamlError } from './setup-errors.js';
 import { currentDirtyTreeHash } from './verify.js';
 import {
   applySchema,
@@ -109,14 +110,30 @@ export interface StatusResult {
 /** Reads and validates `.sdlcof/config.yaml`. Returns `null` when absent. */
 export async function readConfig(root: string): Promise<WorkspaceConfig | null> {
   const layout = resolveWorkspaceLayout(root);
-  let raw: string;
+  // `explainFilesystemError` returns `never`, but the catch is not a terminal
+  // branch to the checker unless the variable is definitely assigned first.
+  let raw = '';
   try {
     raw = await fs.readFile(layout.configPath, 'utf8');
   } catch (cause) {
     if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    throw cause;
+    // Anything else reaching here is a filesystem problem, not a missing file —
+    // and it arrives as a bare errno unless something says what it means.
+    explainFilesystemError(cause, layout.configPath, 'reading the workspace config');
   }
-  const parsed = WorkspaceConfigSchema.safeParse(parseYaml(raw) ?? {});
+
+  // The parse, separately from the schema check (P6-SURFACE-10). Invalid YAML
+  // threw straight out of `parseYaml` with a message naming a line and a column
+  // and no file — the schema path below was carefully worded and the parse path
+  // in front of it was not, so the better message could never be reached.
+  let document: unknown;
+  try {
+    document = parseYaml(raw);
+  } catch (cause) {
+    explainYamlError(cause, layout.configPath, 'the workspace config');
+  }
+
+  const parsed = WorkspaceConfigSchema.safeParse(document ?? {});
   if (parsed.success) return parsed.data;
 
   // Zod's default rendering is a JSON dump of issue objects. Someone who
@@ -255,7 +272,13 @@ export async function init(root: string, options: InitOptions = {}): Promise<Ini
   const alreadyInitialised = (await readConfig(root)) !== null;
 
   const ensureDir = async (dir: string): Promise<void> => {
-    await fs.mkdir(dir, { recursive: true });
+    await fs.mkdir(dir, { recursive: true }).catch((cause: unknown) => {
+      // The first thing `sdlc init` does on a machine, and the failure a new
+      // user is most likely to hit — a read-only path, or a file sitting where
+      // a directory belongs. `EACCES: permission denied, mkdir '<path>'` is
+      // true and useless.
+      explainFilesystemError(cause, dir, 'creating the workspace');
+    });
   };
 
   const ensureFile = async (file: string, contents: string): Promise<void> => {
