@@ -1,6 +1,14 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { detectRiskSurfaces, type ChangedFile, type SurfaceFinding } from '@sdlc-on-fire/core';
+import {
+  detectRiskSurfaces,
+  detectUiSurface,
+  situationsFromDiff,
+  type ChangedFile,
+  type SkillSituation,
+  type SurfaceFinding,
+} from '@sdlc-on-fire/core';
+import { skillForSituation } from '@sdlc-on-fire/agent-manager';
 import {
   requireSecurityReview,
   riskCardsFor,
@@ -62,12 +70,31 @@ export async function changedFiles(base: string, git: GitRunner): Promise<readon
   }));
 }
 
+/** A situation this diff puts the change in, and the skill that answers it. */
+export interface ApplicableSituation {
+  readonly situation: SkillSituation;
+  /** `null` when the situation is detected and no skill claims it — worth saying. */
+  readonly skill: string | null;
+}
+
 export interface RiskCheckResult {
   readonly base: string;
   readonly filesChanged: number;
   readonly findings: readonly SurfaceFinding[];
   readonly requirement: SecurityReviewRequirement;
   readonly cards: readonly RiskCard[];
+  /** UI files touched. Not a risk surface; a reason to look before planning. */
+  readonly uiPaths: readonly string[];
+  /**
+   * The situational skills this diff calls for (P6-PAYLOAD-05).
+   *
+   * `skillForSituation` had **no production caller**. Five situational skills
+   * were written, registered and compiled to six targets, and nothing ever asked
+   * which of them applied — the sixth read path with no writer this phase, and
+   * the same symptom every time: not an error, silence. This is the first thing
+   * that asks.
+   */
+  readonly situations: readonly ApplicableSituation[];
 }
 
 export async function checkRisk(
@@ -85,7 +112,32 @@ export async function checkRisk(
     findings,
     requirement: requireSecurityReview(findings),
     cards: riskCardsFor(findings),
+    uiPaths: detectUiSurface(files.map((file) => file.path)),
+    situations: situationsFromDiff(files).map((situation) => ({
+      situation,
+      skill: skillForSituation(situation)?.name ?? null,
+    })),
   };
+}
+
+/**
+ * The situational skills, rendered after the risk verdict.
+ *
+ * Reported even when nothing is required: `touches-ui` on its own is not a
+ * warning, and printing it only beside a security failure would make an ordinary
+ * UI change look like one.
+ */
+function situationLines(result: RiskCheckResult): readonly string[] {
+  if (result.situations.length === 0) return [];
+  const lines = ['', 'situational skills that apply here:'];
+  for (const applicable of result.situations) {
+    lines.push(
+      applicable.skill === null
+        ? `  ${applicable.situation}: no skill claims this situation`
+        : `  ${applicable.situation} → \`${applicable.skill}\``,
+    );
+  }
+  return lines;
 }
 
 export function formatRisk(result: RiskCheckResult): string {
@@ -93,7 +145,7 @@ export function formatRisk(result: RiskCheckResult): string {
 
   if (!result.requirement.required) {
     lines.push('✓ no high-risk surface touched — no security review required');
-    return lines.join('\n');
+    return [...lines, ...situationLines(result)].join('\n');
   }
 
   lines.push(`⚠ security review REQUIRED — ${result.requirement.reason}`);
@@ -108,5 +160,5 @@ export function formatRisk(result: RiskCheckResult): string {
   for (const card of result.cards) {
     lines.push(`  ${card.title} (${String(card.paths.length)} file(s))`);
   }
-  return lines.join('\n');
+  return [...lines, ...situationLines(result)].join('\n');
 }

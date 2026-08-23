@@ -36,12 +36,14 @@ describe('canonical skills', () => {
       'plan-story',
       'pr',
       'release-notes',
+      'research',
       'resolve-conflict',
       'retrospective',
       'review',
       'security-review',
       'spec',
       'triage-capture',
+      'ui-explore',
       'write-tests',
     ]);
   });
@@ -78,6 +80,7 @@ describe('canonical skills', () => {
       'new-project',
       'pr',
       'release-notes',
+      'research',
       'triage-capture',
     ]);
   });

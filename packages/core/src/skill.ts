@@ -97,6 +97,12 @@ export const SKILL_SITUATIONS = [
   'tier-unsatisfied',
   /** The diff touched auth, payments, migrations or another tracked surface. */
   'high-risk-surface',
+  /**
+   * The change touches the interface. Not a risk surface — `ui-surface.ts` is
+   * separate from `risk-surface.ts` deliberately, since a button label does not
+   * need a security reviewer (P6-PAYLOAD-05).
+   */
+  'touches-ui',
 ] as const;
 export const SkillSituationSchema = z.enum(SKILL_SITUATIONS);
 export type SkillSituation = z.infer<typeof SkillSituationSchema>;

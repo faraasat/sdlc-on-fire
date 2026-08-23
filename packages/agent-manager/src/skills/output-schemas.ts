@@ -1,4 +1,4 @@
-import { PRESETS, TEST_TIERS } from '@sdlc-on-fire/core';
+import { assessSources, PRESETS, RESEARCH_SUBTYPES, TEST_TIERS } from '@sdlc-on-fire/core';
 import { z } from 'zod';
 import { AuthoredHandoffSchema } from '@sdlc-on-fire/core';
 
@@ -470,6 +470,85 @@ export const ReleaseNotesOutputSchema = z
     });
   });
 
+/* ---------------------------------------------------------------------------
+ * The research contracts (P6-PAYLOAD-05).
+ * ------------------------------------------------------------------------- */
+
+/**
+ * `research`. The interesting part is the refinement, not the shape.
+ *
+ * A finding marked `verified` must rest on at least one tier A or B source, and
+ * `assessSources` — the same classifier `sdlc research check` uses — decides
+ * that, not the model. This is ADR-0040 at the dispatch boundary: the agent
+ * proposes findings and their citations, and a deterministic checker disposes of
+ * the claim that they are substantiated.
+ *
+ * `unverified` stays available, and stays cheap. ADR-0073 says "unverified" is
+ * an allowed answer; a schema that only accepted verified findings would make
+ * the honest report the one that fails validation, and the model would learn to
+ * write the other one.
+ */
+export const ResearchOutputSchema = z
+  .strictObject({
+    question: z.string().min(1),
+    subtype: z.enum(RESEARCH_SUBTYPES),
+    findings: z.array(
+      z.strictObject({
+        claim: z.string().min(1),
+        confidence: z.enum(['verified', 'unverified']),
+        /** URLs, optionally `[A]`/`[B]`/`[C]`-prefixed where the author knows better. */
+        sources: z.array(z.string().min(1)),
+      }),
+    ),
+    /**
+     * What the researcher could not answer. Required: a research report with no
+     * stated gaps reads as complete, and the gap is what the next person needs.
+     */
+    open_questions: z.array(z.string().min(1)),
+  })
+  .superRefine((output, ctx) => {
+    output.findings.forEach((finding, index) => {
+      if (finding.confidence !== 'verified') return;
+      if (assessSources(finding.sources).substantiated) return;
+      ctx.addIssue({
+        code: 'custom',
+        path: ['findings', index, 'sources'],
+        message:
+          'a verified finding rests on at least one tier A or B source — mark it unverified instead (ADR-0073)',
+      });
+    });
+  });
+
+/**
+ * `ui-explore`. Every convention names at least two files.
+ *
+ * One example is an instance; a convention is what the codebase does when nobody
+ * is looking. The floor is enforced here rather than asked for in the prompt,
+ * because a single-example "convention" is exactly what a confident model
+ * produces when there isn't one — and reported as existing, it is how a third
+ * way of doing one thing gets built by someone who thought they were following
+ * the second.
+ */
+export const UiExploreOutputSchema = z
+  .strictObject({
+    work_item_id: z.string().min(1),
+    conventions: z.array(
+      z.strictObject({
+        convention: z.string().min(1),
+        /** Where it was read off. Two, or it is not yet a convention. */
+        evidence: z.array(z.string().min(1)).min(2),
+        /** Where it is not followed. The inconsistency is the useful half. */
+        exceptions: z.array(z.string().min(1)),
+      }),
+    ),
+    /** Areas with no convention at all. Saying so beats inventing one. */
+    no_convention: z.array(z.string().min(1)),
+  })
+  // No recommendation field. The skill reports what exists; deciding what the
+  // interface should do is the work this runs *before*, and a redesign proposed
+  // by the exploration pass is the exploration pass having done the planning.
+  .strict();
+
 export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/spec-output.schema.json': SpecOutputSchema,
   'schemas/implement-output.schema.json': ImplementOutputSchema,
@@ -489,6 +568,8 @@ export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/import-output.schema.json': ImportOutputSchema,
   'schemas/pr-output.schema.json': PrOutputSchema,
   'schemas/release-notes-output.schema.json': ReleaseNotesOutputSchema,
+  'schemas/research-output.schema.json': ResearchOutputSchema,
+  'schemas/ui-explore-output.schema.json': UiExploreOutputSchema,
 };
 
 export function resolveOutputSchema(ref: string): z.ZodType | undefined {

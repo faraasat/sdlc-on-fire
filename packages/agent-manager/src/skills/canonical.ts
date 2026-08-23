@@ -20,6 +20,7 @@ import {
   RELEASE_NOTES_SKILL,
   TRIAGE_CAPTURE_SKILL,
 } from './delivery.js';
+import { RESEARCH_SKILL, UI_EXPLORE_SKILL } from './research.js';
 
 /**
  * The canonical stage skills (P1-SKILL-01).
@@ -148,6 +149,10 @@ export const CANONICAL_SKILLS: Readonly<Record<string, CanonicalSkill>> = {
   import: IMPORT_SKILL,
   pr: PR_SKILL,
   'release-notes': RELEASE_NOTES_SKILL,
+  // P6-PAYLOAD-05. One `research` skill for all seven subtypes (the subtype is
+  // an argument, see `core/research-subtype.ts`), plus the conditional pass.
+  research: RESEARCH_SKILL,
+  'ui-explore': UI_EXPLORE_SKILL,
 };
 
 export function getSkill(name: string): CanonicalSkill | undefined {

@@ -7,9 +7,11 @@ import {
   outputJsonSchema,
   PrOutputSchema,
   ReleaseNotesOutputSchema,
+  ResearchOutputSchema,
   resolveOutputSchema,
   SpecOutputSchema,
   TriageCaptureOutputSchema,
+  UiExploreOutputSchema,
 } from './output-schemas.js';
 
 /**
@@ -198,5 +200,110 @@ describe('the delivery output contracts (P6-PAYLOAD-04)', () => {
     expect(NewProjectOutputSchema.safeParse({ ...valid, roadmap: ['Q3: mobile'] }).success).toBe(
       false,
     );
+  });
+});
+
+describe('the research contracts (P6-PAYLOAD-05)', () => {
+  const paper = 'https://arxiv.org/abs/2401.00001';
+  const seo = 'https://example.com/best-10-databases-2026';
+
+  it('refuses a verified finding that rests only on tier C', () => {
+    // ADR-0040 at the dispatch boundary: the agent proposes the finding and its
+    // citations, and `assessSources` — the same classifier `sdlc research check`
+    // uses — disposes of the claim that they substantiate it.
+    const result = ResearchOutputSchema.safeParse({
+      question: 'which driver?',
+      subtype: 'db',
+      findings: [{ claim: 'pg is fastest', confidence: 'verified', sources: [seo] }],
+      open_questions: [],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts the same finding marked unverified', () => {
+    // ADR-0073 says "unverified" is an allowed answer. A schema that only
+    // accepted verified findings would make the honest report the one that fails
+    // validation, and the model would learn to write the other one.
+    expect(
+      ResearchOutputSchema.safeParse({
+        question: 'which driver?',
+        subtype: 'db',
+        findings: [{ claim: 'pg is fastest', confidence: 'unverified', sources: [seo] }],
+        open_questions: ['no published benchmark with a method'],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('accepts a verified finding backed by a primary source', () => {
+    expect(
+      ResearchOutputSchema.safeParse({
+        question: 'which driver?',
+        subtype: 'db',
+        findings: [{ claim: 'pg supports pipelining', confidence: 'verified', sources: [paper] }],
+        open_questions: [],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('refuses a verified finding with no sources at all', () => {
+    // "I recall it works this way" is the case the tiering exists for.
+    expect(
+      ResearchOutputSchema.safeParse({
+        question: 'which driver?',
+        subtype: 'db',
+        findings: [{ claim: 'pg supports pipelining', confidence: 'verified', sources: [] }],
+        open_questions: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses a subtype outside the vocabulary', () => {
+    expect(
+      ResearchOutputSchema.safeParse({
+        question: 'x',
+        subtype: 'vibes',
+        findings: [],
+        open_questions: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('refuses a convention read off a single file', () => {
+    // One example is an instance. A convention is what the codebase does when
+    // nobody is looking, and a single-example one reported as existing is how a
+    // third way of doing one thing gets built.
+    const one = {
+      work_item_id: 'FEAT-001',
+      conventions: [
+        { convention: 'buttons use the token scale', evidence: ['src/Button.tsx'], exceptions: [] },
+      ],
+      no_convention: [],
+    };
+    expect(UiExploreOutputSchema.safeParse(one).success).toBe(false);
+    expect(
+      UiExploreOutputSchema.safeParse({
+        ...one,
+        conventions: [
+          {
+            ...one.conventions[0],
+            evidence: ['src/Button.tsx', 'src/Chip.tsx'],
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('gives ui-explore nowhere to propose a redesign', () => {
+    // It reports what exists. Deciding what the interface should do is the work
+    // this runs *before*, and a redesign from the exploration pass is the
+    // exploration pass having done the planning.
+    expect(
+      UiExploreOutputSchema.safeParse({
+        work_item_id: 'FEAT-001',
+        conventions: [],
+        no_convention: ['empty states'],
+        recommendation: 'adopt a design system',
+      }).success,
+    ).toBe(false);
   });
 });

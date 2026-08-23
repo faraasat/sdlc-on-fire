@@ -175,3 +175,47 @@ describe('formatRisk', () => {
     expect(text).toContain('no high-risk surface');
   });
 });
+
+describe('situational skills (P6-PAYLOAD-05)', () => {
+  it('names the skill a UI change calls for, without calling it a risk', async () => {
+    // `skillForSituation` had no production caller at all: five situational
+    // skills were written, registered and compiled to six targets and nothing
+    // ever asked which of them applied. This is the first thing that asks.
+    const root = await repo();
+    await write(root, { 'src/components/Button.tsx': 'export const Button = () => null;\n' });
+    await run('git', ['add', '-A'], { cwd: root });
+
+    const result = await checkRisk(root, { git: gitIn(root) });
+    expect(result.uiPaths).toEqual(['src/components/Button.tsx']);
+    expect(result.situations).toEqual([{ situation: 'touches-ui', skill: 'ui-explore' }]);
+
+    // Reported beside "nothing required", not folded into a warning — a button
+    // label is not a security event and printing it as one is how a warning
+    // stops meaning anything.
+    const text = formatRisk(result);
+    expect(text).toContain('no high-risk surface');
+    expect(text).toContain('touches-ui → `ui-explore`');
+  });
+
+  it('names both when a change is both', async () => {
+    const root = await repo();
+    await write(root, {
+      'src/auth/LoginForm.tsx': 'export const LoginForm = () => null;\n',
+    });
+    await run('git', ['add', '-A'], { cwd: root });
+
+    const text = formatRisk(await checkRisk(root, { git: gitIn(root) }));
+    expect(text).toContain('high-risk-surface → `security-review`');
+    expect(text).toContain('touches-ui → `ui-explore`');
+  });
+
+  it('says nothing when a change is in no situation at all', async () => {
+    const root = await repo();
+    await write(root, { 'src/format.ts': 'export const pad = (s: string) => s;\n' });
+    await run('git', ['add', '-A'], { cwd: root });
+
+    const result = await checkRisk(root, { git: gitIn(root) });
+    expect(result.situations).toEqual([]);
+    expect(formatRisk(result)).not.toContain('situational skills');
+  });
+});

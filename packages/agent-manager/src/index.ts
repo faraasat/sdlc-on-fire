@@ -36,3 +36,4 @@ export * from './skills/planning.js';
 export * from './skills/write-tests.js';
 export * from './skills/security-review.js';
 export * from './skills/delivery.js';
+export * from './skills/research.js';
