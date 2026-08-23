@@ -40,9 +40,9 @@ One canonical source, six targets, compiled — not six copies you keep in sync 
 
 The CLI is the **spine**, not the interface. You touch it to ask what happens next and to let the daemon check the work. Everything in between happens in your agent, in your editor, in your normal loop.
 
-And notice what the compiled skills do **not** contain: any instruction to run the tests and report back. That is deliberate. A skill that says *"run the suite and tell me the result"* has handed the grading back to the thing being graded. The `implement` skill says the opposite, in as many words:
+And notice what the compiled skills do **not** contain: any instruction to run the tests and report back. That is deliberate. A skill that says _"run the suite and tell me the result"_ has handed the grading back to the thing being graded. The `implement` skill says the opposite, in as many words:
 
-> *Do not report that tests pass — the daemon runs verify and reads the output itself.*
+> _Do not report that tests pass — the daemon runs verify and reads the output itself._
 
 ---
 
@@ -78,7 +78,7 @@ FEAT-001: FAILED (exit 1)
     for Vitest/Jest, or `--test-reporter=tap` for node:test) to record real counts.
 ```
 
-Two things there are the whole point. **"recorded by the daemon, not claimed by an agent"** — the evidence has a provenance, and a claim is not evidence. And the warning: an exit code alone is weak evidence, so it is scored 0.6 and *says so*, with the fix. A tool that silently treated `exit 0` as "tests passed" is how you end up trusting a suite that ran zero tests.
+Two things there are the whole point. **"recorded by the daemon, not claimed by an agent"** — the evidence has a provenance, and a claim is not evidence. And the warning: an exit code alone is weak evidence, so it is scored 0.6 and _says so_, with the fix. A tool that silently treated `exit 0` as "tests passed" is how you end up trusting a suite that ran zero tests.
 
 Then the gate decides. Green evidence, and the card moves. Red, and it does not.
 
@@ -123,13 +123,13 @@ sdlc detect          # what is this repo already using?
 sdlc import --from openspec
 ```
 
-Importers exist for **Spec Kit, OpenSpec, GSD and BMAD**, with per-tool fidelity that is *declared rather than assumed* — the exporter states what it drops, and a round-trip gate fails if reality disagrees with the declaration. That gate caught our own GSD exporter claiming `moderate` fidelity while silently dropping identifiers.
+Importers exist for **Spec Kit, OpenSpec, GSD and BMAD**, with per-tool fidelity that is _declared rather than assumed_ — the exporter states what it drops, and a round-trip gate fails if reality disagrees with the declaration. That gate caught our own GSD exporter claiming `moderate` fidelity while silently dropping identifiers.
 
 ---
 
 ## What is not finished
 
-Every feature was audited against the code at a *reachable and tested* bar. **~68% built, ~15% partial, ~16% missing.** The gaps that would affect you most:
+Every feature was audited against the code at a _reachable and tested_ bar. **~68% built, ~15% partial, ~16% missing.** The gaps that would affect you most:
 
 - **Five skills ship, not thirty.** `spec`, `implement`, `review`, `retrospective`, `resolve-conflict`. The compiler and all six targets are done; the library is thin. Planning skills (`discovery`, `decompose`, `architecture`) are the next batch.
 - **Retrieval precision is not measured yet.** Hybrid search works and the cache-aware assembly is real, but until precision@k is reported, "a context engine that doesn't rot" is an architecture claim without an instrument behind it.

@@ -16,7 +16,7 @@ What you get instead is the thing a terminal is bad at: seeing everything at onc
 
 - **Three views over one item set** — `BoardView`, `TableView`, `RoadmapView`, switched by `ViewPicker`. Same data, three shapes.
 - **`CardDrawer`** — the deep view of one work item: spec, evidence, gate state, comments.
-- **`ActivityFeed`** — resolved comment effects as they happen. It renders the server-computed `role_effect` and never re-derives meaning client-side, because a client that decides what a comment *meant* is a client that can be argued with.
+- **`ActivityFeed`** — resolved comment effects as they happen. It renders the server-computed `role_effect` and never re-derives meaning client-side, because a client that decides what a comment _meant_ is a client that can be argued with.
 - **`PresenceBar`** and **`ConnectionDot`** — who is here, and whether you are actually connected. A stale board that looks live is worse than one that admits it dropped.
 - **`MetricsView`** — flow and DORA over `/api/metrics`.
 

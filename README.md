@@ -46,7 +46,7 @@ FEAT-001 — CSV export for reports
 
 — and to let the daemon check the work. Everything in between happens in your agent, in your editor, in the loop you already have.
 
-And notice what the compiled skills deliberately do **not** contain: any instruction to run the tests and report the result. A skill that says *"run the suite and tell me how it went"* has handed grading back to the thing being graded. The `implement` skill says the opposite in as many words — *"Do not report that tests pass — the daemon runs verify and reads the output itself."*
+And notice what the compiled skills deliberately do **not** contain: any instruction to run the tests and report the result. A skill that says _"run the suite and tell me how it went"_ has handed grading back to the thing being graded. The `implement` skill says the opposite in as many words — _"Do not report that tests pass — the daemon runs verify and reads the output itself."_
 
 ## Install
 
