@@ -11,6 +11,7 @@
  */
 
 import {
+  acceptedPermissions,
   isRateLimited,
   listUrl,
   nextPageUrl,
@@ -79,8 +80,11 @@ export function createGithubPort(options: GithubPortOptions): SyncPort {
       // immediately, by name, beats a retry loop that ends fifteen minutes
       // later with a message about rate limits that was never true.
       if (response.status === 403 && !isRateLimited(response.status, limit)) {
+        const needed = acceptedPermissions(response.headers);
         throw new GithubApiError(
-          `GitHub refused the request (403). The token is probably missing the "Issues" permission for ${options.repo}.`,
+          needed === null
+            ? `GitHub refused the request (403) for ${options.repo}. The token is missing a permission this call requires.`
+            : `GitHub refused the request (403) for ${options.repo}. It requires the permission: ${needed}.`,
           403,
         );
       }

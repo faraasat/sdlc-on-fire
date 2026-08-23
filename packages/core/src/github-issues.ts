@@ -87,6 +87,26 @@ export function isRateLimited(status: number, limit: RateLimit): boolean {
   return limit.retryAfter !== null || limit.remaining === 0;
 }
 
+/**
+ * The permission GitHub says the request needed, when it says so.
+ *
+ * `x-accepted-github-permissions` comes back on a 403 and names the exact
+ * requirement — `issues=write`, and sometimes several comma-separated
+ * alternatives. Observed directly against the live API on 2026-08-23 (tier A:
+ * the vendor's own response), not from documentation; it is absent from the
+ * REST reference pages consulted this session, so treat its presence as a
+ * bonus rather than a contract and always keep a fallback message.
+ *
+ * This matters because the alternative is guessing. An error that says
+ * "probably missing the Issues permission" sends somebody to re-read a
+ * permissions table; one that says `issues=write` sends them to the toggle.
+ */
+export function acceptedPermissions(headers: Headers): string | null {
+  const raw = headers.get('x-accepted-github-permissions');
+  if (raw === null || raw.trim() === '') return null;
+  return raw.trim();
+}
+
 /** Parse the `Link` header's `rel="next"`, which is how this API paginates. */
 export function nextPageUrl(headers: Headers): string | null {
   const link = headers.get('link');

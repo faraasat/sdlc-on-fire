@@ -131,7 +131,25 @@ describe('errors', () => {
     const fetchImpl = vi.fn(() =>
       Promise.resolve(reply({}, { status: 403, headers: { 'x-ratelimit-remaining': '4999' } })),
     );
-    await expect(port(fetchImpl).list()).rejects.toThrow(/Issues" permission/);
+    await expect(port(fetchImpl).list()).rejects.toThrow(/missing a permission/);
+  });
+
+  it('quotes the permission GitHub named, instead of guessing at one', async () => {
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        reply(
+          {},
+          {
+            status: 403,
+            headers: {
+              'x-ratelimit-remaining': '4981',
+              'x-accepted-github-permissions': 'issues=write',
+            },
+          },
+        ),
+      ),
+    );
+    await expect(port(fetchImpl).list()).rejects.toThrow(/issues=write/);
   });
 
   it('does not retry a permissions 403', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  acceptedPermissions,
   isRateLimited,
   listUrl,
   MAX_PER_PAGE,
@@ -195,5 +196,25 @@ describe('requestHeaders', () => {
 
   it('sends the token as a bearer credential', () => {
     expect(requestHeaders('tok')['authorization']).toBe('Bearer tok');
+  });
+});
+
+describe('acceptedPermissions', () => {
+  it('reads the permission GitHub names on a 403', () => {
+    // Observed live: a POST /issues with a read-only token returns
+    // `x-accepted-github-permissions: issues=write`.
+    expect(acceptedPermissions(h({ 'x-accepted-github-permissions': 'issues=write' }))).toBe(
+      'issues=write',
+    );
+  });
+
+  it('keeps a multi-alternative value intact rather than picking one', () => {
+    const value = 'issues=write, pull_requests=write';
+    expect(acceptedPermissions(h({ 'x-accepted-github-permissions': value }))).toBe(value);
+  });
+
+  it('returns null when the header is absent, since it is not guaranteed', () => {
+    expect(acceptedPermissions(h({}))).toBeNull();
+    expect(acceptedPermissions(h({ 'x-accepted-github-permissions': '  ' }))).toBeNull();
   });
 });
