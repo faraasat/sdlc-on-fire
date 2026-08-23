@@ -2,7 +2,7 @@
 
 The board. A React client over the same database the CLI reads — not a second source of truth, and deliberately not a second way to change things.
 
-> **Internal package, prerelease `0.1.0-alpha.1`.** Published so `sdlc-on-fire` installs resolve cleanly. Exports move between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI, which serves this with `sdlc serve`.
+> **Internal package, prerelease `0.1.0-alpha.2`.** Published so `sdlc-on-fire` installs resolve cleanly. Exports move between alphas. The supported surface is the [`sdlc-on-fire`](https://www.npmjs.com/package/sdlc-on-fire) CLI, which serves this with `sdlc serve`.
 
 ## Read-mostly, on purpose
 

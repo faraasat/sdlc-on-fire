@@ -16,7 +16,7 @@ FEAT-001: BLOCKED at "discovery" (wanted "spec")
     then re-verify
 ```
 
-> **Prerelease: `0.1.0-alpha.1`.** Interfaces move between alphas and parts of the product are unfinished — there is [an honest list](#what-is-not-finished) below rather than a roadmap that implies otherwise. Worth trying on a real repo. Not worth building a company process on yet.
+> **Prerelease: `0.1.0-alpha.2`.** Interfaces move between alphas and parts of the product are unfinished — there is [an honest list](#what-is-not-finished) below rather than a roadmap that implies otherwise. Worth trying on a real repo. Not worth building a company process on yet.
 
 ---
 

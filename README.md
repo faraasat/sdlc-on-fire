@@ -13,7 +13,7 @@ TASK-001: BLOCKED at "implement" (wanted "test")
   ✗ gate: test failing evidence says the check did not pass — fix the code, then re-verify
 ```
 
-> **Prerelease `0.1.0-alpha.1`, and it is now what `npm install sdlc-on-fire` gives you** — `latest` was moved onto it once `alpha.0`'s `tiers` defect was fixed. Interfaces change between alphas and [a real slice is unfinished](#what-is-not-built-yet). Kick the tyres; don't build a company process on it yet.
+> **Prerelease `0.1.0-alpha.2`, and it is now what `npm install sdlc-on-fire` gives you** — `latest` was moved onto it once `alpha.0`'s `tiers` defect was fixed. Interfaces change between alphas and [a real slice is unfinished](#what-is-not-built-yet). Kick the tyres; don't build a company process on it yet.
 
 ## You do not live in this CLI
 
