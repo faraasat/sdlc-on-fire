@@ -61,17 +61,42 @@ export function createGithubPort(options: GithubPortOptions): SyncPort {
   const maxRetries = options.maxRetries ?? 3;
   const etags = options.etags ?? new Map<string, string>();
 
-  async function request(url: string, init: RequestInit = {}): Promise<Response> {
+  /**
+   * `conditional: false` opts a request out of ETag revalidation entirely.
+   *
+   * **Listing must never be conditional.** A 304 says "not modified"; it
+   * carries no body. A list call that treats that as an empty array is
+   * reporting "this repository has no issues", and the two are indistinguishable
+   * downstream. An unlinked local item paired against an empty remote list
+   * decides `create-remote` — so a conditional list duplicates every unsynced
+   * item on every run, silently, and each duplicate then becomes a real remote
+   * item that duplicates again.
+   *
+   * Returning a cached body instead would need the *items* persisted beside the
+   * ETag across runs, not just within one; with only the ETag persisted, the
+   * first list of a new process 304s into an empty cache and the bug returns.
+   * So the saving is declined: a sync lists one or two pages per run against a
+   * 5,000/hour budget, and correctness is not worth trading for that.
+   *
+   * Observed live on 2026-08-23 — a repeat list 304'd and produced `n=0` while
+   * the repository held nine issues.
+   */
+  async function request(
+    url: string,
+    init: RequestInit & { conditional?: boolean } = {},
+  ): Promise<Response> {
+    const { conditional, ...rest } = init;
     for (let attempt = 0; ; attempt += 1) {
-      const etag = init.method === undefined ? etags.get(url) : undefined;
+      const mayRevalidate = rest.method === undefined && conditional !== false;
+      const etag = mayRevalidate ? etags.get(url) : undefined;
       const response = await doFetch(url, {
-        ...init,
-        headers: { ...requestHeaders(options.token, etag), ...(init.headers ?? {}) },
+        ...rest,
+        headers: { ...requestHeaders(options.token, etag), ...(rest.headers ?? {}) },
       });
 
       if (response.ok || response.status === 304) {
         const fresh = response.headers.get('etag');
-        if (fresh !== null && init.method === undefined) etags.set(url, fresh);
+        if (fresh !== null && mayRevalidate) etags.set(url, fresh);
         return response;
       }
 
@@ -103,10 +128,10 @@ export function createGithubPort(options: GithubPortOptions): SyncPort {
   return {
     async list(since?: string): Promise<readonly RemoteItem[]> {
       const items: RemoteItem[] = [];
+      // Deliberately unconditional — see `listUnconditional` below.
       let url: string | null = listUrl(options.repo, { since });
       while (url !== null) {
-        const response: Response = await request(url);
-        if (response.status === 304) break; // unchanged; nothing further on this page
+        const response: Response = await request(url, { conditional: false });
         const page = (await response.json()) as GithubIssue[];
         for (const issue of page) items.push(toRemoteItem(issue));
         // Follow the Link header rather than incrementing a page counter.

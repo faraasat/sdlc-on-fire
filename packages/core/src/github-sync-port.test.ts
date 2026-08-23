@@ -75,7 +75,11 @@ describe('list — pagination', () => {
 });
 
 describe('list — conditional requests', () => {
-  it('stores the etag and sends it back on the next call', async () => {
+  it('never sends if-none-match when listing, however many times it is called', async () => {
+    // A 304 carries no body. A conditional list that reported the resulting
+    // empty array would be saying "this repository has no issues", and an
+    // unlinked local paired against an empty remote list decides
+    // `create-remote` — duplicating every unsynced item on every run.
     const seen: (string | undefined)[] = [];
     const etags = new Map<string, string>();
     const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
@@ -85,13 +89,30 @@ describe('list — conditional requests', () => {
     const p = port(fetchImpl, { etags });
     await p.list();
     await p.list();
-    expect(seen[0]).toBeUndefined();
-    expect(seen[1]).toBe('W/"abc"');
+    await p.list();
+    expect(seen).toEqual([undefined, undefined, undefined]);
   });
 
-  it('treats a 304 as "nothing changed" rather than as an error', async () => {
-    const fetchImpl = vi.fn(() => Promise.resolve(reply(null, { status: 304 })));
-    await expect(port(fetchImpl).list()).resolves.toEqual([]);
+  it('does not store a list etag that a later call could revalidate against', async () => {
+    const etags = new Map<string, string>();
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(reply([issue()], { headers: { etag: 'W/"abc"' } })),
+    );
+    await port(fetchImpl, { etags }).list();
+    expect(etags.size).toBe(0);
+  });
+
+  it('returns the real contents on every repeat list, never an empty array', async () => {
+    // The live failure this reproduces: a repeat list 304'd and produced n=0
+    // while the repository held nine issues.
+    const fetchImpl = vi.fn(() =>
+      Promise.resolve(
+        reply([issue({ number: 1 }), issue({ number: 2 })], { headers: { etag: 'W/"x"' } }),
+      ),
+    );
+    const p = port(fetchImpl);
+    expect(await p.list()).toHaveLength(2);
+    expect(await p.list()).toHaveLength(2);
   });
 
   it('does not send if-none-match on a mutation', async () => {

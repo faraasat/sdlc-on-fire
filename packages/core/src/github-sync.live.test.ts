@@ -34,6 +34,38 @@ function uniqueTitle(label: string): string {
   return `sdlcof-live ${label} ${String(process.pid)}-${String(Math.floor(Math.random() * 1e6))}`;
 }
 
+/**
+ * Wait for a freshly written issue to appear in the list endpoint.
+ *
+ * **Measured on 2026-08-23, not assumed:** creating an issue and immediately
+ * listing does *not* return it. A create whose POST returned issue #10 was
+ * absent from a 200 list at 3.7s and present at 5.7s. The list endpoint is
+ * served from something that trails the write by seconds.
+ *
+ * This is the provider's behaviour, so the suite waits rather than asserting it
+ * away. It matters beyond the tests: `runSync` lists *before* it writes, so a
+ * single run is unaffected — but a run that creates an item and then dies
+ * before its cursor is persisted leaves an unlinked local whose remote may
+ * still be invisible, and `decide` would answer `create-remote` a second time.
+ * Cursors are written per item as each one completes, which closes the window
+ * to a single item rather than a batch.
+ */
+async function untilVisible(
+  list: () => Promise<readonly RemoteItem[]>,
+  id: string,
+  budgetMs = 30_000,
+): Promise<readonly RemoteItem[]> {
+  const deadline = Date.now() + budgetMs;
+  for (;;) {
+    const items = await list();
+    if (items.some((item) => item.id === id)) return items;
+    if (Date.now() > deadline) {
+      throw new Error(`issue ${id} never appeared in the list within ${String(budgetMs)}ms`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+}
+
 live('GitHub Issues, against the real API', () => {
   const adopted: RemoteItem[] = [];
   const makePort = () =>
@@ -105,11 +137,11 @@ live('GitHub Issues, against the real API', () => {
     const made = await port.create({ id: 'LOCAL-4', title, body: 'b', closed: false });
     await port.update(made.id, { id: 'LOCAL-4', title, body: 'b', closed: true });
 
-    const listed = await port.list();
+    const listed = await untilVisible(() => port.list(), made.id);
     const found = listed.find((item) => item.id === made.id);
     expect(found).toBeDefined();
     expect(found?.closed).toBe(true);
-  }, 90_000);
+  }, 120_000);
 
   it('never reports a pull request as a work item', async () => {
     const port = makePort();
@@ -147,6 +179,10 @@ live('GitHub Issues, against the real API', () => {
         },
       ],
     ]);
+
+    // The remote must be visible to the list endpoint before a sync can pair
+    // with it — see `untilVisible`.
+    await untilVisible(() => port.list(), made.id);
 
     const first = await runSync({ locals: [localAfterEdit], port, cursors, keyFor, gapMs: 1_000 });
     const ours = first.outcomes.find((o) => o.key === key);
