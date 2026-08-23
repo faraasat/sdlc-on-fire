@@ -15,3 +15,4 @@ export const storagePackage: PackageInfo = {
 
 /** Resolved dependency identities — proves the workspace links are real, not just declared. */
 export const storageDependencies: readonly PackageInfo[] = [corePackage];
+export * from './context-pack.js';

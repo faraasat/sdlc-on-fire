@@ -139,3 +139,27 @@ export function startRow(run: RunStart): unknown {
     finished_at: null,
   });
 }
+
+/**
+ * Where a run's context-pack audit copy lives (P6-WRITEPATH-03).
+ *
+ * The convention was already written down — `run.ts` documents
+ * `.sdlc/context/packs/<run-id>.md` in the `context_pack_path` field — and
+ * nothing produced one, so the column and the comment described a file that
+ * never existed. Same shape as the `runs` table itself: the reader was built
+ * and the writer was not.
+ *
+ * Returned **relative to the workspace root**, because the value is stored in
+ * a database that a second machine will read. An absolute path in that column
+ * is correct exactly once, on the machine that wrote it.
+ */
+export function contextPackPath(runId: string): string {
+  if (!/^[A-Za-z0-9][\w.-]*$/.test(runId)) {
+    // A run id reaches a filesystem path here. Rejecting the shape is cheaper
+    // than sanitising it: a `..` or a slash silently redirects the write, and
+    // an audit copy written somewhere other than where the record says it is
+    // is worse than no audit copy.
+    throw new Error(`unsafe run id for a pack path: ${JSON.stringify(runId)}`);
+  }
+  return `.sdlc/context/packs/${runId}.md`;
+}
