@@ -1,6 +1,11 @@
 import { execFile } from 'node:child_process';
 import { resolveOutputSchema } from './skills/output-schemas.js';
-import { assertWithinDepth, type CanonicalSkill } from '@sdlc-on-fire/core';
+import {
+  assertWithinDepth,
+  runStatusFor,
+  type CanonicalSkill,
+  type RunRecorder,
+} from '@sdlc-on-fire/core';
 import { fillSlots } from './prompt.js';
 
 /**
@@ -64,6 +69,22 @@ export interface DispatchRequest {
    * in review exactly like a limit.
    */
   readonly depth?: number | undefined;
+
+  /* ---- run recording (P6-WRITEPATH-01) ---- */
+
+  /**
+   * Where to record this run, if anywhere.
+   *
+   * Optional so a caller with no database — a test, a dry run, the compiler —
+   * dispatches unchanged. When it is supplied, `runId` and `workItemId` must be
+   * too: a run row without a work item has nothing to be a run *of*.
+   */
+  readonly recorder?: RunRecorder | undefined;
+  /** Minted once per dispatch by the caller, so a retry of the write is not a second run. */
+  readonly runId?: string | undefined;
+  readonly workItemId?: string | undefined;
+  readonly model?: string | undefined;
+  readonly contextPackPath?: string | undefined;
 }
 
 export interface DispatchResult {
@@ -192,12 +213,59 @@ export async function dispatchSkill(
   const timeoutMs = request.timeoutMs ?? 600_000;
   const startedAt = Date.now();
 
-  const result = await transport({ prompt, cwd: request.cwd, timeoutMs });
+  // Recorded *before* the transport call, not after.
+  //
+  // The `runs` table has existed since the first migration and nothing had ever
+  // written to it (P6-WRITEPATH-01). Recording is attached here rather than
+  // left to each caller because a caller that forgets produces exactly the
+  // condition being fixed — a read path with no writer — and the next audit
+  // finds an empty table again.
+  //
+  // A row written on completion never exists for a dispatch that hung, crashed
+  // or was killed, and those are the runs somebody actually goes looking for.
+  const recorder = request.recorder;
+  const runId = request.runId;
+  if (recorder !== undefined && runId !== undefined && request.workItemId !== undefined) {
+    await recorder.start({
+      id: runId,
+      workItemId: request.workItemId,
+      skillId: request.skill.name,
+      agentTarget: target,
+      ...(request.model === undefined ? {} : { model: request.model }),
+      ...(request.contextPackPath === undefined
+        ? {}
+        : { contextPackPath: request.contextPackPath }),
+      startedAt: new Date(startedAt).toISOString(),
+    });
+  }
+
+  const settle = async (threw: boolean, exitCode?: number): Promise<void> => {
+    if (recorder === undefined || runId === undefined) return;
+    await recorder.finish({
+      id: runId,
+      status: runStatusFor({ threw, exitCode }),
+      finishedAt: new Date().toISOString(),
+    });
+  };
+
+  let result;
+  try {
+    result = await transport({ prompt, cwd: request.cwd, timeoutMs });
+  } catch (cause) {
+    // The failure path finishes the row too. Without this every failed run
+    // stays `running` for ever, and "currently running" quietly comes to mean
+    // "started at some point since the beginning of time".
+    await settle(true);
+    throw cause;
+  }
   const durationMs = Date.now() - startedAt;
 
   if (result.exitCode !== 0) {
+    await settle(false, result.exitCode);
     throw new DispatchError(request.skill.name, `target exited ${result.exitCode}`, result.stderr);
   }
+
+  await settle(false, 0);
 
   return {
     skill: request.skill.name,

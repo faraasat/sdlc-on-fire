@@ -1,3 +1,4 @@
+import type { RunFinish, RunStart } from './run-record.js';
 /**
  * The `StoragePort` — the single interface through which data is pulled and
  * sent (ADR-0047).
@@ -180,6 +181,7 @@ export interface MirrorStage {
  * different store implements *intent* rather than translating SQL. Methods are
  * grouped by the subsystem that drives them.
  */
+
 export interface StoragePort {
   readonly capabilities: StorageCapabilities;
 
@@ -203,6 +205,25 @@ export interface StoragePort {
   }): Promise<readonly MemoryEntry[]>;
   /** Every entry about a subject, including closed ones — the "why did we change our mind" trail. */
   memoryHistory(title: string): Promise<readonly MemoryEntry[]>;
+
+  /* ---- agent runs (P6-WRITEPATH-01) ---- */
+
+  /**
+   * Record that a run has begun, as `running`.
+   *
+   * Written *before* the work starts. A row created on completion never exists
+   * for a dispatch that hung, crashed or was killed — and those are exactly the
+   * runs somebody goes looking for.
+   */
+  startRun(run: RunStart): Promise<void>;
+
+  /**
+   * Record how a run ended.
+   *
+   * Must be called on the failure path too, or every failed run stays `running`
+   * forever and "currently running" comes to mean "started at some point".
+   */
+  finishRun(run: RunFinish): Promise<void>;
 
   upsertWorkItem(row: WorkItemMirror): Promise<void>;
   upsertDoc(row: DocMirror): Promise<void>;

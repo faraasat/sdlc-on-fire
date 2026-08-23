@@ -124,3 +124,4 @@ export * from './tracker-sync.js';
 export * from './github-issues.js';
 export * from './sync-engine.js';
 export * from './github-sync-port.js';
+export * from './run-record.js';

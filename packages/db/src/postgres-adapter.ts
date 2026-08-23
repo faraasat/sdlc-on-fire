@@ -1,5 +1,5 @@
 import { canonicalJsonHash, resolveConflicts } from '@sdlc-on-fire/core';
-import type { MemoryEntry } from '@sdlc-on-fire/core';
+import type { MemoryEntry, RunFinish, RunStart } from '@sdlc-on-fire/core';
 import type {
   AuditChainVerification,
   BudgetScope,
@@ -610,6 +610,48 @@ export class PostgresStorageAdapter implements StoragePort {
     await this.#executor.query(
       'UPDATE already_happened_ledger SET result = $2::jsonb WHERE idempotency_key = $1;',
       [key, JSON.stringify(result)],
+    );
+  }
+
+  /**
+   * Record a run as it begins (P6-WRITEPATH-01, contract 01 §3.5).
+   *
+   * `ON CONFLICT DO NOTHING` rather than an upsert: a run id is minted once per
+   * dispatch, so a second start for the same id is a retry of the *write*, not
+   * a second run. Overwriting would reset `started_at` and quietly shorten the
+   * duration of a run that had been going for an hour.
+   */
+  async startRun(run: RunStart): Promise<void> {
+    await this.#executor.query(
+      `INSERT INTO runs (id, work_item_id, skill_id, agent_target, model, context_pack_path, status, started_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'running', $7)
+       ON CONFLICT (id) DO NOTHING;`,
+      [
+        run.id,
+        run.workItemId,
+        run.skillId ?? null,
+        run.agentTarget ?? null,
+        run.model ?? null,
+        run.contextPackPath ?? null,
+        run.startedAt,
+      ],
+    );
+  }
+
+  /**
+   * Record how a run ended.
+   *
+   * Guarded on `status = 'running'`. A run that already reached a terminal
+   * status does not change again ({@link isTerminalRunStatus}), and without the
+   * guard a late-arriving finish from a retried dispatch would rewrite the
+   * outcome of a run that had already been decided.
+   */
+  async finishRun(run: RunFinish): Promise<void> {
+    await this.#executor.query(
+      `UPDATE runs
+          SET status = $2, finished_at = $3, pr_url = COALESCE($4, pr_url)
+        WHERE id = $1 AND status = 'running';`,
+      [run.id, run.status, run.finishedAt, run.prUrl ?? null],
     );
   }
 
