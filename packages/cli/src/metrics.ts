@@ -11,6 +11,9 @@
  * identically, and one of them is excellent news.
  */
 
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import {
   bottleneck,
   cycleTime,
@@ -20,9 +23,18 @@ import {
   formatDora,
   leadTime,
   blockedTime,
+  gatePassRates,
+  humanInterventions,
+  insertionFrequency,
+  PR_DURATION_UNAVAILABLE,
   runMetrics,
+  type ApprovalRow,
   type BlockedTime,
+  type GateEvaluation,
   type GateInterval,
+  type GovernanceMetrics,
+  type InsertionRow,
+  resolveWorkspaceLayout,
   type RunMetrics,
   type RunRow,
   rework,
@@ -369,4 +381,144 @@ export function formatBlocked(report: readonly BlockedTime[]): string {
         (item.stillBlocked ? ' — still blocked, this is a floor' : ''),
     ),
   ].join('\n');
+}
+
+/**
+ * `sdlc metrics governance` (P6-INSTRUMENT-04; FEAT-MET-015/014/004/009).
+ *
+ * Insertions are read from `kanban/_insertions/`, not from `audit_log`.
+ * FEAT-MET-014 says audit_log and nothing has ever written an insertion row
+ * there — the record that exists is the markdown one, which is also the right
+ * source under the content-in-git invariant. Flagged as a feature-text
+ * divergence rather than papered over by adding a redundant audit write.
+ */
+export async function governanceReport(root: string): Promise<GovernanceMetrics> {
+  const layout = resolveWorkspaceLayout(root);
+  const insertions = await readInsertions(path.join(layout.kanbanDir, '_insertions'));
+
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    const gateRows = await db.query<{
+      work_item_id: string;
+      gate_name: string;
+      result: string | null;
+      policy_id: number | null;
+      required_role: string | null;
+    }>(
+      `SELECT g.work_item_id, g.gate_name, g.result, g.policy_id, r.key AS required_role
+         FROM gates g
+         LEFT JOIN gate_policies p ON p.id = g.policy_id
+         LEFT JOIN roles r ON r.id = p.required_role_id;`,
+    );
+
+    const approvalRows = await db.query<{
+      actor_kind: string;
+      decision: string;
+      revoked_at: string | null;
+      created_at: string;
+    }>(
+      `SELECT a.kind AS actor_kind, ap.decision,
+              ap.revoked_at::text AS revoked_at, ap.created_at::text AS created_at
+         FROM approvals ap
+         JOIN actors a ON a.id = ap.actor_id;`,
+    );
+
+    return {
+      gates: gatePassRates(
+        gateRows.map((row): GateEvaluation => ({
+          workItemId: row.work_item_id,
+          gateName: row.gate_name,
+          result: row.result,
+          requiredRole: row.required_role,
+          policyId: row.policy_id,
+        })),
+      ),
+      interventions: humanInterventions(
+        approvalRows.map((row): ApprovalRow => ({
+          actorKind: row.actor_kind,
+          decision: row.decision,
+          revokedAt: row.revoked_at,
+          createdAt: row.created_at,
+        })),
+      ),
+      insertions: insertionFrequency(insertions),
+      prDuration: PR_DURATION_UNAVAILABLE,
+    };
+  } finally {
+    await db.close().catch(() => undefined);
+  }
+}
+
+/** Insertion records as written by `sdlc add` — content in git, read as such. */
+async function readInsertions(dir: string): Promise<readonly InsertionRow[]> {
+  const names = await fs.readdir(dir).catch(() => [] as string[]);
+  const rows: InsertionRow[] = [];
+  for (const name of names) {
+    if (!name.endsWith('.md')) continue;
+    const raw = await fs.readFile(path.join(dir, name), 'utf8').catch(() => '');
+    const data = parseFrontmatter(raw).data;
+    const id = data['id'];
+    const into = data['into'];
+    const state = data['state'];
+    const recordedAt = data['recorded_at'];
+    // A record missing any of these is malformed rather than a zero; skipping it
+    // keeps a hand-edited file from becoming an insertion that happened at the
+    // epoch and inflating every rate below it.
+    if (
+      typeof id !== 'string' ||
+      typeof into !== 'string' ||
+      typeof state !== 'string' ||
+      typeof recordedAt !== 'string'
+    ) {
+      continue;
+    }
+    rows.push({ id, into, state, recordedAt });
+  }
+  return rows;
+}
+
+export function formatGovernance(report: GovernanceMetrics): string {
+  const lines: string[] = ['gate pass rate by policy/role:'];
+  if (report.gates.length === 0) {
+    lines.push('  no gates recorded');
+  } else {
+    for (const rate of report.gates) {
+      lines.push(
+        `  ${rate.key} (${rate.gateName}): ` +
+          (rate.passRate === null
+            ? `not available — ${String(rate.pending)} pending, nothing decided`
+            : `${(rate.passRate * 100).toFixed(0)}% of ${String(rate.passed + rate.failed)} decided` +
+              (rate.pending > 0 ? `, ${String(rate.pending)} pending` : '')),
+      );
+    }
+  }
+
+  lines.push(
+    '',
+    'human interventions:',
+    `  ${String(report.interventions.approvals)} approval(s), ${String(report.interventions.rejections)} rejection(s), ${String(report.interventions.revocations)} revoked`,
+  );
+  if (report.interventions.agentApprovals > 0) {
+    // Loud, because it should be impossible: the schema refuses an agent
+    // approval outright. This is a broken invariant, not a statistic.
+    lines.push(
+      `  ⚠ ${String(report.interventions.agentApprovals)} AGENT approval(s) recorded — the schema forbids these (ADR-0010)`,
+    );
+  }
+
+  lines.push('', 'insertions:');
+  lines.push(
+    `  ${String(report.insertions.total)} recorded — ${String(report.insertions.approved)} approved, ${String(report.insertions.rejected)} rejected, ${String(report.insertions.proposed)} held`,
+  );
+  lines.push(
+    report.insertions.perThirtyDays === null
+      ? '  rate: not available — a rate needs at least two records to have a span'
+      : `  rate: ${report.insertions.perThirtyDays.toFixed(1)} per 30 days`,
+  );
+  for (const container of report.insertions.byContainer.slice(0, 5)) {
+    lines.push(`  ${container.into}: ${String(container.insertions)} insertion(s)`);
+  }
+
+  lines.push('', `PR duration: not available — ${report.prDuration.because}`);
+  return lines.join('\n');
 }

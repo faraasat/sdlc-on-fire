@@ -67,6 +67,8 @@ import {
   blockedReport,
   formatAgentRuns,
   formatBlocked,
+  formatGovernance,
+  governanceReport,
   doraFromWorkspace,
   flowReport,
   formatDora,
@@ -2654,6 +2656,15 @@ export function buildProgram(): Command {
     .action(async (options: { json?: boolean }) => {
       const report = await blockedReport(root());
       emit(report, options.json === true, formatBlocked);
+    });
+
+  metrics
+    .command('governance')
+    .description('gate pass rates, human interventions and insertion churn')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }) => {
+      const report = await governanceReport(root());
+      emit(report, options.json === true, formatGovernance);
     });
 
   metrics
