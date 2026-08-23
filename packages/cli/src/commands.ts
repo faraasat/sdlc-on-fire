@@ -26,6 +26,7 @@ import {
   FocusProfileSchema,
   loadTierPolicy,
   undeclaredModels,
+  resolveStageProfile,
   resolveWorkspaceLayout,
   type CapabilityDiscoveryRow,
   type Preset,
@@ -605,6 +606,20 @@ export interface InstructionsResult {
      */
     readonly cacheablePrefixTokens: number;
     readonly cacheableFraction: number;
+    /**
+     * The stage's assembly profile (P6-PERSTAGE-01, FEAT-CTX-003).
+     *
+     * Surfaced, not silent. Which doc types a stage may retrieve is a decision
+     * somebody made about this stage's diet, and an agent — or a person reading
+     * over its shoulder — should be able to see that `implement` was denied the
+     * research corpus on purpose rather than wonder why nothing came back.
+     */
+    readonly profile: {
+      readonly stage: string;
+      readonly layers: readonly string[];
+      readonly docTypes: readonly string[];
+      readonly because: string;
+    };
   } | null;
 }
 
@@ -764,6 +779,9 @@ export async function instructions(root: string, id: string): Promise<Instructio
     };
   }
 
+  // The stage's profile, resolved once. Everything below that decides what may
+  // enter the pack reads it — a second lookup would be a second answer.
+  const profile = resolveStageProfile(next);
   const skillStable = [skill.role, skill.stop_condition].join('\n\n');
   const cardCore = `# ${workItem.title}\n\n${parsed.body.trim()}`;
 
@@ -802,6 +820,12 @@ export async function instructions(root: string, id: string): Promise<Instructio
             Math.max(1, estimateTokens(`${skillStable}\n\n${cardCore}`))) *
             1000,
         ) / 1000,
+      profile: {
+        stage: next,
+        layers: [...profile.layers],
+        docTypes: [...profile.docTypes],
+        because: profile.because,
+      },
     },
   };
 }
