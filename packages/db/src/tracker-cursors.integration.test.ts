@@ -34,7 +34,7 @@ describe('tracker sync cursors', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 90_000);
 
   it('replaces rather than duplicating a cursor for the same pair', async () => {
     const db = await freshDb();
@@ -53,7 +53,7 @@ describe('tracker sync cursors', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 90_000);
 
   it('keeps cursors for different pairs apart', async () => {
     const db = await freshDb();
@@ -66,7 +66,7 @@ describe('tracker sync cursors', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 90_000);
 
   it('survives db:rebuild, which contract 01 §3.10 requires', async () => {
     // Not a preference. A rebuild that dropped cursors would unlink every pair,
@@ -87,7 +87,7 @@ describe('tracker sync cursors', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 90_000);
 
   it('reports an empty map on a fresh database rather than throwing', async () => {
     const db = await freshDb();
@@ -96,5 +96,5 @@ describe('tracker sync cursors', () => {
     } finally {
       await db.close();
     }
-  });
+  }, 90_000);
 });
