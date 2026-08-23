@@ -214,6 +214,80 @@ function r_ready(result: Awaited<ReturnType<typeof init>>): boolean {
   return result.database.ready || result.database.held === true;
 }
 
+/**
+ * Whether this invocation asked for machine-readable output.
+ *
+ * Read from argv rather than from a parsed option, because the failures that
+ * matter most happen *before* parsing finishes — an unknown command, a missing
+ * required option — and those are exactly the ones an agent currently receives
+ * as prose.
+ */
+function wantsJson(argv: readonly string[]): boolean {
+  return argv.includes('--json');
+}
+
+/**
+ * The failure half of the `--json` contract (P6-SURFACE-01).
+ *
+ * `--json` used to emit a parseable document on success and **zero bytes on
+ * stdout** on failure, with prose on stderr. An agent that asked for JSON got a
+ * parse error and no machine-readable reason — and this product's entire
+ * positioning is a pipeline driven by coding agents, so the failure path is
+ * where structure matters most and was precisely where it was absent.
+ *
+ * The OpenSpec code study told us to enforce this **structurally, with a shared
+ * helper, rather than by per-command discipline**. Ninety commands accept
+ * `--json`; per-command discipline across ninety call sites is a promise, not a
+ * mechanism. This is the mechanism: one function, one choke point, and a test
+ * that fails if a command bypasses it.
+ *
+ * Success payloads are deliberately *not* re-shaped into an envelope. That would
+ * be the fuller form of the study's advice and a breaking change across every
+ * `--json` consumer; the defect being fixed is the absence of a failure
+ * document, and an agent distinguishes the two by the presence of `error`.
+ */
+export function renderJsonFailure(error: unknown): string {
+  const base =
+    error instanceof Error
+      ? { name: error.name, message: error.message }
+      : { name: 'Error', message: String(error) };
+  // `code` is carried when a domain error supplies one, because "which failure
+  // was it" is the question an agent branches on, and matching on a message is
+  // how a caller ends up broken by a wording change.
+  const code = (error as { code?: unknown })?.code;
+  return `${JSON.stringify(
+    {
+      error: {
+        ...base,
+        ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
+      },
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+/**
+ * Report a failure **once**, in whichever form was asked for.
+ *
+ * The latch is load-bearing and was earned: commander's `exitOverride` rethrows
+ * so the process still stops, the rethrown error then reaches the top-level
+ * catch, and both call this. Without the latch stdout carried *two* JSON
+ * documents — which is precisely the "always exactly one JSON document" rule
+ * this function exists to keep, broken by the function keeping it.
+ */
+let reported = false;
+function reportFailure(error: unknown, argv: readonly string[]): void {
+  if (reported) return;
+  reported = true;
+  if (wantsJson(argv)) {
+    process.stdout.write(renderJsonFailure(error));
+  } else {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  }
+  process.exitCode = 1;
+}
+
 function emit(value: unknown, json: boolean, human: (value: never) => string): void {
   process.stdout.write(json ? `${JSON.stringify(value, null, 2)}\n` : `${human(value as never)}\n`);
 }
@@ -2583,6 +2657,42 @@ if (invokedAsBinary()) {
   // time the argument naming it is resolved. Discovery never throws: a broken
   // third-party layer becomes a row in `sdlc plugins`, not a CLI that will not
   // start.
+  // Commander reports its own failures — unknown command, missing required
+  // option, bad argument — and exits without ever reaching the promise chain
+  // below. Those are the *earliest* failures an agent can hit and were the
+  // loudest prose leak, so they route through the same reporter.
+  if (wantsJson(process.argv)) {
+    // Applied to every command, not only the root.
+    //
+    // Commander does not inherit `exitOverride` or `configureOutput` down to
+    // subcommands, and the first version of this only covered the root — so
+    // `sdlc nonsense --json` produced a document while `sdlc new --json`
+    // (missing required argument, raised by the *subcommand*) still leaked
+    // prose to stderr and left stdout empty. The half that worked is the half
+    // that hid the half that did not.
+    const applyJsonFailureContract = (command: Command): void => {
+      command.exitOverride((commanderError) => {
+        // `--help` and `--version` arrive here having already written their
+        // output and succeeded. Turning those into an error document would
+        // report a failure that did not happen.
+        if (commanderError.exitCode === 0) {
+          process.exitCode = 0;
+          return;
+        }
+        reportFailure(commanderError, process.argv);
+        throw commanderError;
+      });
+      command.configureOutput({
+        // Suppress commander's own stderr prose: the JSON document is the
+        // answer, and writing both leaves an agent parsing a stream whose
+        // second half is unstructured.
+        writeErr: () => undefined,
+      });
+      for (const child of command.commands) applyJsonFailureContract(child);
+    };
+    applyJsonFailureContract(program);
+  }
+
   discoverPlugins({ projectRoot: projectRootFromArgv(process.argv.slice(2), process.cwd()) })
     .then((discovery) => {
       const registered = registerPlugins(program, discovery);
@@ -2595,7 +2705,6 @@ if (invokedAsBinary()) {
     .catch(() => undefined)
     .then(() => program.parseAsync(process.argv))
     .catch((error: unknown) => {
-      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-      process.exitCode = 1;
+      reportFailure(error, process.argv);
     });
 }
