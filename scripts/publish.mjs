@@ -276,6 +276,50 @@ export function publishStdio(dryRun) {
   return dryRun ? ['ignore', 'ignore', 'inherit'] : ['inherit', 'inherit', 'inherit'];
 }
 
+/**
+ * Refuse to start when npm does not know who you are.
+ *
+ * npm answers an unauthenticated `PUT` to an existing package with **404 Not
+ * Found**, not 401 — so an expired token surfaces as "the requested resource
+ * could not be found or you do not have permission to access it" about a
+ * package that plainly exists and that you own. It is one of the least
+ * guessable errors in the toolchain, and it happened here on 2026-08-23 after
+ * a token quietly expired.
+ *
+ * Checked once, before the first tarball is built, because the alternative is
+ * discovering it after a full workspace build.
+ *
+ * A registry that cannot be reached at all is deliberately *not* fatal: the
+ * per-package publish will fail with its own message, and refusing to start
+ * because a network blip broke one status call would be worse than the problem.
+ */
+function assertAuthenticated(dryRun) {
+  let who;
+  try {
+    who = execFileSync('npm', ['whoami'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+  } catch (cause) {
+    const text = String(cause?.stderr ?? cause?.message ?? '');
+    if (!/E401|Unauthorized|ENEEDAUTH/i.test(text)) return; // not an auth problem
+    process.stderr.write(
+      'npm does not know who you are — run `npm login` and try again.\n\n' +
+        '  Why this is worth saying explicitly: npm answers an unauthenticated PUT to an\n' +
+        '  existing package with 404 Not Found rather than 401, so without this check the\n' +
+        '  failure reads as "package not found" for a package you own and published before.\n',
+    );
+    process.exit(1);
+  }
+  if (who === '') {
+    process.stderr.write('npm returned no username — run `npm login` and try again.\n');
+    process.exit(1);
+  }
+  process.stdout.write(
+    `npm user: ${who}${dryRun ? ' (dry run — nothing will be uploaded)' : ''}\n\n`,
+  );
+}
+
 function main() {
   const cwd = process.cwd();
   // `--dry-run` rehearses the whole release: packs, verifies, and asks npm to
@@ -283,9 +327,23 @@ function main() {
   // package and a version number is burned forever, so the run that proves the
   // pipeline works must not be the run that commits to it.
   const dryRun = process.argv.includes('--dry-run');
+
+  // `--check-auth` is the whole run: verify npm knows who you are and stop.
+  // Wired ahead of the build in the `release` script, because a token that
+  // expired is worth discovering in two seconds rather than after ten packages
+  // have been compiled.
+  if (process.argv.includes('--check-auth')) {
+    assertAuthenticated(false);
+    return;
+  }
+
   const packages = publishablePackages(cwd);
 
   if (dryRun) process.stdout.write('DRY RUN — nothing will be uploaded.\n\n');
+
+  // Before anything is packed: an expired token otherwise surfaces as a 404 on
+  // the first upload, after a full workspace build.
+  assertAuthenticated(dryRun);
 
   if (packages.length === 0) {
     // Discovery returning nothing is a broken script, not an empty release.

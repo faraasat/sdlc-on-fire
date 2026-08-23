@@ -1,3 +1,30 @@
+# pnpm settings.
+#
+# **These live here, not in `.npmrc`.** pnpm 10+ reads only auth and registry
+# settings from `.npmrc`; everything else must be configured here or in the
+# global config. Four settings were sitting inert in `.npmrc` until 2026-08-23
+# — `link-workspace-packages`, `prefer-workspace-packages`, `save-exact` and
+# `enable-pre-post-scripts` — and the giveaway was npm printing "Unknown project
+# config" on every single invocation, which everyone had learned to scroll past.
+#
+# The one that mattered was `enable-pre-post-scripts=false`, whose comment in
+# `.npmrc` claimed it stopped packages running install scripts. It does not do
+# that even when it works — it controls whether pnpm runs `pre`/`post` hooks
+# around *your own* scripts — and it was not working. Verified behaviourally: a
+# `prefoo` script ran with the setting in place. The protection the comment
+# described is `allowBuilds` below, which was correctly placed all along.
+
+# Workspace packages resolve to the local source, never the registry.
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+
+# Reproducible installs: exact versions, never a caret range that drifts.
+saveExact: true
+
+# No `pre`/`post` hook fires implicitly around a named script. A release script
+# that quietly gained a `prerelease` hook is a release nobody reviewed.
+enablePrePostScripts: false
+
 packages:
   - 'packages/*'
 
