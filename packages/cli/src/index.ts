@@ -100,6 +100,7 @@ import { checkDependencies, formatDepsCheck } from './deps.js';
 import { scanWorkspace, formatScan } from './scan.js';
 import { checkRisk, formatRisk } from './risk.js';
 import { recordRisks } from './risk-record-store.js';
+import { formatRetrieval, retrievalReport } from './retrieval-eval-run.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
@@ -2665,6 +2666,16 @@ export function buildProgram(): Command {
     .action(async (options: { json?: boolean }) => {
       const report = await governanceReport(root());
       emit(report, options.json === true, formatGovernance);
+    });
+
+  metrics
+    .command('retrieval')
+    .description('precision@k of the real retriever against the judged relevance set')
+    .option('-k, --k <n>', 'how many results to score', '10')
+    .option('--json', 'emit JSON')
+    .action(async (options: { k: string; json?: boolean }) => {
+      const report = await retrievalReport(root(), Number(options.k));
+      emit(report, options.json === true, formatRetrieval);
     });
 
   metrics

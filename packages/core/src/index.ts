@@ -58,6 +58,7 @@ export * from './risk-record.js';
 export * from './run-metrics.js';
 export * from './blocked-time.js';
 export * from './governance-metrics.js';
+export * from './retrieval-eval.js';
 export * from './situations.js';
 export * from './research-subtype.js';
 export * from './license-policy.js';
