@@ -17,16 +17,45 @@ import { z } from 'zod';
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const KEBAB_CASE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-/** Lifecycle stages a skill can back. One skill authors one stage's behaviour. */
+/**
+ * Lifecycle stages a skill can back. One skill authors one stage's behaviour.
+ *
+ * **Every value here must be a member of `LIFECYCLE_STAGES`, and a test enforces
+ * it.** This list said `plan-story` until 2026-08-23 while the lifecycle called
+ * the same stage `plan`. Nothing had ever noticed, because no skill claimed that
+ * stage — and the moment one did (P6-PAYLOAD-01) the skill was written,
+ * registered, compiled to all six targets and **unreachable**: `skillForStage`
+ * is asked for `plan` and matches on `plan-story`.
+ *
+ * That is the fourth time this repository has found two copies of a vocabulary
+ * that had never been in the same room, after the role registry, the MCP package
+ * names and the comment-effect roles. Each time the copies agreed right up until
+ * they did not, and each time the symptom was silence rather than an error. The
+ * skill is still *named* `plan-story`; only the stage it claims is shared
+ * vocabulary, and the name and the stage are different fields.
+ *
+ * `retrospective` is the one deliberate exception and is listed in
+ * `SKILL_STAGES_OUTSIDE_LIFECYCLE` so the check can be total rather than
+ * approximate.
+ */
 export const SKILL_STAGES = [
   'discovery',
   'spec',
   'decompose',
-  'plan-story',
+  'plan',
   'implement',
   'review',
   'retrospective',
 ] as const;
+
+/**
+ * Skill stages that are deliberately not lifecycle states.
+ *
+ * A retrospective happens after a card is done; it is not a state anything
+ * transitions *into*. Named explicitly so the conformance test can assert the
+ * whole of `SKILL_STAGES` rather than skipping what it cannot explain.
+ */
+export const SKILL_STAGES_OUTSIDE_LIFECYCLE = ['retrospective'] as const;
 export const SkillStageSchema = z.enum(SKILL_STAGES);
 export type SkillStage = z.infer<typeof SkillStageSchema>;
 
@@ -48,7 +77,23 @@ export type SkillStage = z.infer<typeof SkillStageSchema>;
  * trigger nothing dispatches — the same defect the stage validation exists to
  * prevent, arriving through a different field.
  */
-export const SKILL_SITUATIONS = ['merge-conflict'] as const;
+/**
+ * Events that dispatch a skill, as opposed to lifecycle stages (contract 04 §2.1).
+ *
+ * Closed on purpose: an open string lets a skill declare a trigger nothing
+ * dispatches, which reads in review exactly like a skill that works.
+ *
+ * Each is named for the **trigger**, never for the skill it runs. A situation
+ * called `architecture` would say only "this is when the architecture skill
+ * runs" — circular, and silent about when it actually fires.
+ */
+export const SKILL_SITUATIONS = [
+  'merge-conflict',
+  /** A change touching more than one module. Most work items never do. */
+  'crosses-module-boundary',
+  /** A story large enough that the order of the work decides whether it lands. */
+  'oversized-story',
+] as const;
 export const SkillSituationSchema = z.enum(SKILL_SITUATIONS);
 export type SkillSituation = z.infer<typeof SkillSituationSchema>;
 

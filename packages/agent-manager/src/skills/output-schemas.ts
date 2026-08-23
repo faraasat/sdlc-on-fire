@@ -156,12 +156,114 @@ export const ResolveConflictOutputSchema = z
  * A skill whose ref is absent from this table cannot be dispatched — checked as
  * a test, so a new skill cannot ship a reference that points at nothing.
  */
+
+/* ---- planning skills (P6-PAYLOAD-01) ---- */
+
+/**
+ * Every planning schema carries `blocked_on`.
+ *
+ * A planning skill that cannot say "I could not plan this, here is what is
+ * missing" will invent the plan instead — and an invented plan is worse than an
+ * absent one, because it looks like work and is acted on. The field is optional
+ * and its presence is the skill's escape hatch.
+ */
+const BlockedOn = z.array(z.string().min(1)).optional();
+
+export const DiscoveryOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    problem: z.string().min(1),
+    affected: z.array(z.object({ who: z.string().min(1), evidence: z.string().min(1) })),
+    constraints: z.array(z.object({ constraint: z.string().min(1), source: z.string().min(1) })),
+    open_questions: z.array(z.string().min(1)),
+    // Kept apart on purpose: a reader must be able to tell what somebody said
+    // from what the agent worked out, and a single list loses that forever.
+    inferred: z.array(z.string().min(1)).default([]),
+    blocked_on: BlockedOn,
+  })
+  .strict();
+
+export const DecomposeOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    children: z.array(
+      z.object({
+        title: z.string().min(1),
+        kind: z.enum(['story', 'task', 'bug']),
+        acceptance_criteria: z.array(z.string().min(1)).min(1),
+        verify_command: z.string().min(1),
+        /** Declared so two children cannot be run in parallel against one file. */
+        owns_files: z.array(z.string().min(1)).default([]),
+        traces_to: z.string().min(1),
+      }),
+    ),
+    blocked_on: BlockedOn,
+  })
+  .strict();
+
+export const PlanStoryOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    steps: z.array(
+      z.object({
+        step: z.string().min(1),
+        files: z.array(z.string().min(1)).default([]),
+      }),
+    ),
+    verify_command: z.string().min(1),
+    assumptions: z.array(z.string().min(1)).default([]),
+    non_goals: z.array(z.string().min(1)).default([]),
+    blocked_on: BlockedOn,
+  })
+  .strict();
+
+export const ArchitectureOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    boundaries: z.array(z.object({ module: z.string().min(1), owns: z.string().min(1) })),
+    crossings: z.array(z.string().min(1)).default([]),
+    decisions: z.array(
+      z.object({
+        decision: z.string().min(1),
+        // Required, both of them. A decision with no rejected alternative was
+        // not a decision, and one with no reversal condition cannot be revisited
+        // by anybody who was not in the room.
+        rejected: z.string().min(1),
+        revisit_when: z.string().min(1),
+      }),
+    ),
+    blocked_on: BlockedOn,
+  })
+  .strict();
+
+export const ImplementationPlanningOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    sequence: z.array(
+      z.object({
+        step: z.string().min(1),
+        preconditions: z.array(z.string().min(1)).default([]),
+        /** A checkpoint that cannot fail is not a checkpoint. */
+        checkpoint: z.string().min(1),
+      }),
+    ),
+    /** After this step a rollback stops being cheap — the thing worth knowing in advance. */
+    point_of_no_return: z.string().min(1).nullable(),
+    blocked_on: BlockedOn,
+  })
+  .strict();
+
 export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/spec-output.schema.json': SpecOutputSchema,
   'schemas/implement-output.schema.json': ImplementOutputSchema,
   'schemas/review-output.schema.json': ReviewOutputSchema,
   'schemas/retrospective-output.schema.json': RetrospectiveOutputSchema,
   'schemas/resolve-conflict-output.schema.json': ResolveConflictOutputSchema,
+  'schemas/discovery-output.schema.json': DiscoveryOutputSchema,
+  'schemas/decompose-output.schema.json': DecomposeOutputSchema,
+  'schemas/plan-story-output.schema.json': PlanStoryOutputSchema,
+  'schemas/architecture-output.schema.json': ArchitectureOutputSchema,
+  'schemas/implementation-planning-output.schema.json': ImplementationPlanningOutputSchema,
 };
 
 export function resolveOutputSchema(ref: string): z.ZodType | undefined {

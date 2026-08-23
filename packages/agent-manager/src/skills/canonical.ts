@@ -3,6 +3,13 @@ import { REVIEW_SKILL } from './review.js';
 import { RETROSPECTIVE_SKILL } from './retrospective.js';
 import { RESOLVE_CONFLICT_SKILL } from './resolve-conflict.js';
 import { WORK_ITEM_ID_ARG } from './arguments.js';
+import {
+  ARCHITECTURE_SKILL,
+  DECOMPOSE_SKILL,
+  DISCOVERY_SKILL,
+  IMPLEMENTATION_PLANNING_SKILL,
+  PLAN_STORY_SKILL,
+} from './planning.js';
 
 /**
  * The canonical stage skills (P1-SKILL-01).
@@ -113,6 +120,14 @@ export const CANONICAL_SKILLS: Readonly<Record<string, CanonicalSkill>> = {
   review: REVIEW_SKILL,
   retrospective: RETROSPECTIVE_SKILL,
   'resolve-conflict': RESOLVE_CONFLICT_SKILL,
+  // P6-PAYLOAD-01. Registered here, not merely exported: a skill absent from
+  // this record is invisible to `skillForStage`, so its stage would report "no
+  // skill available" while the skill sat in a file two directories away.
+  discovery: DISCOVERY_SKILL,
+  decompose: DECOMPOSE_SKILL,
+  'plan-story': PLAN_STORY_SKILL,
+  architecture: ARCHITECTURE_SKILL,
+  'implementation-planning': IMPLEMENTATION_PLANNING_SKILL,
 };
 
 export function getSkill(name: string): CanonicalSkill | undefined {

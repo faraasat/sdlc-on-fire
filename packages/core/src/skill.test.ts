@@ -4,7 +4,9 @@ import {
   PROMPT_SECTION_ORDER,
   SKILL_SITUATIONS,
   SKILL_STAGES,
+  SKILL_STAGES_OUTSIDE_LIFECYCLE,
 } from './skill.js';
+import { LIFECYCLE_STAGES } from './lifecycle.js';
 
 function skill(overrides: Record<string, unknown> = {}) {
   return {
@@ -203,6 +205,43 @@ describe('exactly one trigger (contract 04 §2.1, P2-SKILL-07)', () => {
     expect(
       CanonicalSkillSchema.safeParse({ ...base, situation: 'whenever-i-feel-like-it' }).success,
     ).toBe(false);
-    expect([...SKILL_SITUATIONS]).toEqual(['merge-conflict']);
+    expect([...SKILL_SITUATIONS]).toEqual([
+      'merge-conflict',
+      'crosses-module-boundary',
+      'oversized-story',
+    ]);
+  });
+});
+
+describe('the skill and lifecycle vocabularies are one vocabulary', () => {
+  it('every skill stage is a lifecycle stage, or a declared exception', () => {
+    // This is the check that did not exist on 2026-08-23, when SKILL_STAGES said
+    // `plan-story` and LIFECYCLE_STAGES said `plan`. Nothing noticed while no
+    // skill claimed that stage. The moment one did, the skill was written,
+    // registered, compiled to six targets and unreachable — `skillForStage` was
+    // asked for `plan` and matched on `plan-story`, and the symptom was silence.
+    //
+    // Fourth instance in this repository of two copies of a vocabulary that had
+    // never been in the same room. This puts them in the same room.
+    const lifecycle = new Set<string>(LIFECYCLE_STAGES);
+    const allowed = new Set<string>(SKILL_STAGES_OUTSIDE_LIFECYCLE);
+    const orphans = SKILL_STAGES.filter((s) => !lifecycle.has(s) && !allowed.has(s));
+    expect(orphans).toEqual([]);
+  });
+
+  it('the exception list does not name a stage that is in the lifecycle', () => {
+    // Otherwise the escape hatch quietly grows into a second vocabulary of its
+    // own, which is the same failure one indirection further away.
+    const lifecycle = new Set<string>(LIFECYCLE_STAGES);
+    for (const stage of SKILL_STAGES_OUTSIDE_LIFECYCLE) {
+      expect(lifecycle.has(stage)).toBe(false);
+    }
+  });
+
+  it('the exception list only names real skill stages', () => {
+    const stages = new Set<string>(SKILL_STAGES);
+    for (const stage of SKILL_STAGES_OUTSIDE_LIFECYCLE) {
+      expect(stages.has(stage)).toBe(true);
+    }
   });
 });

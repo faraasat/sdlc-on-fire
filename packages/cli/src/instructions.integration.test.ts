@@ -81,22 +81,28 @@ describe('computing the next step', () => {
     expect(result.skill?.name).toBe('implement');
   });
 
-  it('reports a stage the v0.1 cut has no skill for, rather than guessing', async () => {
-    // standard/feature is discovery → spec → decompose → plan → …, and
-    // decompose is explicitly deferred past v0.1 (mvp-slice). The honest answer
-    // is "no skill", not the nearest skill that happens to exist.
+  it('reports a stage that has no skill, rather than guessing', async () => {
+    // The example moved with P6-PAYLOAD-01. `decompose` was the skill-less stage
+    // when this was written and now has one; `test` does not and will not — the
+    // daemon runs verify, so there is nothing for an agent to be handed there.
+    // The invariant is unchanged: the honest answer is "no skill", never the
+    // nearest skill that happens to exist.
     await writeCard('FEAT-007', {
       title: 'CSV export',
       kind: 'feature',
       preset: 'standard',
       work_type: 'feature',
-      lifecycle_state: 'spec',
+      lifecycle_state: 'implement',
     });
 
     const result = await instructions(root, 'FEAT-007');
-    expect(result.nextStage).toBe('decompose');
+    expect(result.nextStage).toBe('test');
     expect(result.skill).toBeNull();
-    expect(result.reason).toMatch(/No skill drives the "decompose" stage/);
+    // Not the generic "no skill" line: `test` has a *specific* reason and a
+    // remedy, and asserting the specific one is what stops it degrading into
+    // the generic one without anybody noticing.
+    expect(result.reason).toMatch(/No agent is dispatched at the test stage/);
+    expect(result.reason).toContain('sdlc verify');
   });
 
   it('gives a task its shorter ladder (ADR-0070)', async () => {
