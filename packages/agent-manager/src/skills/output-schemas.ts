@@ -1,3 +1,4 @@
+import { TEST_TIERS } from '@sdlc-on-fire/core';
 import { z } from 'zod';
 import { AuthoredHandoffSchema } from '@sdlc-on-fire/core';
 
@@ -253,6 +254,30 @@ export const ImplementationPlanningOutputSchema = z
   })
   .strict();
 
+export const WriteTestsOutputSchema = z
+  .object({
+    work_item_id: z.string().min(1),
+    tier: z.enum(TEST_TIERS),
+    tests: z.array(
+      z.object({
+        file: z.string().min(1),
+        name: z.string().min(1),
+        /**
+         * The production change that would make this test fail.
+         *
+         * Required, and it is the whole point. A test with no such change
+         * asserts something already guaranteed and passes forever without
+         * checking anything — the exact defect mutation testing exists to find,
+         * asked for at the moment it is cheapest to answer.
+         */
+        catches: z.string().min(1),
+      }),
+    ),
+    /** Tiers the author judged impossible to write here, and why. */
+    blocked_on: z.array(z.string().min(1)).optional(),
+  })
+  .strict();
+
 export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/spec-output.schema.json': SpecOutputSchema,
   'schemas/implement-output.schema.json': ImplementOutputSchema,
@@ -264,6 +289,7 @@ export const OUTPUT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   'schemas/plan-story-output.schema.json': PlanStoryOutputSchema,
   'schemas/architecture-output.schema.json': ArchitectureOutputSchema,
   'schemas/implementation-planning-output.schema.json': ImplementationPlanningOutputSchema,
+  'schemas/write-tests-output.schema.json': WriteTestsOutputSchema,
 };
 
 export function resolveOutputSchema(ref: string): z.ZodType | undefined {

@@ -33,3 +33,4 @@ export const agentManagerDependencies: readonly PackageInfo[] = [corePackage];
 export * from './adapters/tool-budget.js';
 export * from './adapters/markdown-targets.js';
 export * from './skills/planning.js';
+export * from './skills/write-tests.js';

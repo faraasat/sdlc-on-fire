@@ -93,6 +93,8 @@ export const SKILL_SITUATIONS = [
   'crosses-module-boundary',
   /** A story large enough that the order of the work decides whether it lands. */
   'oversized-story',
+  /** A required test tier has no files. Not a stage: it is a gate result. */
+  'tier-unsatisfied',
 ] as const;
 export const SkillSituationSchema = z.enum(SKILL_SITUATIONS);
 export type SkillSituation = z.infer<typeof SkillSituationSchema>;

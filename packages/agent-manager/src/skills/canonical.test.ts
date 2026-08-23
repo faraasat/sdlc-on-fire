@@ -18,8 +18,8 @@ const skills = Object.values(CANONICAL_SKILLS);
 describe('canonical skills', () => {
   it('ships exactly the skills it claims to', () => {
     // spec + implement (P1-SKILL-01), review (P1-SKILL-02), retrospective
-    // (P1-SKILL-03), resolve-conflict (P2-SKILL-07), and the five planning
-    // skills (P6-PAYLOAD-01). `review` was once built but never registered,
+    // (P1-SKILL-03), resolve-conflict (P2-SKILL-07), the five planning
+    // skills (P6-PAYLOAD-01) and write-tests (P6-PAYLOAD-02). `review` was once built but never registered,
     // which made it invisible to stage resolution — hence this census, and
     // hence updating it deliberately rather than letting it drift.
     expect(Object.keys(CANONICAL_SKILLS).sort()).toEqual([
@@ -33,6 +33,7 @@ describe('canonical skills', () => {
       'retrospective',
       'review',
       'spec',
+      'write-tests',
     ]);
   });
 

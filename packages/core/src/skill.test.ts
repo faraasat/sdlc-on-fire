@@ -209,6 +209,7 @@ describe('exactly one trigger (contract 04 §2.1, P2-SKILL-07)', () => {
       'merge-conflict',
       'crosses-module-boundary',
       'oversized-story',
+      'tier-unsatisfied',
     ]);
   });
 });
