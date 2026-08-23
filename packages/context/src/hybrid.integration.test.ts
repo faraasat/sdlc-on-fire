@@ -1,10 +1,36 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { applySchema, provisionPglite, type ProvisionedDatabase } from '@sdlc-on-fire/db';
 import type { EmbedderPort } from '@sdlc-on-fire/core';
 import { DEFAULT_RRF_K, hybridSearch, rrf } from './hybrid.js';
+
+/**
+ * A temp directory this suite will actually remove (P6-SURFACE-13).
+ *
+ * Closing a database handle is not removing its data directory. 108GB of
+ * abandoned PGlite data filled a disk before anything noticed, and ENOSPC
+ * surfaces during *collection* as a failed file naming an innocent suite —
+ * which reads exactly like flake, and cost a timeout raise and an afternoon
+ * before anyone looked at `df`.
+ *
+ * The retry is for Windows, which keeps a file locked while anything holds it.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+const madeDirs: string[] = [];
+
+async function tempDir(prefix: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  madeDirs.push(dir);
+  return dir;
+}
+
+afterAll(async () => {
+  for (const dir of madeDirs.splice(0)) {
+    await fs.rm(dir, { recursive: true, force: true, ...RM_RETRY }).catch(() => undefined);
+  }
+});
 
 /**
  * P1-CTX-03 — hybrid retrieval, against real PGlite with a real `vector` column
@@ -74,7 +100,7 @@ async function seed(rows: { id: string; text: string }[], embedder: EmbedderPort
 }
 
 beforeEach(async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sdlcof-hybrid-'));
+  const root = await tempDir('sdlcof-hybrid-');
   db = await provisionPglite({ workspaceRoot: root });
   await applySchema(db);
 }, 90_000);

@@ -4,8 +4,34 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { renderJsonFailure } from './index.js';
+
+/**
+ * A temp directory this suite will actually remove (P6-SURFACE-13).
+ *
+ * Closing a database handle is not removing its data directory. 108GB of
+ * abandoned PGlite data filled a disk before anything noticed, and ENOSPC
+ * surfaces during *collection* as a failed file naming an innocent suite —
+ * which reads exactly like flake, and cost a timeout raise and an afternoon
+ * before anyone looked at `df`.
+ *
+ * The retry is for Windows, which keeps a file locked while anything holds it.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+const madeDirs: string[] = [];
+
+async function tempDir(prefix: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  madeDirs.push(dir);
+  return dir;
+}
+
+afterAll(async () => {
+  for (const dir of madeDirs.splice(0)) {
+    await fs.rm(dir, { recursive: true, force: true, ...RM_RETRY }).catch(() => undefined);
+  }
+});
 
 const run = promisify(execFile);
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'index.js');
@@ -26,7 +52,7 @@ const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist'
 let root: string;
 
 beforeAll(async () => {
-  root = await fs.mkdtemp(path.join(os.tmpdir(), 'sdlcof-json-'));
+  root = await tempDir('sdlcof-json-');
   await run('node', [CLI, '-C', root, 'init']).catch(() => undefined);
 }, 120_000);
 

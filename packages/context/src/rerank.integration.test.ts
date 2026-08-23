@@ -8,6 +8,32 @@ import type { HybridHit } from './hybrid.js';
 import { DEFAULT_RERANK_TOP_K, rerank, retrieve, type CrossEncoder } from './rerank.js';
 
 /**
+ * A temp directory this suite will actually remove (P6-SURFACE-13).
+ *
+ * Closing a database handle is not removing its data directory. 108GB of
+ * abandoned PGlite data filled a disk before anything noticed, and ENOSPC
+ * surfaces during *collection* as a failed file naming an innocent suite —
+ * which reads exactly like flake, and cost a timeout raise and an afternoon
+ * before anyone looked at `df`.
+ *
+ * The retry is for Windows, which keeps a file locked while anything holds it.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+const madeDirs: string[] = [];
+
+async function tempDir(prefix: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  madeDirs.push(dir);
+  return dir;
+}
+
+afterAll(async () => {
+  for (const dir of madeDirs.splice(0)) {
+    await fs.rm(dir, { recursive: true, force: true, ...RM_RETRY }).catch(() => undefined);
+  }
+});
+
+/**
  * P1-CTX-09 — the optional cross-encoder reranker.
  *
  * Two properties carry the design and both are tested against a real corpus in
@@ -176,7 +202,7 @@ async function seed(rows: { id: string; text: string }[], embedder: EmbedderPort
 }
 
 beforeEach(async () => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sdlcof-rerank-'));
+  const root = await tempDir('sdlcof-rerank-');
   db = await provisionPglite({ workspaceRoot: root });
   opened.push(db);
   await applySchema(db);

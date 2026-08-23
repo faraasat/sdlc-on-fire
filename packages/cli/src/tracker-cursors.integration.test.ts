@@ -1,8 +1,35 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { applySchema, loadCursors, provisionPglite, saveCursors } from '@sdlc-on-fire/db';
+
+/**
+ * A temp directory this suite will actually remove (P6-SURFACE-13).
+ *
+ * Closing a database handle is not removing its data directory. 108GB of
+ * abandoned PGlite data filled a disk before anything noticed, and ENOSPC
+ * surfaces during *collection* as a failed file naming an innocent suite —
+ * which reads exactly like flake, and cost a timeout raise and an afternoon
+ * before anyone looked at `df`.
+ *
+ * The retry is for Windows, which keeps a file locked while anything holds it.
+ */
+const RM_RETRY = { maxRetries: 5, retryDelay: 100 } as const;
+const madeDirs: string[] = [];
+
+async function tempDir(prefix: string): Promise<string> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  madeDirs.push(dir);
+  return dir;
+}
+
+afterAll(async () => {
+  for (const dir of madeDirs.splice(0)) {
+    await fs.rm(dir, { recursive: true, force: true, ...RM_RETRY }).catch(() => undefined);
+  }
+});
+
 import {
   fingerprint,
   runSync,
@@ -22,7 +49,7 @@ import {
  */
 
 async function freshDb() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'sdlcof-tracker-'));
+  const root = await tempDir('sdlcof-tracker-');
   const db = await provisionPglite({ workspaceRoot: root });
   await applySchema(db);
   return db;
