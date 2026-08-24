@@ -2,7 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   checkEchoBack,
+  clarificationGate,
   detectRiskSurfaces,
+  findClarifications,
   isLifecycleStage,
   isTerminalStage,
   kanbanColumnForStage,
@@ -380,6 +382,21 @@ export async function advanceWorkItem(
     // 1. Structural + invariant guards.
     const decision = await engine.canTransition(id, to);
     if (!decision.allowed) refusals.push(`${decision.guard}: ${decision.reason}`);
+
+    // 1. The clarification gate (P6-SURFACE-05, FEAT-GOV-004/005).
+    //
+    // Checked on EVERY advance, and first. A `[NEEDS CLARIFICATION]` marker is a
+    // blocker, not a note — the whole reason to write one down is that the work
+    // should not proceed past it. A spec with three unanswered questions that
+    // reaches `plan` produces a plan built on three guesses, and the guesses are
+    // invisible by the time anybody reads the plan.
+    //
+    // Nothing here answers anything. An agent resolving its own marker is an
+    // agent deciding what the user meant.
+    {
+      const gate = clarificationGate(findClarifications(await fs.readFile(found.filePath, 'utf8')));
+      if (!gate.clear) refusals.push(`clarification: ${gate.because}`);
+    }
 
     // 1a. The echo-back gate (ADR-0049). Evaluated on the way *out* of intake
     // and discovery: the point is to catch a misread requirement before anyone
