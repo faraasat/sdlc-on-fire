@@ -3,6 +3,8 @@ import {
   applyRetrievalBudget,
   contextPackPath,
   loadTierPolicy,
+  needsDiversity,
+  pickDiverseModel,
   resolveStageProfile,
   resolveWorkspaceLayout,
   tolerantRecorder,
@@ -76,6 +78,8 @@ export interface RunResult {
   /** Layers the profile wanted and the budget or the corpus did not supply. */
   readonly droppedLayers: readonly string[];
   readonly durationMs: number;
+  /** True when the primary model was skipped because it had already worked on this item. */
+  readonly avoidedPrimaryModel?: boolean | undefined;
   /** The skill's structured output, exactly as it validated. */
   readonly output: Record<string, unknown>;
 }
@@ -97,6 +101,7 @@ export interface DryRunResult {
   readonly contextPackPath: string;
   readonly packTokens: number;
   readonly droppedLayers: readonly string[];
+  readonly avoidedPrimaryModel?: boolean | undefined;
   readonly dryRun: true;
 }
 
@@ -207,6 +212,30 @@ export async function runWorkItem(
       .filter((layer) => layer.reason === 'budget')
       .map((layer) => layer.kind);
 
+    // Enforced adversarial diversity (P6-SURFACE-09). A model reviewing its own
+    // output is not a second opinion — it is the same model asked twice, and it
+    // agrees with itself for the same reasons it was wrong the first time.
+    //
+    // The exclusion set comes from the run rows, which is the only place that
+    // knows what actually ran. Asking the config would answer what is *supposed*
+    // to run, and the two differ exactly when a fallback fired.
+    let model = tier.model;
+    let avoided = false;
+    if (needsDiversity(stage)) {
+      const priorModels = await db.query<{ model: string | null }>(
+        `SELECT DISTINCT model FROM runs
+          WHERE work_item_id = $1 AND model IS NOT NULL AND status = 'pass';`,
+        [id],
+      );
+      const choice = pickDiverseModel(
+        [tier.model, ...tier.fallbacks],
+        priorModels.map((row) => row.model ?? ''),
+        tier.tier,
+      );
+      model = choice.model;
+      avoided = choice.avoided;
+    }
+
     if (options.dryRun === true) {
       // A dry run still writes the pack and still mints the id, because the
       // question it answers is "what would this agent be handed" — and a dry run
@@ -218,11 +247,12 @@ export async function runWorkItem(
         runId,
         stage,
         skill: skill.name,
-        model: tier.model,
+        model,
         contextPackPath: pack.relativePath,
         packTokens: assembled.pack.totalTokens,
         droppedLayers: dropped,
         dryRun: true,
+        ...(avoided ? { avoidedPrimaryModel: true } : {}),
       };
     }
 
@@ -234,7 +264,7 @@ export async function runWorkItem(
         recorder,
         runId,
         workItemId: id,
-        model: tier.model,
+        model,
         contextPackPath: pack.relativePath,
       },
       options.transport ?? claudeCodeTransport(),
@@ -245,11 +275,12 @@ export async function runWorkItem(
       runId,
       stage,
       skill: skill.name,
-      model: tier.model,
+      model,
       contextPackPath: pack.relativePath,
       packTokens: assembled.pack.totalTokens,
       droppedLayers: dropped,
       durationMs: result.durationMs,
+      ...(avoided ? { avoidedPrimaryModel: true } : {}),
       output: result.output,
     };
   } finally {
@@ -269,6 +300,12 @@ export function formatRun(result: RunResult | DryRunResult): string {
     `  model:  ${result.model}`,
     `  pack:   ${result.contextPackPath} (~${String(result.packTokens)} tokens)`,
   ];
+  if (result.avoidedPrimaryModel === true) {
+    // Said out loud. A review that quietly ran on a fallback because the primary
+    // had already touched this item is a routing decision the reader should see,
+    // not infer from a model name.
+    lines.push('  (fell back — the primary model had already worked on this item)');
+  }
   if (result.droppedLayers.length > 0) {
     // Named, not counted. A pack silently missing retrieval because of a ceiling
     // is indistinguishable from one where retrieval found nothing.

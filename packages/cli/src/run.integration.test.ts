@@ -37,7 +37,7 @@ afterAll(async () => {
  * in `index.ts` and has no callable function — a gap worth noting and not worth
  * refactoring from inside a test for a different command.
  */
-async function workspace(stage = 'triage'): Promise<string> {
+async function workspace(stage = 'triage', preset = 'standard'): Promise<string> {
   const root = await fs.realpath(await tempDir('sdlcof-run-'));
   await init(root);
   const dir = path.join(resolveWorkspaceLayout(root).kanbanDir, '_inbox');
@@ -51,7 +51,7 @@ async function workspace(stage = 'triage'): Promise<string> {
       'title: Export breaks across DST',
       'status: Inbox',
       `lifecycle_state: ${stage}`,
-      'preset: standard',
+      `preset: ${preset}`,
       'work_type: bug',
       '---',
       '',
@@ -180,5 +180,62 @@ describe('sdlc run', () => {
       () => undefined,
     );
     expect(await fs.readFile(path.join(root, first.contextPackPath), 'utf8')).toBe(original);
+  }, 240_000);
+});
+
+describe('adversarial diversity (P6-SURFACE-09)', () => {
+  const REVIEW_OUTPUT = JSON.stringify({
+    work_item_id: 'BUG-001',
+    findings: [
+      {
+        severity: 'minor',
+        file: 'src/export.ts',
+        summary: 'the DST branch is untested',
+        rationale: 'nothing exercises the hour that repeats, which is the whole defect',
+      },
+    ],
+    handoff: { openQuestions: [] },
+  });
+
+  it('refuses to let a model review what it already worked on', async () => {
+    // A RE-REVIEW after changes: the card goes back through `review`, and the
+    // model that reviewed it the first time would otherwise review it again and
+    // agree with itself for the reasons it missed something the first time.
+    //
+    // Verified against real run rows, not a mock. The exclusion set comes from
+    // what actually ran; asking the config would answer what is *supposed* to
+    // run, and the two differ exactly when a fallback fired.
+    //
+    // Two scenarios deliberately NOT used here. One model for every tier is
+    // already refused by the config schema — "a tier that is not a different
+    // model is a label, not a capability level" — a better guard that fires
+    // first. And `security_review` → `review` would have been the canonical
+    // case, except no skill claims the `security_review` STAGE at all: the
+    // security-review skill is situational. Filed as P6-SURFACE-15.
+    const root = await workspace('review');
+    await runWorkItem(root, 'BUG-001', {
+      transport: transport({ stdout: `review_output ${REVIEW_OUTPUT}` }),
+    });
+
+    // The model that ran, read back from the row rather than assumed. The
+    // exclusion set is built from these, so a row with no model would make the
+    // guard vacuous and this assertion is what notices.
+    const [row] = await runRows(root);
+    expect(typeof row?.['model']).toBe('string');
+
+    await expect(
+      runWorkItem(root, 'BUG-001', {
+        transport: transport({ stdout: `review_output ${REVIEW_OUTPUT}` }),
+      }),
+    ).rejects.toThrow(/not a second opinion/);
+  }, 240_000);
+
+  it('lets a non-adversarial stage reuse the same model', async () => {
+    // Diversity is enforced where a second opinion is the point, and nowhere
+    // else. Applying it to `implement` would refuse to let one model do two
+    // pieces of work on a card, which is not a property anybody wants.
+    const root = await workspace();
+    await runWorkItem(root, 'BUG-001', { transport: transport() });
+    await expect(runWorkItem(root, 'BUG-001', { transport: transport() })).resolves.toBeTruthy();
   }, 240_000);
 });
