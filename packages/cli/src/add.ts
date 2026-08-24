@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { recordRisks } from './risk-record-store.js';
 import path from 'node:path';
 import {
   computeBlastRadius,
@@ -113,6 +114,8 @@ export interface AddResult {
   readonly blockers: readonly string[];
   readonly cautions: readonly string[];
   readonly radius: BlastRadius;
+  /** Present when file-ownership collisions were recorded, or failed to be. */
+  readonly riskNote?: string | undefined;
 }
 
 export async function addIntoContainer(root: string, options: AddOptions): Promise<AddResult> {
@@ -171,6 +174,37 @@ export async function addIntoContainer(root: string, options: AddOptions): Promi
     'utf8',
   );
 
+  // File-ownership collisions become risk records (P6-WRITEPATH-02,
+  // P6-INFLIGHT-03). The blast-radius scan has always *found* them and always
+  // only printed them, so a collision noticed at insertion left no trace once
+  // the terminal scrolled — and the person who hits it three days later, mid
+  // merge, has no record that anybody knew.
+  //
+  // `overlap` findings are deliberately not recorded: overlap is common,
+  // usually fine, and a card per overlap turns the risk directory into a place
+  // nobody looks.
+  //
+  // Never fails the insertion. A register that can stop the work is worse than
+  // none — but a failure to write is reported, because a writer that quietly
+  // does nothing is how `runs` and the context packs stayed empty.
+  const collisions = radius.ownership
+    .filter((finding) => finding.severity === 'conflict')
+    .flatMap((finding) =>
+      finding.paths.map((filePath) => ({ path: filePath, withItem: finding.itemId })),
+    );
+
+  let riskNote: string | undefined;
+  if (collisions.length > 0) {
+    try {
+      const recorded = await recordRisks(layout.root, workItemId, [], () => new Date(), collisions);
+      if (recorded.created.length > 0) {
+        riskNote = `recorded ${String(recorded.created.length)} ownership risk(s) under ${recorded.dir}: ${recorded.created.map((r) => r.id).join(', ')}`;
+      }
+    } catch (cause) {
+      riskNote = `ownership risks were NOT recorded: ${cause instanceof Error ? cause.message : String(cause)}`;
+    }
+  }
+
   return {
     workItemId,
     recordId,
@@ -179,6 +213,7 @@ export async function addIntoContainer(root: string, options: AddOptions): Promi
     blockers: verdict.blockers,
     cautions: verdict.cautions,
     radius,
+    ...(riskNote === undefined ? {} : { riskNote }),
   };
 }
 
@@ -190,6 +225,7 @@ export function formatAdd(result: AddResult): string {
     '',
   ];
 
+  if (result.riskNote !== undefined) lines.push(`  ${result.riskNote}`, '');
   if (result.state === 'approved') {
     lines.push(`✓ rescope approved — ${result.workItemId} may enter ${result.radius.target}.`);
   } else if (result.state === 'rejected') {

@@ -3,6 +3,7 @@ import path from 'node:path';
 import {
   resolveWorkspaceLayout,
   RISK_SEVERITY,
+  blastRadiusRisks,
   riskRecordsFor,
   type RiskRecord,
   type SurfaceFinding,
@@ -41,13 +42,26 @@ export interface RecordRisksResult {
 }
 
 function render(record: RiskRecord): string {
-  const grade = RISK_SEVERITY[record.surface];
+  // A blast-radius record has no surface, so it has no entry in the
+  // surface-keyed severity table either. The reason is stated here rather than
+  // looked up, because the axis is the same one — how reversible the damage is —
+  // and a `?? ''` would silently drop the sentence that makes the grade arguable.
+  const because =
+    record.surface === null
+      ? 'two items writing one file is a merge somebody has to do: expensive, and recoverable'
+      : RISK_SEVERITY[record.surface].because;
+  const heading =
+    record.surface === null
+      ? `file-ownership risk on ${record.work_item_id}`
+      : `${record.surface} risk on ${record.work_item_id}`;
+
   return [
     '---',
     `id: ${record.id}`,
     'kind: risk',
     `work_item_id: ${record.work_item_id}`,
-    `surface: ${record.surface}`,
+    `source: ${record.source}`,
+    `surface: ${record.surface ?? 'null'}`,
     `severity: ${record.severity}`,
     `status: ${record.status}`,
     'mitigation: null',
@@ -55,11 +69,11 @@ function render(record: RiskRecord): string {
     `created_at: ${record.created_at}`,
     '---',
     '',
-    `# ${record.surface} risk on ${record.work_item_id}`,
+    `# ${heading}`,
     '',
-    `**Severity ${record.severity}** — ${grade.because}.`,
+    `**Severity ${record.severity}** — ${because}.`,
     '',
-    '## What matched',
+    record.source === 'blast-radius' ? '## What collides' : '## What matched',
     '',
     ...record.evidence.map((item) => `- \`${item.path}\` — ${item.matched}`),
     '',
@@ -74,7 +88,15 @@ function render(record: RiskRecord): string {
   ].join('\n');
 }
 
-/** Surfaces already on disk for this work item. */
+/**
+ * Risk keys already on disk for this work item.
+ *
+ * The key is `source:surface` (P6-WRITEPATH-02), not the surface alone. Every
+ * blast-radius record has `surface: null`, so a surface-only key would let the
+ * first one suppress every subsequent collision with a different item — and a
+ * collision that is not recorded because a different collision already was is
+ * the worst kind of duplicate suppression.
+ */
 async function existingSurfaces(dir: string, workItemId: string): Promise<Set<string>> {
   const entries = await fs.readdir(dir).catch(() => [] as string[]);
   const surfaces = new Set<string>();
@@ -83,8 +105,17 @@ async function existingSurfaces(dir: string, workItemId: string): Promise<Set<st
     const raw = await fs.readFile(path.join(dir, name), 'utf8').catch(() => '');
     const data = parseFrontmatter(raw).data;
     if (data['work_item_id'] !== workItemId) continue;
+    const source = typeof data['source'] === 'string' ? data['source'] : 'risk-surface';
     const surface = data['surface'];
-    if (typeof surface === 'string') surfaces.add(surface);
+    if (source === 'blast-radius') {
+      // Keyed by who it collides with, which is what the evidence names.
+      for (const line of raw.split('\n')) {
+        const match = /also declared by ([A-Za-z0-9-]+)/.exec(line);
+        if (match?.[1] !== undefined) surfaces.add(`blast-radius:${match[1]}`);
+      }
+    } else if (typeof surface === 'string') {
+      surfaces.add(`risk-surface:${surface}`);
+    }
   }
   return surfaces;
 }
@@ -94,23 +125,40 @@ export async function recordRisks(
   workItemId: string,
   findings: readonly SurfaceFinding[],
   now: () => Date = () => new Date(),
+  /**
+   * File-ownership collisions from a blast-radius scan (P6-WRITEPATH-02).
+   *
+   * Optional and last, so every existing caller is unchanged. `overlap` findings
+   * are deliberately not accepted here: overlap is common, usually fine, and a
+   * card per overlap turns the risk directory into a place nobody looks.
+   */
+  collisions: readonly { readonly path: string; readonly withItem: string }[] = [],
 ): Promise<RecordRisksResult> {
   const layout = resolveWorkspaceLayout(root);
   const dir = path.join(layout.kanbanDir, RISKS_DIRNAME);
   await fs.mkdir(dir, { recursive: true });
 
   const already = await existingSurfaces(dir, workItemId);
-  const fresh = findings.filter((finding) => !already.has(finding.surface));
+  const fresh = findings.filter((finding) => !already.has(`risk-surface:${finding.surface}`));
   const alreadyRecorded = [...new Set(findings.map((f) => f.surface))].filter((surface) =>
-    already.has(surface),
+    already.has(`risk-surface:${surface}`),
   );
 
-  const created = riskRecordsFor(
-    fresh,
-    workItemId,
-    await nextSequence(layout.kanbanDir, 'RISK'),
-    now().toISOString(),
+  const timestamp = now().toISOString();
+  let sequence = await nextSequence(layout.kanbanDir, 'RISK');
+  const fromSurfaces = riskRecordsFor(fresh, workItemId, sequence, timestamp);
+  sequence += fromSurfaces.length;
+
+  // Blast-radius collisions, deduped against what is already on disk for the
+  // same pair (P6-WRITEPATH-02). A second scan finding the same collision must
+  // not file it twice — the record is a conversation to have, not a counter.
+  const freshCollisions = collisions.filter(
+    (collision) => !already.has(`blast-radius:${collision.withItem}`),
   );
+  const created = [
+    ...fromSurfaces,
+    ...blastRadiusRisks(freshCollisions, workItemId, sequence, timestamp),
+  ];
 
   for (const record of created) {
     // `wx`: two scans racing must not both write RISK-004. The filesystem is a

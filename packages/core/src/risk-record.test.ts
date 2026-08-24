@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { RISK_SURFACES } from './risk-surface.js';
-import { RISK_SEVERITY, RiskRecordSchema, riskRecordId, riskRecordsFor } from './risk-record.js';
+import {
+  RISK_SEVERITY,
+  RiskRecordSchema,
+  blastRadiusRisks,
+  riskRecordId,
+  riskRecordsFor,
+} from './risk-record.js';
 
 const at = '2026-08-23T00:00:00.000Z';
 
@@ -103,5 +109,103 @@ describe('risk records (P6-WRITEPATH-02)', () => {
   it('zero-pads ids', () => {
     expect(riskRecordId(7)).toBe('RISK-007');
     expect(riskRecordId(142)).toBe('RISK-142');
+  });
+});
+
+describe('blast-radius risk records (P6-WRITEPATH-02, FEAT-SEC-005)', () => {
+  const at = '2026-08-24T00:00:00.000Z';
+
+  it('files one record per colliding item, not per file', () => {
+    // Three files shared with the same story is one conversation. Three cards
+    // would make it look like three problems.
+    const records = blastRadiusRisks(
+      [
+        { path: 'src/a.ts', withItem: 'FEAT-009' },
+        { path: 'src/b.ts', withItem: 'FEAT-009' },
+        { path: 'src/c.ts', withItem: 'FEAT-002' },
+      ],
+      'FEAT-001',
+      1,
+      at,
+    );
+    expect(records).toHaveLength(2);
+    expect(records[0]?.evidence).toHaveLength(2);
+  });
+
+  it('carries no surface, because entanglement is not one', () => {
+    const [record] = blastRadiusRisks(
+      [{ path: 'src/a.ts', withItem: 'FEAT-009' }],
+      'FEAT-001',
+      1,
+      at,
+    );
+    expect(record?.source).toBe('blast-radius');
+    expect(record?.surface).toBeNull();
+  });
+
+  it('grades a collision medium, on the reversibility axis', () => {
+    // `high` is reserved for damage that does not come back. Two agents writing
+    // one file produces a merge somebody has to do: expensive, and recoverable.
+    const [record] = blastRadiusRisks(
+      [{ path: 'src/a.ts', withItem: 'FEAT-009' }],
+      'FEAT-001',
+      1,
+      at,
+    );
+    expect(record?.severity).toBe('medium');
+  });
+
+  it('files nothing when nothing collides', () => {
+    expect(blastRadiusRisks([], 'FEAT-001', 1, at)).toEqual([]);
+  });
+
+  it('names the item collided with, in the evidence', () => {
+    // The evidence is what makes the record actionable — and it is what the
+    // dedupe reads back, so a record that did not name it would be filed again
+    // on every scan.
+    const [record] = blastRadiusRisks(
+      [{ path: 'src/a.ts', withItem: 'FEAT-009' }],
+      'FEAT-001',
+      1,
+      at,
+    );
+    expect(record?.evidence[0]?.matched).toContain('FEAT-009');
+  });
+});
+
+describe("the two sources cannot hold each other's shape", () => {
+  const base = {
+    id: 'RISK-001',
+    work_item_id: 'FEAT-001',
+    severity: 'high' as const,
+    evidence: [{ path: 'src/auth.ts', matched: 'path is auth' }],
+    status: 'open' as const,
+    mitigation: null,
+    accepted_because: null,
+    created_at: '2026-08-24T00:00:00.000Z',
+  };
+
+  it('refuses a risk-surface record with no surface', () => {
+    // Letting either hold the other's shape makes `surface` mean "sometimes
+    // present", which is how a consumer ends up printing `?? 'unknown'`.
+    expect(
+      RiskRecordSchema.safeParse({ ...base, source: 'risk-surface', surface: null }).success,
+    ).toBe(false);
+  });
+
+  it('refuses a blast-radius record that claims a surface', () => {
+    expect(
+      RiskRecordSchema.safeParse({ ...base, source: 'blast-radius', surface: 'auth' }).success,
+    ).toBe(false);
+  });
+
+  it('reads a record written before `source` existed', () => {
+    // The records live in git. A required field added to an artifact on disk
+    // makes every existing one invalid, and "run this migration over your
+    // repository" is not a thing to ask of a workspace whose whole promise is
+    // that the files are the truth.
+    const parsed = RiskRecordSchema.safeParse({ ...base, surface: 'auth' });
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.source).toBe('risk-surface');
   });
 });

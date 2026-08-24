@@ -34,6 +34,22 @@ export const RISK_STATUSES = ['open', 'mitigated', 'accepted'] as const;
 export const RiskStatusSchema = z.enum(RISK_STATUSES);
 export type RiskStatus = z.infer<typeof RiskStatusSchema>;
 
+/**
+ * What flagged the risk (P6-WRITEPATH-02).
+ *
+ * Two detectors, and they answer different questions. `risk-surface` asks *what
+ * did this change touch* — auth, payments, a migration — and is a property of
+ * the diff. `blast-radius` asks *what else is this change entangled with* — two
+ * items writing the same file at once — and is a property of the board.
+ *
+ * Recorded rather than merged, because the two need different responses. A
+ * payments change needs a security reviewer; a write collision needs the two
+ * people to talk. A single "risk" bucket sends both to whoever reads it first.
+ */
+export const RISK_SOURCES = ['risk-surface', 'blast-radius'] as const;
+export const RiskSourceSchema = z.enum(RISK_SOURCES);
+export type RiskSource = z.infer<typeof RiskSourceSchema>;
+
 export const RISK_SEVERITIES = ['medium', 'high'] as const;
 export const RiskSeveritySchema = z.enum(RISK_SEVERITIES);
 export type RiskSeverity = z.infer<typeof RiskSeveritySchema>;
@@ -75,7 +91,15 @@ export const RiskRecordSchema = z
     id: z.string().regex(/^RISK-\d{3,}$/, 'risk ids are RISK-NNN, zero-padded and never reused'),
     /** The work item whose change raised it. A risk with no source is a worry. */
     work_item_id: z.string().min(1),
-    surface: z.enum(RISK_SURFACES),
+    /**
+     * Defaulted, so the records already on disk parse unchanged. A required
+     * field added to an artifact that lives in git makes every existing one
+     * invalid, and "run this migration over your repository" is not a thing to
+     * ask of a workspace whose whole promise is that the files are the truth.
+     */
+    source: RiskSourceSchema.default('risk-surface'),
+    /** Null for a `blast-radius` risk: entanglement is not a surface. */
+    surface: z.enum(RISK_SURFACES).nullable(),
     severity: RiskSeveritySchema,
     /** What matched, per file — the evidence, so the record can be argued with. */
     evidence: z
@@ -89,6 +113,24 @@ export const RiskRecordSchema = z
     created_at: z.iso.datetime(),
   })
   .superRefine((record, ctx) => {
+    // The two sources carry different shapes, and letting either hold the
+    // other's would make `surface` mean "sometimes present" — which is how a
+    // consumer ends up writing `record.surface ?? 'unknown'` and printing it.
+    if (record.source === 'risk-surface' && record.surface === null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['surface'],
+        message: 'a risk-surface record names the surface it matched',
+      });
+    }
+    if (record.source === 'blast-radius' && record.surface !== null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['surface'],
+        message: 'a blast-radius record has no surface — entanglement is not a surface',
+      });
+    }
+
     // A status that outruns its justification is the failure this artifact
     // exists to prevent: "mitigated" with nothing written down is a risk that
     // has been closed rather than handled, and it reads identically to one that
@@ -140,8 +182,61 @@ export function riskRecordsFor(
       id: riskRecordId(sequence++),
       work_item_id: workItemId,
       surface,
+      source: 'risk-surface',
       severity: RISK_SEVERITY[surface].severity,
       evidence: group.map((finding) => ({ path: finding.path, matched: finding.evidence })),
+      status: 'open',
+      mitigation: null,
+      accepted_because: null,
+      created_at: createdAt,
+    }),
+  );
+}
+
+/**
+ * Risk records from a blast radius (P6-WRITEPATH-02, FEAT-SEC-005).
+ *
+ * Only **ownership conflicts** — two items declaring the same file — become
+ * records. `overlap` (in-flight work inside the radius that shares no file) is
+ * reported by the blast-radius scan and deliberately does not become a risk
+ * card: it is common, it is usually fine, and a card per overlap turns the risk
+ * directory into a place nobody looks.
+ *
+ * Severity is `medium`, not `high`, and the axis is the one `RISK_SEVERITY`
+ * already uses: how reversible the damage is. Two agents writing one file
+ * produces a merge somebody has to do. That is expensive and recoverable, which
+ * is exactly what `medium` is for — `high` is reserved for damage that does not
+ * come back.
+ */
+export function blastRadiusRisks(
+  conflicts: readonly { readonly path: string; readonly withItem: string }[],
+  workItemId: string,
+  firstSequence: number,
+  createdAt: string,
+): readonly RiskRecord[] {
+  if (conflicts.length === 0) return [];
+  // One record per work item collided with, not one per file. Three files shared
+  // with the same story is one conversation, and three cards would make it look
+  // like three problems.
+  const byItem = new Map<string, string[]>();
+  for (const conflict of conflicts) {
+    const existing = byItem.get(conflict.withItem);
+    if (existing === undefined) byItem.set(conflict.withItem, [conflict.path]);
+    else existing.push(conflict.path);
+  }
+
+  let sequence = firstSequence;
+  return [...byItem.entries()].map(([withItem, paths]) =>
+    RiskRecordSchema.parse({
+      id: riskRecordId(sequence++),
+      work_item_id: workItemId,
+      source: 'blast-radius',
+      surface: null,
+      severity: 'medium',
+      evidence: [...new Set(paths)].map((path) => ({
+        path,
+        matched: `also declared by ${withItem}`,
+      })),
       status: 'open',
       mitigation: null,
       accepted_because: null,
