@@ -102,6 +102,7 @@ import { checkRisk, formatRisk } from './risk.js';
 import { recordRisks } from './risk-record-store.js';
 import { dbDown, dbUp, formatDbDown, formatDbUp } from './db-lifecycle.js';
 import { formatWorkspaceDoctor, workspaceDoctor } from './doctor.js';
+import { formatRun, runWorkItem } from './run.js';
 import { formatRetrieval, retrievalReport } from './retrieval-eval-run.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
@@ -577,6 +578,17 @@ export function buildProgram(): Command {
         }
         return lines.join('\n');
       });
+    });
+
+  program
+    .command('run')
+    .argument('<work-item-id>', 'the work item to run the current stage of')
+    .description("dispatch this item's stage skill to an agent, recording the run")
+    .option('--dry-run', 'assemble and persist the pack, then stop before dispatching')
+    .option('--json', 'emit JSON')
+    .action(async (id: string, options: { dryRun?: boolean; json?: boolean }): Promise<void> => {
+      const result = await runWorkItem(root(), id, { dryRun: options.dryRun === true });
+      emit(result, options.json === true, formatRun);
     });
 
   program
