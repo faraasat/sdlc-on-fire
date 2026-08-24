@@ -1393,6 +1393,13 @@ export function buildProgram(): Command {
             r.steers
               ? '  This will reach the next context pack — not the run in flight (ADR-0016).'
               : '  This changes nothing about what agents see; the effect says so, not the wording.',
+            // Named, because a comment that quietly created a card somewhere
+            // else is a side effect the author cannot see and did not ask for.
+            ...(r.spawnedCapture === undefined
+              ? []
+              : [
+                  `  Captured as ${r.spawnedCapture} — \`sdlc triage ${r.spawnedCapture} --as bug\` when someone has looked.`,
+                ]),
           ].join('\n'),
         );
       },

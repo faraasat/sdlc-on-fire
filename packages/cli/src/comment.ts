@@ -11,7 +11,7 @@ import { applySchema, PostgresStorageAdapter } from '@sdlc-on-fire/db';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { findWorkItem, openWorkspaceDatabase } from './commands.js';
+import { captureItem, findWorkItem, openWorkspaceDatabase } from './commands.js';
 import { resolveAuthor } from './access.js';
 
 /**
@@ -65,6 +65,13 @@ export interface PostedComment {
   readonly roleEffect: string;
   /** True when this comment will reach a future context pack. */
   readonly steers: boolean;
+  /**
+   * The capture a `bug-report` comment spawned (P6-INFLIGHT-03, FEAT-CMT-005).
+   *
+   * Reported, not silent. A comment that quietly created a card somewhere else
+   * is a side effect the author cannot see and did not ask for by name.
+   */
+  readonly spawnedCapture?: string | undefined;
 }
 
 export async function postComment(
@@ -120,6 +127,30 @@ export async function postComment(
       [id, author?.actorId ?? null, role, type, input.body, roleEffect, input.addressedTo ?? null],
     );
 
+    // `BUG_CREATION` finally does something (P6-INFLIGHT-03, FEAT-CMT-005).
+    //
+    // The effect has been computed from type × role since P2 and stored on the
+    // comment, and nothing ever read it. A `bug-report` comment produced a row
+    // saying a bug should exist and no bug — the seventh read path in this
+    // codebase with no writer behind it, and the one most likely to be believed,
+    // because the comment visibly *was* typed as a bug report.
+    //
+    // It lands as a CAPTURE, not a work item. Deciding what something is costs
+    // thought and happens later, often by someone else; a comment mid-review is
+    // exactly the moment that decision is made worst. `sdlc triage-capture`
+    // promotes it when somebody has actually looked.
+    let spawned: string | undefined;
+    if (roleEffect === 'BUG_CREATION') {
+      const capture = await captureItem(
+        layout.root,
+        // The comment's own words, and the item it was left on. A capture that
+        // says "see the comment" is one nobody can triage without going to find
+        // a comment they have no id for.
+        `${input.body} (reported on ${id})`,
+      );
+      spawned = capture.id;
+    }
+
     return {
       id: rows[0]?.id ?? 0,
       workItemId: id,
@@ -127,6 +158,7 @@ export async function postComment(
       authorRole: role,
       roleEffect,
       steers: roleEffect === 'CONTEXT_INJECTION' || roleEffect === 'DECISION_TO_MEMORY',
+      ...(spawned === undefined ? {} : { spawnedCapture: spawned }),
     };
   } finally {
     await db.close();

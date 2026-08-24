@@ -279,3 +279,39 @@ describe('the dispatch is a table, and it is the one consulted (P3-RBAC-02)', ()
     }
   }, 60_000);
 });
+
+describe('a bug-report comment spawns a capture (P6-INFLIGHT-03, FEAT-CMT-005)', () => {
+  it('creates a capture carrying the comment and the item it was left on', async () => {
+    // `BUG_CREATION` has been computed from type × role since P2, stored on the
+    // comment, and read by nothing — a row saying a bug should exist, and no
+    // bug. The seventh read path in this codebase with no writer behind it, and
+    // the one most likely to be believed, because the comment visibly *was*
+    // typed as a bug report.
+    const result = await postComment(root, 'FEAT-001', {
+      type: 'bug-report',
+      body: 'the export drops an hour across DST',
+    });
+    expect(result.roleEffect).toBe('BUG_CREATION');
+    expect(result.spawnedCapture).toMatch(/^CAP-\d{3}$/);
+
+    const captured = await fs.readFile(
+      path.join(root, 'kanban', '_inbox', `${result.spawnedCapture ?? ''}.md`),
+      'utf8',
+    );
+    expect(captured).toContain('drops an hour across DST');
+    // The item it was reported on, in the capture itself. One that says "see the
+    // comment" cannot be triaged without going to find a comment nobody has an
+    // id for.
+    expect(captured).toContain('FEAT-001');
+  }, 120_000);
+
+  it('spawns nothing for an ordinary comment', async () => {
+    // The effect decides, never the wording. A comment that merely mentions a
+    // bug must not create one.
+    const result = await postComment(root, 'FEAT-001', {
+      type: 'normal',
+      body: 'this looks like a bug to me',
+    });
+    expect(result.spawnedCapture).toBeUndefined();
+  }, 120_000);
+});
