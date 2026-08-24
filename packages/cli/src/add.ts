@@ -1,4 +1,11 @@
 import fs from 'node:fs/promises';
+import {
+  insertionShapeFor,
+  reWaveScope,
+  type InFlightItem,
+  type InsertionShapeDecision,
+  type ReWaveScope,
+} from '@sdlc-on-fire/core';
 import { recordRisks } from './risk-record-store.js';
 import path from 'node:path';
 import {
@@ -114,6 +121,10 @@ export interface AddResult {
   readonly blockers: readonly string[];
   readonly cautions: readonly string[];
   readonly radius: BlastRadius;
+  /** Which items in the radius get re-planned, and which are left alone. */
+  readonly scope: ReWaveScope;
+  /** Whether this may change the target, or must become a follow-up. */
+  readonly shape: InsertionShapeDecision;
   /** Present when file-ownership collisions were recorded, or failed to be. */
   readonly riskNote?: string | undefined;
 }
@@ -137,6 +148,14 @@ export async function addIntoContainer(root: string, options: AddOptions): Promi
     },
     nodes,
   );
+
+  // The re-wave scope and the insertion shape, from the radius that was just
+  // computed (P6-INFLIGHT-01, P6-INFLIGHT-02). `blast-radius.ts` has described
+  // "re-plan the affected subgraph" in a comment since P2-INS-01 and nothing
+  // ever decided what to do with the subgraph it computed.
+  const board = await readBoardState(layout.kanbanDir);
+  const scope = reWaveScope(radius, board);
+  const shape = insertionShapeFor(board.find((entry) => entry.id === options.into));
 
   const { WORK_ITEM_ID_PREFIX, formatWorkItemId } = await import('@sdlc-on-fire/core');
   if (!(options.kind in WORK_ITEM_ID_PREFIX)) {
@@ -213,6 +232,8 @@ export async function addIntoContainer(root: string, options: AddOptions): Promi
     blockers: verdict.blockers,
     cautions: verdict.cautions,
     radius,
+    scope,
+    shape,
     ...(riskNote === undefined ? {} : { riskNote }),
   };
 }
@@ -225,6 +246,24 @@ export function formatAdd(result: AddResult): string {
     '',
   ];
 
+  // The shape first: whether this changes the target at all is the decision the
+  // reader most needs, and burying it under a radius table is how it gets
+  // skimmed past.
+  lines.push(
+    result.shape.shape === 'follow-up'
+      ? `↳ FOLLOW-UP, not a change to ${result.radius.target} — ${result.shape.because}`
+      : `→ may change ${result.radius.target} — ${result.shape.because}`,
+    '',
+  );
+  if (result.scope.leftAlone.length > 0) {
+    // Named, with the reason. "Some items were skipped" is the version of this
+    // that gets ignored.
+    lines.push('Left alone by the re-wave:');
+    for (const skipped of result.scope.leftAlone) {
+      lines.push(`  ${skipped.id} — ${skipped.because}`);
+    }
+    lines.push('');
+  }
   if (result.riskNote !== undefined) lines.push(`  ${result.riskNote}`, '');
   if (result.state === 'approved') {
     lines.push(`✓ rescope approved — ${result.workItemId} may enter ${result.radius.target}.`);
@@ -241,4 +280,38 @@ export function formatAdd(result: AddResult): string {
   }
 
   return lines.join('\n');
+}
+
+/**
+ * The board, in the shape the re-wave decision needs (P6-INFLIGHT-01).
+ *
+ * Read from the cards rather than the mirror, for the same reason everything
+ * else here is: the cards are the source of truth, and a decision about what to
+ * disturb must not be made against a mirror that a `db:rebuild` has not caught
+ * up with.
+ */
+async function readBoardState(kanbanDir: string): Promise<readonly InFlightItem[]> {
+  const items: InFlightItem[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    for (const entry of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === INSERTIONS_DIR) continue;
+        await walk(full);
+        continue;
+      }
+      if (!entry.name.endsWith('.md')) continue;
+      const { data } = parseFrontmatter(await fs.readFile(full, 'utf8').catch(() => ''));
+      const id = data['id'];
+      if (typeof id !== 'string') continue;
+      items.push({
+        id,
+        lifecycleState: typeof data['lifecycle_state'] === 'string' ? data['lifecycle_state'] : '',
+        claimedBy: typeof data['claimed_by'] === 'string' ? data['claimed_by'] : null,
+        prUrl: typeof data['pr_url'] === 'string' ? data['pr_url'] : null,
+      });
+    }
+  };
+  await walk(kanbanDir);
+  return items;
 }

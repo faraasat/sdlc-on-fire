@@ -61,6 +61,7 @@ export * from './governance-metrics.js';
 export * from './retrieval-eval.js';
 export * from './stage-profile.js';
 export * from './rolling-state.js';
+export * from './re-wave.js';
 export * from './situations.js';
 export * from './research-subtype.js';
 export * from './license-policy.js';
