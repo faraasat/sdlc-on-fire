@@ -131,3 +131,57 @@ export function deferralPlan(skills: readonly CanonicalSkill[]): DeferralPlan {
         : `${String(hot.length)} tool(s) stay loaded; the rest are found by search when a change needs them`,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Who may call a tool (P2-AGT-03; ADR-0024's programmatic-tool-calling half).
+ *
+ * Programmatic tool calling lets Claude write code that calls tools inside a
+ * code-execution container instead of one model round trip per call. The
+ * published numbers are real and come with a method: +11% on BrowseComp and
+ * DeepSearchQA with 24% fewer input tokens.
+ *
+ * **Assessed, and declared `direct` — the shape does not fit.** PTC pays off
+ * when a workflow fans out over many cheap calls and filters: the vendor's own
+ * example is twenty expense lookups reduced to the few employees over budget.
+ * Every tool this product publishes is a **skill dispatch** — one expensive
+ * call whose entire result the model then has to reason over. There is nothing
+ * to filter, and a script that ran twenty dispatches would be twenty agent runs,
+ * which is a thing to avoid rather than optimise.
+ *
+ * **Declared rather than defaulted.** Omitting `allowed_callers` means `direct`
+ * anyway; writing it down is what the vendor's own tip asks for ("choose either,
+ * rather than enabling both, as this provides clearer guidance"), and it turns
+ * an absence into a recorded decision somebody can argue with.
+ *
+ * **This becomes worth revisiting when the surface grows read-only query
+ * tools** — a `sdlc__status` or `sdlc__queue` that a script could call across
+ * many cards and reduce. Today those are CLI commands and not on the MCP
+ * surface at all.
+ *
+ * Note the vendor's own caveat, which is why this is guidance and not a
+ * boundary: `allowed_callers` "is not a hard API-level block on direct
+ * invocation... Do not rely on it as a security boundary."
+ *
+ * Source: platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling,
+ * fetched 2026-08-30 (tier A — the vendor's own documentation).
+ */
+export const DIRECT_CALLER = 'direct';
+
+export interface CallerDecision {
+  readonly name: string;
+  readonly allowedCallers: readonly string[];
+  readonly because: string;
+}
+
+export function callerPlan(skills: readonly CanonicalSkill[]): readonly CallerDecision[] {
+  return [...skills]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((skill) => ({
+      name: skill.name,
+      allowedCallers: [DIRECT_CALLER],
+      because:
+        'a skill dispatch: one expensive call whose whole result the model reasons over, with nothing for a script to filter',
+    }));
+}

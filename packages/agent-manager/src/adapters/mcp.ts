@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { deferralPlan, type CanonicalSkill } from '@sdlc-on-fire/core';
+import { callerPlan, deferralPlan, type CanonicalSkill } from '@sdlc-on-fire/core';
 import { toolBudget } from './tool-budget.js';
 import { outputJsonSchema } from '../skills/output-schemas.js';
 import {
@@ -406,6 +406,12 @@ export class McpAdapter implements AgentAdapter {
           deferralRecommended: budget.conditionMet,
           because: budget.because,
         },
+        // Every tool is `direct` (P2-AGT-03). Declared rather than defaulted:
+        // omitting it means `direct` anyway, and writing it down turns an
+        // absence into a decision somebody can argue with.
+        'sdlc-on-fire/caller-plan': Object.fromEntries(
+          callerPlan(skills).map((decision) => [decision.name, decision.allowedCallers]),
+        ),
         'sdlc-on-fire/deferral-plan': {
           keepLoaded: plan.hot.map((decision) => decision.name),
           defer: plan.deferred.map((decision) => decision.name),

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { deferralPlan, HOT_SKILLS, HOT_TOOL_LIMIT } from './tool-deferral.js';
+import {
+  callerPlan,
+  deferralPlan,
+  DIRECT_CALLER,
+  HOT_SKILLS,
+  HOT_TOOL_LIMIT,
+} from './tool-deferral.js';
 import type { CanonicalSkill } from './skill.js';
 
 const skill = (over: Partial<CanonicalSkill> & { name: string }): CanonicalSkill =>
@@ -64,5 +70,35 @@ describe('deferral plan (P2-AGT-02)', () => {
     for (const decision of [...plan.hot, ...plan.deferred]) {
       expect(decision.because.length, decision.name).toBeGreaterThan(15);
     }
+  });
+});
+
+describe('caller plan (P2-AGT-03)', () => {
+  it('declares every tool direct rather than leaving it defaulted', () => {
+    // Omitting `allowed_callers` means `direct` anyway. Writing it down is what
+    // the vendor's own tip asks for, and it turns an absence into a recorded
+    // decision somebody can argue with.
+    const plan = callerPlan([
+      skill({ name: 'implement', stage: 'implement' }),
+      skill({ name: 'security-review', situation: 'high-risk-surface' }),
+    ]);
+    expect(plan).toHaveLength(2);
+    for (const decision of plan) {
+      expect(decision.allowedCallers).toEqual([DIRECT_CALLER]);
+    }
+  });
+
+  it('never declares a tool callable from code execution', () => {
+    // PTC pays off when a workflow fans out over many cheap calls and filters.
+    // Every tool here is a skill dispatch — one expensive call whose entire
+    // result the model reasons over. A script running twenty dispatches would be
+    // twenty agent runs, which is a thing to avoid rather than optimise.
+    const plan = callerPlan([skill({ name: 'pr', user_invoked: true })]);
+    expect(plan[0]?.allowedCallers).not.toContain('code_execution_20260120');
+  });
+
+  it('says why, so the decision can be revisited', () => {
+    const plan = callerPlan([skill({ name: 'spec', stage: 'spec' })]);
+    expect(plan[0]?.because).toMatch(/nothing for a script to filter/);
   });
 });
