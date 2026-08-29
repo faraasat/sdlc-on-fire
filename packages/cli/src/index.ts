@@ -108,6 +108,9 @@ import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
 import { formatRollback, rollbackWorkItem, type RollbackResult } from './rollback.js';
+import { ciEvidence, formatCiEvidence, type CiEvidenceResult } from './ci-evidence.js';
+import { backupWorkspace, formatBackup, type BackupResult } from './backup.js';
+import { formatRuns, runHistory, type RunHistory } from './runs.js';
 import { formatTiers, reportTiers } from './tiers.js';
 import {
   checkResolution,
@@ -1100,6 +1103,79 @@ export function buildProgram(): Command {
             .join('\n'),
         );
         if (result.refusal !== undefined) process.exitCode = 1;
+      },
+    );
+
+  program
+    .command('runs')
+    .description('the run history — every agent run, newest first, joined to its work item')
+    .option('--work-item <id>', 'only runs for this work item')
+    .option('--status <status>', 'only runs that ended this way (pass, fail, error, running)')
+    .option('--limit <n>', 'how many to show', '20')
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: {
+        workItem?: string;
+        status?: string;
+        limit?: string;
+        json?: boolean;
+      }): Promise<void> => {
+        const parsed = Number.parseInt(options.limit ?? '20', 10);
+        const result = await runHistory(root(), {
+          workItemId: options.workItem,
+          status: options.status,
+          ...(Number.isNaN(parsed) ? {} : { limit: parsed }),
+        });
+        emit(result, options.json === true, (r: RunHistory) => formatRuns(r));
+      },
+    );
+
+  program
+    .command('backup')
+    .description('archive the workspace content that cannot be rebuilt from the database')
+    .option('--out <dir>', 'where to write the archive (default: <state-dir>/backups)')
+    .option(
+      '--include-mirror',
+      'include the database too — reconstructable with db:rebuild, so off by default',
+    )
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: { out?: string; includeMirror?: boolean; json?: boolean }): Promise<void> => {
+        const result = await backupWorkspace(root(), {
+          out: options.out,
+          includeMirror: options.includeMirror,
+        });
+        emit(result, options.json === true, (r: BackupResult) => formatBackup(r));
+      },
+    );
+
+  program
+    .command('ci-evidence')
+    .description('admit a CI check run as gate evidence — fetched from the provider, not handed in')
+    .requiredOption('--repo <owner/repo>', 'the GitHub repository the checks live in')
+    .requiredOption('--ref <sha-or-branch>', 'the ref whose check runs to read')
+    .requiredOption('--check <name>', 'which check run — named, never guessed from its title')
+    .option('--apply', 'record the evidence; without this it reports what it would write')
+    .option('--json', 'emit JSON')
+    .action(
+      async (options: {
+        repo: string;
+        ref: string;
+        check: string;
+        apply?: boolean;
+        json?: boolean;
+      }): Promise<void> => {
+        const result = await ciEvidence(root(), {
+          repo: options.repo,
+          ref: options.ref,
+          check: options.check,
+          apply: options.apply,
+        });
+        emit(result, options.json === true, (r: CiEvidenceResult) => formatCiEvidence(r));
+        // A refusal is an exit 1: "no evidence was written" has to be
+        // distinguishable from "evidence was written and it was green" by
+        // something a script can read.
+        if (!result.admission.admitted) process.exitCode = 1;
       },
     );
 

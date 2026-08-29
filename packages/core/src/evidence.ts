@@ -42,6 +42,18 @@ export const EVIDENCE_KINDS = [
   'mutation-score',
   'flakiness-repeat',
   'mock-density',
+  /**
+   * A provider check run's verdict (P6-SURFACE-07, FEAT-EVID-007).
+   *
+   * Its own kind rather than a `producer: 'ci'` instance of `test`, because a
+   * check run reports **a verdict, not a measurement** — GitHub's Checks API
+   * returns a status and a conclusion and nothing about what ran. Squeezing
+   * that into `TestEvidence` would mean writing `total: 0, passed: 0` beside
+   * `ok: true`, which is a fabricated number wearing the shape of a real one.
+   * A *parsed* CI artifact is still `kind: test, producer: ci`; there the
+   * numbers exist. Contract 03 §3.
+   */
+  'ci-status',
 ] as const;
 export const EvidenceKindSchema = z.enum(EVIDENCE_KINDS);
 export type EvidenceKind = z.infer<typeof EvidenceKindSchema>;
@@ -98,6 +110,49 @@ export const BuildEvidenceSchema = z.object({
   ok: z.boolean(),
   durationMs: z.number().nonnegative(),
 });
+
+/**
+ * GitHub's own vocabulary, not a normalised one.
+ *
+ * Renaming `timed_out` to `timeout` on the way in would mean the evidence row
+ * and the provider's UI disagree about what happened, and the person reading
+ * the row is about to go and look at that UI. Cited: GitHub REST — check runs,
+ * fetched 2026-08-30.
+ */
+export const CI_CHECK_STATUSES = ['queued', 'in_progress', 'completed'] as const;
+export const CI_CHECK_CONCLUSIONS = [
+  'success',
+  'failure',
+  'neutral',
+  'cancelled',
+  'skipped',
+  'timed_out',
+  'action_required',
+] as const;
+
+/**
+ * Which conclusions count as a pass.
+ *
+ * `neutral` and `skipped` are **not** passes. Both mean the check declined to
+ * judge, and a gate that reads "the check did not run" as "the check approved"
+ * is the failure this whole subsystem exists to prevent — it is also the most
+ * likely one, since a skipped job is the normal result of a path filter.
+ */
+export const PASSING_CI_CONCLUSIONS: ReadonlySet<string> = new Set(['success']);
+
+export const CiStatusEvidenceSchema = z.object({
+  provider: z.string().min(1),
+  /** The check run's name, as the provider reports it. */
+  check: z.string().min(1),
+  status: z.enum(CI_CHECK_STATUSES),
+  conclusion: z.enum(CI_CHECK_CONCLUSIONS),
+  /** Where a person goes to see it. */
+  url: z.string().min(1).optional(),
+  head_sha: z.string().regex(SHA1_HEX),
+  ok: z.boolean(),
+});
+
+export type CiStatusEvidence = z.infer<typeof CiStatusEvidenceSchema>;
 
 export type TestEvidence = z.infer<typeof TestEvidenceSchema>;
 export type TypecheckEvidence = z.infer<typeof TypecheckEvidenceSchema>;

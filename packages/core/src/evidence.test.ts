@@ -62,7 +62,7 @@ describe('envelope schema', () => {
 
   it('ships the full kind enum, not just the v0.1 parsers', () => {
     // Adding a kind later would break persisted rows; unused members cost nothing.
-    expect(EVIDENCE_KINDS.length).toBe(12);
+    expect(EVIDENCE_KINDS.length).toBe(13);
     for (const kind of V0_1_EVIDENCE_KINDS) {
       expect(EVIDENCE_KINDS).toContain(kind);
     }

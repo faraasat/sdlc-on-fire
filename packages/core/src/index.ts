@@ -12,6 +12,7 @@ export * from './lifecycle.js';
 export * from './work-item.js';
 export * from './constitution.js';
 export * from './evidence.js';
+export * from './ci-status.js';
 export * from './focus.js';
 export * from './run.js';
 export * from './context.js';
