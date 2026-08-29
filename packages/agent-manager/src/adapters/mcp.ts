@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { CanonicalSkill } from '@sdlc-on-fire/core';
+import { deferralPlan, type CanonicalSkill } from '@sdlc-on-fire/core';
+import { toolBudget } from './tool-budget.js';
 import { outputJsonSchema } from '../skills/output-schemas.js';
 import {
   CANONICAL_SKILL_FIELDS,
@@ -96,6 +97,8 @@ export interface McpServerDocument {
   readonly serverInfo: { readonly name: string; readonly title: string; readonly version: string };
   readonly capabilities: Record<string, unknown>;
   readonly instructions: string;
+  /** Our extensions, namespaced. Never protocol fields (§ the `_meta` rule above). */
+  readonly _meta?: Record<string, unknown> | undefined;
   readonly tools: readonly McpTool[];
 }
 
@@ -379,9 +382,39 @@ export class McpAdapter implements AgentAdapter {
       );
     }
 
+    // The deferred-loading plan, published as data (P2-AGT-02).
+    //
+    // We do not set `defer_loading` on these definitions, and cannot: for tools
+    // reaching a model through the MCP connector, the flag belongs to the
+    // *consumer's* `mcp_toolset` entry, not to the server that publishes them.
+    // What we can supply is the answer to "which of these should stay loaded",
+    // which is otherwise a guess made by whoever writes that config.
+    //
+    // Under `_meta`, because it is ours and not the protocol's — the same rule
+    // every other extension in this adapter follows.
+    const plan = deferralPlan(skills);
+    const budget = toolBudget(tools);
+
     const document: McpServerDocument = {
       protocolVersion: MCP_PROTOCOL_VERSION,
       serverInfo: { name: MCP_SERVER_NAME, title: 'SDLC on Fire', version: this.#version },
+      _meta: {
+        'sdlc-on-fire/tool-budget': {
+          tools: budget.tools,
+          tokens: budget.tokens,
+          threshold: budget.threshold,
+          deferralRecommended: budget.conditionMet,
+          because: budget.because,
+        },
+        'sdlc-on-fire/deferral-plan': {
+          keepLoaded: plan.hot.map((decision) => decision.name),
+          defer: plan.deferred.map((decision) => decision.name),
+          because: plan.because,
+          reasons: Object.fromEntries(
+            [...plan.hot, ...plan.deferred].map((decision) => [decision.name, decision.because]),
+          ),
+        },
+      },
       capabilities: mcpCapabilities(tools),
       instructions:
         'Each tool runs one lifecycle skill. Tools report what they produced; they never ' +

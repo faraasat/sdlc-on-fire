@@ -2,6 +2,12 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { resolveWorkspaceLayout } from '@sdlc-on-fire/core';
 import { migrationFiles } from '@sdlc-on-fire/db';
+import {
+  CANONICAL_SKILLS,
+  McpAdapter,
+  toolBudget,
+  type McpTool,
+} from '@sdlc-on-fire/agent-manager';
 import { createGitManager } from '@sdlc-on-fire/daemon';
 import { openWorkspaceDatabase, readConfig } from './commands.js';
 
@@ -155,6 +161,36 @@ export async function workspaceDoctor(root: string): Promise<WorkspaceDoctorRepo
         ),
       );
     }
+  }
+
+  /* -- the compiled tool surface ------------------------------------------ */
+
+  // The tripwire, finally consulted (P2-AGT-02). `toolBudget` was written to
+  // announce that ADR-0024's deferred-loading condition had been met, was
+  // exported, and had NO PRODUCTION CALLER — so when the PAYLOAD workstream took
+  // the registry from 5 tools to 21 and tripped it, nothing said so. The tenth
+  // read path with no writer in this codebase, and the one whose entire job was
+  // to speak up.
+  {
+    const server = new McpAdapter().compileServer?.(Object.values(CANONICAL_SKILLS));
+    const file = server?.files.find((entry) => entry.path.endsWith('.json'));
+    const tools =
+      file === undefined
+        ? []
+        : // Parsed back out of the compiled file rather than taken from the
+          // adapter's return value, because the file is what a consumer will
+          // actually read — measuring anything else would measure our intent.
+          ((JSON.parse(file.content) as { tools?: McpTool[] }).tools ?? []);
+    const budget = toolBudget(tools);
+    checks.push(
+      budget.conditionMet
+        ? warn(
+            'tools',
+            budget.because,
+            'set `defer_loading` on the MCP toolset entry for the deferred tools — `.mcp/sdlc-on-fire.json` publishes which ones under `_meta`',
+          )
+        : pass('tools', budget.because),
+    );
   }
 
   /* -- node ---------------------------------------------------------------- */

@@ -1,4 +1,9 @@
-import { CanonicalSkillSchema, LIFECYCLE_STAGES } from '@sdlc-on-fire/core';
+import {
+  CanonicalSkillSchema,
+  deferralPlan,
+  HOT_SKILLS,
+  LIFECYCLE_STAGES,
+} from '@sdlc-on-fire/core';
 import { describe, expect, it } from 'vitest';
 import { ClaudeCodeAdapter } from '../adapters/claude-code.js';
 import { runDoctor } from '../doctor.js';
@@ -262,5 +267,22 @@ describe('the retrospective skill (P1-SKILL-03)', () => {
     // retrospective's name.
     expect(RETROSPECTIVE_SKILL.stop_condition).toMatch(/not open follow-up/i);
     expect(RETROSPECTIVE_SKILL.role).toMatch(/do not advance the lifecycle/i);
+  });
+});
+
+describe('the deferral plan covers the real registry (P2-AGT-02)', () => {
+  it('resolves every declared hot skill to a registered one', () => {
+    // A name in HOT_SKILLS that nothing answers to is a stale entry, and
+    // ignoring it silently would let the list rot into a description of a
+    // registry that no longer exists.
+    for (const name of Object.keys(HOT_SKILLS)) {
+      expect(CANONICAL_SKILLS[name], name).toBeDefined();
+    }
+  });
+
+  it('keeps something loaded, because the API refuses an all-deferred request', () => {
+    const plan = deferralPlan(Object.values(CANONICAL_SKILLS));
+    expect(plan.hot.length).toBeGreaterThan(0);
+    expect(plan.hot.length + plan.deferred.length).toBe(Object.keys(CANONICAL_SKILLS).length);
   });
 });

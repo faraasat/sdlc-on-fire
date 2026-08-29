@@ -64,6 +64,7 @@ export * from './rolling-state.js';
 export * from './re-wave.js';
 export * from './model-diversity.js';
 export * from './clarification.js';
+export * from './tool-deferral.js';
 export * from './situations.js';
 export * from './research-subtype.js';
 export * from './license-policy.js';

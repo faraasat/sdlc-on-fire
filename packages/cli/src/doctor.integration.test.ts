@@ -80,6 +80,29 @@ describe('doctor', () => {
     }
   }, 90_000);
 
+  it('reports the tool budget, which is the tripwire nobody was consulting', async () => {
+    // `toolBudget` was written to announce that ADR-0024's deferred-loading
+    // condition had been met, exported, and had NO production caller — so when
+    // the PAYLOAD workstream took the registry from 5 tools to 21 and tripped
+    // it, nothing said so (P2-AGT-02).
+    const root = await fs.realpath(await tempDir('sdlcof-doc-tools-'));
+    await init(root, { database: 'skip' });
+    const report = await workspaceDoctor(root);
+    const tools = find(report, 'tools');
+    expect(tools).toBeDefined();
+    // The registry is past the trigger today, so this is a warning with a fix.
+    // If it ever drops back under, the check passes and carries no fix — both
+    // states are real and the assertion covers whichever holds.
+    expect(tools?.detail).toMatch(/tool\(s\) cost ~\d+ tokens/);
+    // Asserted as `warn`, not "warn or pass". The registry is past the trigger
+    // today — 21 tools, ~8.9k tokens against 6k — and a test that accepted
+    // either state would pass against a doctor that had stopped reporting it,
+    // which is the exact defect this closes. If the registry ever shrinks back
+    // under the trigger, this fails and makes somebody decide that on purpose.
+    expect(tools?.status).toBe('warn');
+    expect(tools?.fix).toMatch(/defer_loading/);
+  }, 120_000);
+
   it('names the config file when the config is unreadable', async () => {
     // The pilot's finding: invalid YAML produced "line 2, column 1" and never
     // said which file, that it was the workspace config, or what to do.
