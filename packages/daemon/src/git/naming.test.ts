@@ -145,13 +145,38 @@ describe('provenance trailers (P1-GIT-01)', () => {
     expect(line.toLowerCase()).not.toContain('co-authored-by');
   });
 
-  it('refuses a model id that pins no version', () => {
+  it('refuses a model id that carries no version', () => {
     expect(() => assistedByTrailer({ tool: 'Claude-Code', model: 'claude-opus' })).toThrow(
       /not a version-pinned model id/,
     );
-    expect(isPinnedModelId('gpt-5')).toBe(false);
     expect(isPinnedModelId('claude-opus-4-5-20260101')).toBe(true);
     expect(isPinnedModelId('gpt-5.2-2026-03-11')).toBe(true);
+  });
+
+  it('accepts a dateless generation id, and this is a deliberate loosening', () => {
+    // `gpt-5` used to be REFUSED here, as a bare family name. It is accepted now,
+    // and the trade is worth naming: refusing it also refused `claude-opus-5`,
+    // which Anthropic's docs state is its own pinned snapshot — so the old rule
+    // rejected the trailer for the model that actually wrote this commit.
+    //
+    // We lose the ability to catch a vendor whose dateless id is a moving
+    // pointer. We cannot get it back from the string: `claude-opus-5` is a
+    // snapshot and `claude-haiku-4-5` is an alias, identical in shape. The only
+    // alternative is a vendor allowlist, which goes stale faster than the models
+    // do — the reasoning the original comment already gave (P6-SURFACE-14).
+    expect(isPinnedModelId('claude-opus-5')).toBe(true);
+    expect(isPinnedModelId('gpt-5')).toBe(true);
+    expect(isPinnedModelId('claude-opus')).toBe(false);
+  });
+
+  it('renders the trailer for the current top-tier model', () => {
+    // The defect this closes, verified on the built daemon before the fix:
+    // `naming.ts` carried its own copy of the rule, `core`'s copy was corrected
+    // and this one was not, and the result was that provenance for
+    // `claude-opus-5` was refused while `sdlc agents` routed to it.
+    expect(assistedByTrailer({ tool: 'claude-code', model: 'claude-opus-5' })).toBe(
+      'Assisted-by: claude-code:claude-opus-5',
+    );
   });
 
   it('keeps every trailer in one block, so git can still read the first', () => {

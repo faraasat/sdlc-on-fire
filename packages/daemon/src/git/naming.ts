@@ -7,6 +7,8 @@
  * whether a change is bookkeeping or what a branch should be called.
  */
 
+import { carriesVersion } from '@sdlc-on-fire/core';
+
 /** Conventional-commit types that may prefix a branch (conventions.md). */
 export const BRANCH_TYPES = ['feat', 'fix', 'chore', 'docs', 'refactor', 'test'] as const;
 export type BranchType = (typeof BRANCH_TYPES)[number];
@@ -204,31 +206,39 @@ export class UnpinnedModelError extends Error {
     super(
       `"${model}" is not a version-pinned model id, so the trailer would not identify what actually ran. ` +
         'Two contradictory results from "the same model" are indistinguishable without a version — ' +
-        'use a pinned id (e.g. `claude-opus-4-5-20260101`).',
+        'use an id that carries one (e.g. `claude-opus-5` — dateless ids from the 4.6 generation ' +
+        'on are their own pinned snapshot — or `claude-haiku-4-5-20251001`).',
     );
     this.name = 'UnpinnedModelError';
   }
 }
 
 /**
- * Whether a model id pins a version.
+ * Whether a model id carries a version — **re-exported from `core`, not
+ * reimplemented** (P6-SURFACE-14).
  *
- * A bare family name (`claude-opus`, `gpt-5`) is refused for the same reason
- * P1-GATE-09 refuses it on evidence: a provenance record that cannot distinguish
- * one release from the next answers no question anyone will actually ask of it.
- * The rule is deliberately shallow — a trailing date stamp or numeric version —
- * because a vendor-specific allowlist goes stale faster than the models do.
+ * This file used to carry its own copy of the rule, with a byte-identical regex
+ * and its own comment. The two agreed right up until they did not: `core`'s copy
+ * was corrected when Anthropic's dateless generation ids turned out to be pinned
+ * snapshots, and this one was not — so `assistedByTrailer` refused
+ * `Assisted-by: claude-code:claude-opus-5`, the trailer for the current model,
+ * while `agents` happily routed to it. Verified on the built daemon before the
+ * fix.
+ *
+ * The seventh time this repository has found two copies of a vocabulary that had
+ * never been in the same room, after the role registry, the MCP package names,
+ * the comment-effect roles, the skill stages, `GateRow`, and `DoctorReport`.
+ * Every time, the copies agreed until they did not, and every time the symptom
+ * was silence.
  */
-export function isPinnedModelId(model: string): boolean {
-  return /\d/.test(model) && /(?:-\d{6,8}|[-.@]v?\d+(?:[-.]\d+)+|-\d+-\d+)$/.test(model.trim());
-}
+export { carriesVersion as isPinnedModelId };
 
 /** Renders `Assisted-by: TOOL:MODEL`, refusing an unpinned model. */
 export function assistedByTrailer(provenance: Provenance): string {
   const tool = provenance.tool.trim();
   const model = provenance.model.trim();
   if (tool === '') throw new Error('provenance requires a tool name');
-  if (!isPinnedModelId(model)) throw new UnpinnedModelError(model);
+  if (!carriesVersion(model)) throw new UnpinnedModelError(model);
   return `Assisted-by: ${tool}:${model}`;
 }
 

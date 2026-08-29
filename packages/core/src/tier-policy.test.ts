@@ -3,7 +3,7 @@ import {
   exceedsCeiling,
   ModelPostureSchema,
   undeclaredModels,
-  isPinnedModelId,
+  carriesVersion,
   loadTierPolicy,
   TierPolicyError,
   tierPolicyViolations,
@@ -39,12 +39,46 @@ describe('loading', () => {
     expect(() => TierPolicyConfigSchema.parse({ ...VALID, max_teir: 'low' })).toThrow();
   });
 
-  it('refuses a model id that pins no version', () => {
-    expect(isPinnedModelId('claude-opus')).toBe(false);
-    expect(isPinnedModelId('claude-opus-4-5-20260101')).toBe(true);
+  it('refuses a model id that carries no version at all', () => {
+    expect(carriesVersion('claude-opus')).toBe(false);
+    expect(carriesVersion('gpt')).toBe(false);
     expect(() =>
       TierPolicyConfigSchema.parse({ models: { ...VALID.models, high: 'claude-opus' } }),
-    ).toThrow(/version-pinned/);
+    ).toThrow(/carries no version/);
+  });
+
+  it('accepts a dateless generation id, which is its own pinned snapshot', () => {
+    // The check used to demand a date stamp and REFUSED every current top-tier
+    // model. Anthropic's docs: "every Claude model ID is a pinned snapshot,
+    // including the dateless IDs used from the 4.6 generation on".
+    expect(carriesVersion('claude-opus-5')).toBe(true);
+    expect(carriesVersion('claude-sonnet-5')).toBe(true);
+    // And a future minor still passes, which a shape rule keyed to "one trailing
+    // integer means snapshot" would have got wrong.
+    expect(carriesVersion('claude-opus-5-1')).toBe(true);
+  });
+
+  it('accepts a dated id, and does not claim to tell a snapshot from an alias', () => {
+    // `claude-haiku-4-5` is a convenience alias that resolves to the dated id,
+    // and `claude-opus-5` is a snapshot — identical in shape. No string test can
+    // separate them, so this function does not pretend to; it rules out ids with
+    // no version and stops there (P6-SURFACE-14).
+    expect(carriesVersion('claude-haiku-4-5-20251001')).toBe(true);
+    expect(carriesVersion('claude-haiku-4-5')).toBe(true);
+  });
+
+  it('defaults every tier to a model that is actually current', () => {
+    // The defaults were a generation stale and had been since before the audit —
+    // found on the built binary by P6-SURFACE-11, which printed the model it
+    // routed to. A default nobody looks at is exactly the kind of thing that
+    // rots quietly.
+    const parsed = TierPolicyConfigSchema.parse({});
+    expect(parsed.models.high).toBe('claude-opus-5');
+    expect(parsed.models.medium).toBe('claude-sonnet-5');
+    expect(parsed.models.low).toBe('claude-haiku-4-5-20251001');
+    // Fable 5 is the highest-capability model and the most expensive. A default
+    // nobody chose should not be the priciest option available.
+    expect(Object.values(parsed.models)).not.toContain('claude-fable-5');
   });
 });
 

@@ -16,19 +16,46 @@ import { SKILL_TIERS, SkillTierSchema, type SkillTier } from './skill.js';
  */
 
 /**
- * Whether a model id pins a version.
+ * Whether a model id carries a version at all.
  *
- * A bare family name (`claude-opus`, `gpt-5`) is refused for the same reason
+ * A bare family name (`claude-opus`, `gpt`) is refused for the same reason
  * evidence refuses it (P1-GATE-09) and commit provenance refuses it (P1-GIT-01):
  * two contradictory results from "the same model" are indistinguishable without
- * a version, so an unpinned id makes every later comparison unanswerable. The
- * rule is shallow on purpose — a trailing date stamp or numeric version — since
- * a vendor-specific allowlist goes stale faster than the models do.
+ * a version, so an id with none makes every later comparison unanswerable.
+ *
+ * **Renamed from `isPinnedModelId` on 2026-08-24 (P6-SURFACE-14), because it
+ * never checked that.** It checked a *shape* — a trailing date stamp or dotted
+ * version — and inferred "pinned" from it. That inference used to hold and no
+ * longer does, in both directions:
+ *
+ * - It **rejected every current top-tier model.** Anthropic's docs state that
+ *   "every Claude model ID is a pinned snapshot, including the dateless IDs used
+ *   from the 4.6 generation on", and that "dateless IDs are their own pinned
+ *   snapshot". So `claude-opus-5` is pinned, and the old rule refused it.
+ * - It **accepted `claude-haiku-4-5`**, which for pre-4.6 models is a
+ *   convenience *alias* that resolves to the dated id — exactly the unpinned
+ *   thing the rule existed to catch.
+ *
+ * No shape can tell those apart: `claude-opus-5` is a snapshot and
+ * `claude-haiku-4-5` is an alias, and a future `claude-opus-5-1` would be a
+ * snapshot again. "Is this a pinned snapshot" is now vendor knowledge, not
+ * syntax — and the original comment's reasoning still stands, that a
+ * vendor-specific allowlist goes stale faster than the models do.
+ *
+ * So the claim is narrowed to what a string can actually support: this rules out
+ * an id with no version component, and does not pretend to certify pinning.
+ * Source: platform.claude.com/docs/en/about-claude/models/overview, fetched
+ * 2026-08-24 (tier A — the vendor's own documentation).
  */
-export function isPinnedModelId(model: string): boolean {
+export function carriesVersion(model: string): boolean {
   const trimmed = model.trim();
-  return /\d/.test(trimmed) && /(?:-\d{6,8}|[-.@]v?\d+(?:[-.]\d+)+|-\d+-\d+)$/.test(trimmed);
+  // A version component: a date stamp, a dotted/dashed version, or a trailing
+  // bare integer (the dateless-snapshot form). `gpt` fails; `gpt-5` passes.
+  return /\d/.test(trimmed) && /(?:-\d{6,8}|[-.@]v?\d+(?:[-.]\d+)*|-\d+(?:-\d+)*)$/.test(trimmed);
 }
+
+/** @deprecated Renamed to {@link carriesVersion}, which is what it checks. */
+export const isPinnedModelId = carriesVersion;
 
 /**
  * Where prompts go. The most consequential answer on the checklist, because it
@@ -63,8 +90,9 @@ const PinnedModelSchema = z
   .min(1)
   .refine(isPinnedModelId, {
     message:
-      'not a version-pinned model id. Two contradictory results from "the same model" ' +
-      'cannot be told apart without a version — use e.g. `claude-opus-4-5-20260101`.',
+      'model id carries no version. Two contradictory results from "the same model" ' +
+      'cannot be told apart without one — use e.g. `claude-opus-5` (dateless ids from the ' +
+      '4.6 generation on are their own pinned snapshot) or `claude-haiku-4-5-20251001`.',
   });
 
 /**
@@ -85,9 +113,17 @@ export const TierPolicyConfigSchema = z
      */
     models: z
       .object({
+        // Current generation as of 2026-08-24 (P6-SURFACE-14), from the vendor's
+        // model overview. `low` was already current; `medium` and `high` were a
+        // generation stale and had been since before the audit.
+        //
+        // Fable 5 is deliberately not a default at any tier. It is the highest
+        // available capability and priced accordingly ($10/$50 per MTok against
+        // Opus 5's $5/$25), and a default nobody chose should not be the most
+        // expensive option available.
         low: PinnedModelSchema.default('claude-haiku-4-5-20251001'),
-        medium: PinnedModelSchema.default('claude-sonnet-4-5-20250929'),
-        high: PinnedModelSchema.default('claude-opus-4-5-20260101'),
+        medium: PinnedModelSchema.default('claude-sonnet-5'),
+        high: PinnedModelSchema.default('claude-opus-5'),
       })
       .prefault({}),
     /** Ordered alternatives per tier, tried when the primary is unreachable. */
