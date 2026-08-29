@@ -6,6 +6,7 @@ import {
   extractEntities,
   formatGuard,
   removedLines,
+  REVERT_SUBJECT_PREFIXES,
   type GuardResult,
   type RevertedEntity,
 } from '@sdlc-on-fire/core';
@@ -48,8 +49,10 @@ export async function revertedEntities(
   const log = await git([
     'log',
     `-${String(limit)}`,
-    '--grep=^Revert ',
-    '--grep=^revert:',
+    // The prefixes come from core, shared with the rollback that *writes*
+    // reverts. A second copy here would drift into a rollback whose reverts
+    // this scan cannot see.
+    ...REVERT_SUBJECT_PREFIXES.map((prefix) => `--grep=^${prefix}`),
     '--regexp-ignore-case',
     '--format=%H%x00%s',
   ]).catch(() => '');

@@ -102,6 +102,16 @@ export interface GitManager {
   /** Paths changed relative to HEAD, including untracked files. */
   changedPaths(): Promise<string[]>;
   /**
+   * Modified *tracked* paths only, staged or not.
+   *
+   * The distinction is about what is at risk from a given operation, not about
+   * tidiness. `git checkout` leaves untracked files where they are; `worktree
+   * remove` deletes them with the directory. A check that treated the two the
+   * same would either block a safe checkout or wave through a destructive
+   * removal.
+   */
+  trackedChanges(): Promise<string[]>;
+  /**
    * Paths a single commit touched — what a post-commit/post-merge hook needs.
    *
    * Distinct from {@link changedPaths}, which reports the *working tree*. After
@@ -142,6 +152,52 @@ export interface GitManager {
   addWorktree(worktreePath: string, branch: string, startPoint?: string): Promise<void>;
   listWorktrees(): Promise<Worktree[]>;
   removeWorktree(worktreePath: string, options?: { force?: boolean }): Promise<void>;
+
+  /* ---- rollback primitives (P6-SURFACE-06) ---- */
+
+  /**
+   * Deletes a branch. Unforced, git refuses one whose commits the base cannot
+   * reach — a refusal worth keeping, since the caller is meant to have written
+   * a recovery ref first.
+   */
+  deleteBranch(name: string, options?: { force?: boolean }): Promise<void>;
+  /**
+   * Points `ref` at `sha`, creating it if absent.
+   *
+   * Used for `refs/sdlcof/abandoned/*`: a real ref, not a reflog entry, because
+   * git expires unreachable reflog entries after 30 days by default.
+   */
+  writeRef(ref: string, sha: string): Promise<void>;
+  /** Whether a ref exists, and what it points at. */
+  resolveRef(ref: string): Promise<string | null>;
+  /**
+   * Moves HEAD to `ref`, detaching when `ref` is a commit rather than a branch.
+   *
+   * Distinct from {@link createBranch}, which makes a new one. This is for
+   * getting *off* a branch — the step before deleting it.
+   */
+  checkout(ref: string, options?: { force?: boolean }): Promise<void>;
+  /** How many commits `ref` has that `base` cannot reach. */
+  commitsAhead(ref: string, base: string): Promise<number>;
+  /**
+   * Commits on `ref` whose message matches `grep`, newest first.
+   *
+   * Fixed-string matching, not regex: work-item ids contain `-` and callers
+   * pass them verbatim.
+   */
+  searchLog(options: {
+    readonly ref?: string | undefined;
+    readonly grep: string;
+    readonly limit?: number | undefined;
+  }): Promise<{ readonly sha: string; readonly subject: string }[]>;
+  /**
+   * Reverts a commit, committing the inverse.
+   *
+   * `mainline` is required for a merge commit and meaningless for any other, so
+   * it is the caller's to decide — git cannot guess which parent the caller
+   * considers the trunk.
+   */
+  revert(sha: string, options?: { mainline?: number }): Promise<CommitResult>;
 }
 
 /**
@@ -224,6 +280,16 @@ export function createGitManager(options: GitManagerOptions): GitManager {
     return [...new Set(status.files.map((file) => file.path))].sort();
   }
 
+  async function trackedChanges(): Promise<string[]> {
+    await assertRepo();
+    const output = await git.raw(['diff', '--name-only', 'HEAD']);
+    return output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line !== '')
+      .sort();
+  }
+
   async function changedInCommit(ref = 'HEAD'): Promise<string[]> {
     await assertRepo();
     // `--root` is load-bearing: without it a commit with no parent reports no
@@ -282,6 +348,7 @@ export function createGitManager(options: GitManagerOptions): GitManager {
     },
 
     changedPaths,
+    trackedChanges,
 
     async classifyWorkingTree(): Promise<ClassifiedChanges> {
       return classifyChanges(await changedPaths(), managedPrefixes);
@@ -367,6 +434,89 @@ export function createGitManager(options: GitManagerOptions): GitManager {
       if (opts?.force === true) args.push('--force');
       args.push(path.resolve(worktreePath));
       await git.raw(args);
+    },
+
+    async deleteBranch(name: string, opts?: { force?: boolean }): Promise<void> {
+      await assertRepo();
+      await git.raw(['branch', opts?.force === true ? '-D' : '-d', name]);
+    },
+
+    async writeRef(ref: string, sha: string): Promise<void> {
+      await assertRepo();
+      await git.raw(['update-ref', ref, sha]);
+    },
+
+    async checkout(ref: string, opts?: { force?: boolean }): Promise<void> {
+      await assertRepo();
+      const args = ['checkout'];
+      if (opts?.force === true) args.push('--force');
+      // A sha would otherwise be an ambiguous argument; `--detach` says which
+      // of the two readings is meant instead of letting git guess from shape.
+      if (/^[0-9a-f]{7,40}$/i.test(ref)) args.push('--detach');
+      args.push(ref);
+      await git.raw(args);
+    },
+
+    async resolveRef(ref: string): Promise<string | null> {
+      await assertRepo();
+      try {
+        return (await git.revparse([ref])).trim();
+      } catch {
+        return null;
+      }
+    },
+
+    async commitsAhead(ref: string, base: string): Promise<number> {
+      await assertRepo();
+      // `base..ref` is "reachable from ref, not from base" — the commits that
+      // would become unreachable if ref were deleted right now.
+      const output = await git.raw(['rev-list', '--count', `${base}..${ref}`]);
+      const count = Number.parseInt(output.trim(), 10);
+      return Number.isNaN(count) ? 0 : count;
+    },
+
+    async searchLog(opts: {
+      ref?: string | undefined;
+      grep: string;
+      limit?: number | undefined;
+    }): Promise<{ sha: string; subject: string }[]> {
+      await assertRepo();
+      const args = [
+        'log',
+        `-${String(opts.limit ?? 200)}`,
+        '--fixed-strings',
+        `--grep=${opts.grep}`,
+        '--format=%H%x00%s',
+      ];
+      if (opts.ref !== undefined) args.push(opts.ref);
+      const output = await git.raw(args).catch(() => '');
+
+      const commits: { sha: string; subject: string }[] = [];
+      for (const line of output.split('\n')) {
+        if (line.trim() === '') continue;
+        const [sha, subject] = line.split('\0');
+        if (sha === undefined || subject === undefined) continue;
+        commits.push({ sha, subject });
+      }
+      return commits;
+    },
+
+    async revert(sha: string, opts?: { mainline?: number }): Promise<CommitResult> {
+      await assertRepo();
+      const args = ['revert', '--no-edit'];
+      if (opts?.mainline !== undefined) args.push('-m', String(opts.mainline));
+      args.push(sha);
+      await git.raw(args);
+
+      const head = (await git.revparse(['HEAD'])).trim();
+      const changed = await changedInCommit(head);
+      const summary = await git.branchLocal();
+      return {
+        sha: head,
+        branch: summary.current,
+        bookkeeping: isBookkeepingOnly(changed, managedPrefixes),
+        changes: classifyChanges(changed, managedPrefixes),
+      };
     },
   };
 }

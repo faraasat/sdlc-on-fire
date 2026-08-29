@@ -77,6 +77,7 @@ export * from './pii-redact.js';
 export * from './threat-model.js';
 export * from './agent-scope.js';
 export * from './revert-guard.js';
+export * from './rollback.js';
 export * from './upgrade-triage.js';
 export * from './regression-scope.js';
 export * from './confidence.js';

@@ -120,6 +120,13 @@ export interface ClaimRequest {
 /** One entry in the hash-chained audit log (ADR-0030). */
 export interface AuditEntry {
   readonly action: string;
+  /**
+   * A registered actor's **uuid**, not a name.
+   *
+   * `audit_log.actor_id` is an FK into `actors`. The free-text identity a claim
+   * is held under (`work_items.claimed_by`, `--as ada`) is a different thing and
+   * belongs in {@link AuditEntry.detail}.
+   */
   readonly actorId?: string | undefined;
   readonly targetType?: string | undefined;
   readonly targetId?: string | undefined;

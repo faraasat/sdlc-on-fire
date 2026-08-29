@@ -107,6 +107,7 @@ import { formatRetrieval, retrievalReport } from './retrieval-eval-run.js';
 import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
+import { formatRollback, rollbackWorkItem, type RollbackResult } from './rollback.js';
 import { formatTiers, reportTiers } from './tiers.js';
 import {
   checkResolution,
@@ -1099,6 +1100,31 @@ export function buildProgram(): Command {
             .join('\n'),
         );
         if (result.refusal !== undefined) process.exitCode = 1;
+      },
+    );
+
+  program
+    .command('rollback')
+    .argument('<work-item-id>', 'the work item to abandon, e.g. TASK-001')
+    .description("abandon a work item's branch, worktree and claim — keeping every record of it")
+    .option('--as <actor>', 'who is rolling it back — must hold the claim')
+    .option('--base <ref>', 'the branch this work was meant to land on', 'main')
+    .option('--force', 'discard uncommitted changes in the worktree')
+    .option('--apply', 'actually do it; without this the plan is printed and nothing is touched')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        id: string,
+        options: { as?: string; base?: string; force?: boolean; apply?: boolean; json?: boolean },
+      ): Promise<void> => {
+        const result = await rollbackWorkItem(root(), id, {
+          actor: options.as,
+          base: options.base,
+          force: options.force,
+          apply: options.apply,
+        });
+        emit(result, options.json === true, (r: RollbackResult) => formatRollback(r));
+        if (!result.plan.safe) process.exitCode = 1;
       },
     );
 
