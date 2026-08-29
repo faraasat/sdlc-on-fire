@@ -58,3 +58,38 @@ export const SITUATIONS_NOT_FROM_DIFF: Readonly<Record<string, string>> = {
  * censuses directly and the function was a second, weaker way of asking. A guard
  * whose only caller is the assertion that duplicates it is not a guard.
  */
+
+/**
+ * Stages with no stage-skill that should fall through to the situations
+ * (P6-SURFACE-15).
+ *
+ * The `strict` ladder routes cards through `security_review` and nothing
+ * dispatched there: `SECURITY_REVIEW_SKILL` is `situation: 'high-risk-surface'`,
+ * not stage-bound. Same shape as the `triage` gap P6-PAYLOAD-06 closed, and the
+ * fix could not be the same — a skill declares exactly **one** trigger
+ * (contract 04 §2.1), so binding it to the stage would give up the situational
+ * dispatch it was built for.
+ *
+ * **The resolution: the stage and the situation ask the same question at
+ * different times.** A stage with no skill of its own may consult what the diff
+ * says, and `security_review` dispatches `security-review` exactly when the
+ * change actually touches a tracked surface. That is more honest than binding it
+ * unconditionally: a card at `security_review` whose diff touches nothing
+ * sensitive genuinely has nothing for an agent to do, and saying so is the same
+ * answer `test` already gives.
+ *
+ * **An explicit table, not a universal fall-through.** `test` is the reason: it
+ * has no skill *deliberately* — the daemon runs verify and reads the output
+ * itself — and a fall-through there would dispatch `write-tests` on
+ * `tier-unsatisfied` and quietly contradict the sentence that explains why the
+ * stage is empty. Every entry here is a decision somebody made, and the ones
+ * absent are decisions too.
+ */
+export const STAGES_CONSULTING_SITUATIONS: Readonly<Record<string, string>> = {
+  security_review:
+    'the security-review skill is situational; the stage asks the same question the diff answers',
+};
+
+export function consultsSituations(stage: string): boolean {
+  return Object.prototype.hasOwnProperty.call(STAGES_CONSULTING_SITUATIONS, stage);
+}

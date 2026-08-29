@@ -26,8 +26,12 @@ import {
   FocusProfileSchema,
   loadTierPolicy,
   undeclaredModels,
+  consultsSituations,
+  detectRiskSurfaces,
   resolveStageProfile,
+  situationsFromDiff,
   resolveWorkspaceLayout,
+  type CanonicalSkill,
   type CapabilityDiscoveryRow,
   type Preset,
   type WorkspaceConfig,
@@ -36,12 +40,14 @@ import {
   CANONICAL_SKILLS,
   fillSlots,
   resolveTier,
+  skillForSituation,
   skillForStage,
   tierPolicyFromConfig,
 } from '@sdlc-on-fire/agent-manager';
 import { estimateTokens } from '@sdlc-on-fire/context';
 import { parseFrontmatter, renderWorkItem } from '@sdlc-on-fire/storage';
 import { attestAll, attestItem, type Attestation, type TreeContext } from './attest.js';
+import { changedFiles, defaultGit } from './risk.js';
 import { explainFilesystemError, explainYamlError } from './setup-errors.js';
 import { currentDirtyTreeHash } from './verify.js';
 import {
@@ -587,7 +593,17 @@ export interface InstructionsWorkItem {
 
 export interface InstructionsSkill {
   readonly name: string;
+  /**
+   * The lifecycle stage this skill backs, or the situation it answers.
+   *
+   * A situational skill has no stage, and a skill-less stage may fall through to
+   * one (P6-SURFACE-15). Reporting the situation here rather than an empty
+   * string keeps the field answering the reader's actual question — "why is THIS
+   * skill running" — which a blank would not.
+   */
   readonly stage: string;
+  /** True when this skill was reached by the diff rather than by the stage. */
+  readonly viaSituation?: string | undefined;
   readonly role: string;
   readonly task: string;
   readonly stopCondition: string;
@@ -810,7 +826,39 @@ export async function instructions(root: string, id: string): Promise<Instructio
   // column shows where work *is* — and it is what makes "one skill authors one
   // stage's behaviour" true rather than off by one. `nextStage` stays in the
   // result as information; it is no longer what decides the prompt.
-  const skill = skillForStage(stage);
+  // `CanonicalSkill`, not `StageSkill`. After the fall-through below this may
+  // hold a situational skill, and the narrower type was right to refuse it —
+  // widening here rather than casting keeps `skillForStage`'s own guarantee
+  // intact for every other caller.
+  let skill: CanonicalSkill | undefined = skillForStage(stage);
+
+  // A skill-less stage may consult the situations (P6-SURFACE-15). The strict
+  // ladder routes through `security_review` and nothing dispatched there,
+  // because the security-review skill is situational rather than stage-bound —
+  // and a skill declares exactly one trigger, so binding it would give up the
+  // situational dispatch it was built for.
+  //
+  // The table is explicit rather than universal: `test` has no skill
+  // deliberately, and a fall-through there would dispatch `write-tests` and
+  // contradict the sentence that explains why the stage is empty.
+  // Surfaces the diff touched, filled into a situational skill's slots below.
+  // Empty unless the fall-through actually ran — a stage with its own skill must
+  // not pay for a `git diff` it has no use for.
+  let touchedSurfaces: readonly string[] = [];
+  if (skill === undefined && consultsSituations(stage)) {
+    // Caught, never thrown: `instructions` is a read-only command, and a
+    // workspace with no git yet must still be able to ask what to do next.
+    const changed = await changedFiles('HEAD', defaultGit(layout.root)).catch(() => []);
+    for (const situation of situationsFromDiff(changed)) {
+      const candidate = skillForSituation(situation);
+      if (candidate !== undefined) {
+        skill = candidate;
+        touchedSurfaces = [...new Set(detectRiskSurfaces(changed).map((f) => f.surface))];
+        break;
+      }
+    }
+  }
+
   if (skill === undefined) {
     return {
       workItem,
@@ -845,11 +893,16 @@ export async function instructions(root: string, id: string): Promise<Instructio
     terminal: false,
     skill: {
       name: skill.name,
-      stage: skill.stage,
+      stage: skill.stage ?? stage,
+      ...(skill.situation === undefined ? {} : { viaSituation: skill.situation }),
       role: skill.role,
       task: fillSlots(skill.task, {
         work_item_id: id,
         work_item_title: workItem.title,
+        // Supplied by the risk scan rather than chosen by the reviewer, so a
+        // surface cannot be reviewed away by not mentioning it. Present only
+        // when a situational skill was reached — the only case declaring it.
+        ...(touchedSurfaces.length === 0 ? {} : { surfaces: touchedSurfaces.join(', ') }),
       }),
       stopCondition: skill.stop_condition,
       outputContract: {
