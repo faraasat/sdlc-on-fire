@@ -277,6 +277,37 @@ export function publishStdio(dryRun) {
 }
 
 /**
+ * Which authentication question to ask before publishing.
+ *
+ * **`npm whoami` is the wrong question under Trusted Publishing**, and asking
+ * it anyway fails the release npm would have accepted. npm's own documentation
+ * is explicit: *"the `npm whoami` command will not reflect OIDC authentication
+ * status since the authentication occurs only during the publish or stage
+ * operation"*, and OIDC covers `npm publish` alone — `install`, `view` and
+ * `access` still want a conventional token. So in a workflow with `id-token:
+ * write` there is no identity to report *until the publish itself runs*, and a
+ * `whoami` gate in front of it turns a correctly configured pipeline into
+ * `E401` with a message telling a CI runner to `npm login`.
+ *
+ * Checked against <https://docs.npmjs.com/trusted-publishers> on 2026-08-30,
+ * before this branch existed rather than after it failed.
+ *
+ * The two GitHub-minted variables are the detector rather than `GITHUB_ACTIONS`
+ * or `CI`: they are present only when the workflow was actually granted
+ * `id-token: write`, which is the precondition for the exchange. A workflow
+ * that forgot the permission therefore still takes the `whoami` path and still
+ * fails early — which is correct, because that one really has no credential.
+ */
+export function authCheckMode(env = process.env) {
+  const oidc =
+    typeof env['ACTIONS_ID_TOKEN_REQUEST_URL'] === 'string' &&
+    env['ACTIONS_ID_TOKEN_REQUEST_URL'] !== '' &&
+    typeof env['ACTIONS_ID_TOKEN_REQUEST_TOKEN'] === 'string' &&
+    env['ACTIONS_ID_TOKEN_REQUEST_TOKEN'] !== '';
+  return oidc ? 'oidc-deferred' : 'whoami';
+}
+
+/**
  * Refuse to start when npm does not know who you are.
  *
  * npm answers an unauthenticated `PUT` to an existing package with **404 Not
@@ -294,6 +325,15 @@ export function publishStdio(dryRun) {
  * because a network blip broke one status call would be worse than the problem.
  */
 function assertAuthenticated(dryRun) {
+  if (authCheckMode() === 'oidc-deferred') {
+    process.stdout.write(
+      'npm auth: trusted publishing (OIDC) — identity is established by `npm publish` itself,\n' +
+        'so there is nothing to check here. A misconfigured trusted publisher fails at the\n' +
+        'upload with an auth error, which is the correct place for it to fail.\n\n',
+    );
+    return;
+  }
+
   let who;
   try {
     who = execFileSync('npm', ['whoami'], {

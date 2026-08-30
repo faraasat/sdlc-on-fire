@@ -123,6 +123,26 @@ describe('the archive itself', () => {
     expect(manifest?.included).toContain('kanban');
   }, 180_000);
 
+  // The manifest was read with `tar --include=<glob>` — a libarchive option
+  // GNU tar rejects outright — under a catch that turned any tar failure into
+  // `null`. On macOS (bsdtar) it worked; on Linux CI every archive reported
+  // itself manifest-less, and the catch made a platform incompatibility
+  // indistinguishable from an ordinary empty result. These two pin the
+  // distinction rather than the flag: an unreadable archive is a different
+  // fact from an archive with nothing in it.
+  it('throws on an archive it cannot read, rather than calling it manifest-less', async () => {
+    const notATarball = path.join(root, 'not-an-archive.tar.gz');
+    await fs.writeFile(notATarball, 'this is not gzip', 'utf8');
+    await expect(readBackupManifest(notATarball)).rejects.toThrow();
+    await expect(readBackupManifest(path.join(root, 'absent.tar.gz'))).rejects.toThrow();
+  }, 180_000);
+
+  it('returns null for a readable archive that genuinely carries no manifest', async () => {
+    const plain = path.join(root, 'plain.tar.gz');
+    await run('tar', ['-czf', plain, '-C', root, 'kanban'], { maxBuffer: 16 * 1024 * 1024 });
+    expect(await readBackupManifest(plain)).toBeNull();
+  }, 180_000);
+
   it('leaves no manifest behind in the workspace', async () => {
     const result = await backupWorkspace(root);
     expect(result.archivePath).toContain(BACKUP_DIR);

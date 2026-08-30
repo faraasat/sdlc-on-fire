@@ -9,6 +9,9 @@ export interface RegistrySnapshot {
   versions: string[];
 }
 
+export declare function authCheckMode(
+  env?: Record<string, string | undefined>,
+): 'oidc-deferred' | 'whoami';
 export declare function distTagFor(version: string): 'next' | 'latest';
 export declare function publishFlags(env?: Record<string, string | undefined>): {
   provenance: boolean;

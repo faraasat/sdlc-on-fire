@@ -37,6 +37,9 @@ export const BACKUP_ROOTS = ['kanban', 'docs', '.sdlc'] as const;
 /** Where backups land by default — inside the gitignored state dir. */
 export const BACKUP_DIR = 'backups';
 
+/** The manifest's file name inside the archive, wherever the state dir is. */
+const MANIFEST_NAME = 'backup-manifest.json';
+
 export interface BackupManifest {
   readonly tool: string;
   readonly createdAt: string;
@@ -135,7 +138,7 @@ export async function backupWorkspace(
   // The manifest is staged inside the workspace so it lands *in* the archive at
   // a predictable path. A manifest sitting beside the archive is the first
   // thing to get separated from it.
-  const manifestPath = path.join(layout.stateDir, 'backup-manifest.json');
+  const manifestPath = path.join(layout.stateDir, MANIFEST_NAME);
   await fs.mkdir(layout.stateDir, { recursive: true });
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
 
@@ -174,12 +177,34 @@ export async function backupWorkspace(
   return { archivePath, manifest, entryCount, bytes, sha256, missing };
 }
 
-/** Reads an archive back and returns its manifest — the check that it is restorable. */
+/**
+ * Reads an archive back and returns its manifest — the check that it is restorable.
+ *
+ * **Members are located by listing, not by a glob.** `tar --include=<pattern>`
+ * is libarchive's; GNU tar has no such option and fails the whole invocation on
+ * it. That difference is invisible on macOS (whose `tar` *is* bsdtar) and turns
+ * every Linux read into "this archive has no manifest" — a platform
+ * incompatibility wearing the costume of an ordinary negative result, which is
+ * exactly what a swallowed error buys you. So: list the entries, match the
+ * name here, and extract that one member by its exact stored path, which both
+ * tars accept.
+ *
+ * The two failure modes stay distinguishable. An archive that cannot be listed
+ * **throws** — an unreadable backup is a different fact from a backup with no
+ * manifest, and reporting the first as the second is how a corrupt archive gets
+ * filed as a minor omission.
+ */
 export async function readBackupManifest(archivePath: string): Promise<BackupManifest | null> {
-  const { stdout } = await run('tar', ['-xzOf', archivePath, '--include=*backup-manifest.json'], {
+  const listed = await run('tar', ['-tzf', archivePath], { maxBuffer: 64 * 1024 * 1024 });
+  const member = listed.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line !== '' && path.posix.basename(line) === MANIFEST_NAME);
+  if (member === undefined) return null;
+
+  const { stdout } = await run('tar', ['-xzOf', archivePath, member], {
     maxBuffer: 4 * 1024 * 1024,
-  }).catch(() => ({ stdout: '' }));
-  if (stdout.trim() === '') return null;
+  });
   try {
     return JSON.parse(stdout) as BackupManifest;
   } catch {

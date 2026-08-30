@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   advanceLatest,
   alreadyPublished,
+  authCheckMode,
   distTagAddCommand,
   distTagFor,
   publishFlags,
@@ -60,6 +61,34 @@ describe('publishFlags', () => {
     expect(publishFlags({}).flags).toContain('--access');
     expect(publishFlags({}).flags).toContain('public');
     expect(publishFlags({ CI: 'true' }).flags).toContain('public');
+  });
+});
+
+describe('authCheckMode', () => {
+  const oidc = {
+    ACTIONS_ID_TOKEN_REQUEST_URL: 'https://token.actions.githubusercontent.com/…',
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'a-request-token',
+  };
+
+  it('defers to the publish when the workflow can mint an OIDC token', () => {
+    // npm: "the `npm whoami` command will not reflect OIDC authentication
+    // status since the authentication occurs only during the publish or stage
+    // operation" — so a whoami gate in front of a correctly configured trusted
+    // publisher fails the release npm would have accepted, with an E401 telling
+    // a CI runner to `npm login`.
+    expect(authCheckMode(oidc)).toBe('oidc-deferred');
+  });
+
+  it('still asks whoami when the workflow forgot `id-token: write`', () => {
+    // The two variables exist only when the permission was actually granted.
+    // Without them there is no exchange to defer to, and failing early is right.
+    expect(authCheckMode({ GITHUB_ACTIONS: 'true', CI: 'true' })).toBe('whoami');
+    expect(authCheckMode({ ...oidc, ACTIONS_ID_TOKEN_REQUEST_TOKEN: '' })).toBe('whoami');
+    expect(authCheckMode({ ...oidc, ACTIONS_ID_TOKEN_REQUEST_URL: undefined })).toBe('whoami');
+  });
+
+  it('asks whoami on a laptop, where the expired-token 404 is the real hazard', () => {
+    expect(authCheckMode({})).toBe('whoami');
   });
 });
 
