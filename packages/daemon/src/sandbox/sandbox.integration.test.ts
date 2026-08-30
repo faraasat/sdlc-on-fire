@@ -42,9 +42,33 @@ describe('choosing a tier', () => {
   it('maps each platform to the facility it actually has', () => {
     expect(tierForPlatform('darwin')).toBe('seatbelt');
     expect(tierForPlatform('linux')).toBe('bubblewrap');
-    // No native Windows sandbox exists to build against; ADR-0036's answer is
-    // "run inside WSL2", which reports itself as linux.
+    // Windows has no filesystem sandbox for an arbitrary command, and that is a
+    // researched finding rather than an absence of effort (ADR-0076): Job
+    // Objects limit resources and process lifetime, not file or network access,
+    // and AppContainer needs a package identity build commands do not have.
     expect(tierForPlatform('win32')).toBe('none');
+  });
+
+  it('tells a Windows user what is actually missing, not to use another OS', () => {
+    // ADR-0072 made native Windows a supported target, and a supported target
+    // cannot have "run inside WSL2" as its security story. The message used to
+    // say exactly that, citing an ADR another ADR had superseded.
+    const resolution = resolveSandbox(config({ tier: 'bubblewrap' }), 'win32', () => true);
+    expect(resolution.tier).toBe('none');
+    expect(resolution.available).toBe(false);
+    expect(resolution.reason).toMatch(/Job Objects/);
+    expect(resolution.reason).toMatch(/ADR-0076/);
+  });
+
+  it('still refuses outright on Windows when a sandbox is required', () => {
+    // The one place a user has explicitly asked to be stopped. A control that
+    // silently downgrades is worse than no control.
+    const resolution = resolveSandbox(
+      config({ tier: 'bubblewrap', required: true }),
+      'win32',
+      () => true,
+    );
+    expect(resolution.available).toBe(false);
   });
 
   it('never claims a sandbox it cannot provide', () => {

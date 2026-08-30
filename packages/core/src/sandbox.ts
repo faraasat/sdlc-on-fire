@@ -96,8 +96,24 @@ export interface SandboxResolution {
 export function tierForPlatform(platform: string): SandboxTier {
   if (platform === 'darwin') return 'seatbelt';
   if (platform === 'linux') return 'bubblewrap';
-  // No native Windows sandbox exists to build against today; ADR-0036's
-  // Windows story is "run inside WSL2", which reports itself as linux.
+  // **Windows has no filesystem sandbox for an arbitrary command, and this is a
+  // researched finding rather than an absence of effort** (ADR-0076, checked
+  // against Microsoft's own documentation 2026-08-31).
+  //
+  // Job Objects limit working-set size, process priority, CPU rate, active
+  // process count, UI access and end-of-job time, and can terminate a whole
+  // process tree on close. They do **not** confine the filesystem or the
+  // network — those are not among the limits the API exposes. That is a real
+  // and useful control and a completely different one from what Seatbelt and
+  // bubblewrap provide, which is why there is no `job-object` tier: it would
+  // sit in this enum and be read as an equivalent by everyone who did not read
+  // the ADR.
+  //
+  // AppContainer does isolate, and needs a package identity and capability SIDs
+  // that `pytest`, `go test` and `cargo nextest` do not have.
+  //
+  // So `verify` runs unsandboxed on Windows. `sandbox.required` refuses there
+  // rather than downgrading silently, and that is the whole mitigation.
   return 'none';
 }
 
@@ -137,7 +153,14 @@ export function resolveSandbox(
       tier: 'none',
       requested: config.tier,
       available: false,
-      reason: `no sandbox facility exists for platform "${platform}" — on Windows, run inside WSL2 (ADR-0036)`,
+      // Names the finding rather than pointing at another operating system.
+      // ADR-0072 made native Windows a *supported target*, and a supported
+      // target cannot have "use a different OS" as its security story
+      // (ADR-0076 supersedes ADR-0036's wording here).
+      reason:
+        platform === 'win32'
+          ? 'Windows has no filesystem sandbox for an arbitrary command — Job Objects limit resources and process lifetime, not file or network access, and AppContainer needs a package identity build commands do not have (ADR-0076). WSL2 confines; it is a recommendation, not this platform`s answer'
+          : `no sandbox facility exists for platform "${platform}"`,
       unenforced,
     };
   }

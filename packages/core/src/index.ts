@@ -154,3 +154,4 @@ export * from './run-record.js';
 export * from './block-outcome.js';
 export * from './config-drift.js';
 export * from './adoption-bar.js';
+export * from './command-composition.js';
