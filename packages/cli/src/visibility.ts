@@ -9,7 +9,15 @@ import {
   type ResponseCorpus,
   type Rate,
 } from '@sdlc-on-fire/core';
-import { resolveWorkspaceLayout } from '@sdlc-on-fire/core';
+import {
+  formatVisibilityTrend,
+  resolveWorkspaceLayout,
+  visibilityTrend,
+  wilson,
+  type VisibilityTrend,
+} from '@sdlc-on-fire/core';
+import { applySchema } from '@sdlc-on-fire/db';
+import { openWorkspaceDatabase } from './commands.js';
 
 /**
  * `sdlc visibility` — reading a recorded corpus (P5-VIZ-02/03, ADR-0074).
@@ -156,3 +164,151 @@ export function formatVisibility(result: VisibilityResult): string {
 
 /** The size a matrix would cost, for the approval that should precede a run. */
 export { matrixSize };
+
+/**
+ * Recording a visibility run so it can be compared to the next one
+ * (P7-VISIBILITY-01).
+ *
+ * `sdlc visibility` measures once, and once answers nothing anybody acts on:
+ * the question is never "what is the mention rate" but "is it moving". This
+ * makes the second question askable, on a cadence — the command is
+ * cron-friendly and the product deliberately ships **no scheduler of its own**,
+ * because a workspace that already has cron, CI or a task runner does not need
+ * a second one and cannot be asked to trust ours with credentials.
+ *
+ * **Hits and attempts are stored, never a rate.** The Wilson interval needs the
+ * counts, so a row holding `0.42` would make every interval unrecomputable —
+ * and the intervals are the entire point of this feature.
+ */
+
+export interface SnapshotResult {
+  readonly subject: string;
+  readonly ranAt: string;
+  readonly recorded: boolean;
+  readonly problems: readonly string[];
+}
+
+/**
+ * Records the latest corpus as a snapshot.
+ *
+ * Refuses when the corpus has matrix problems. A corpus produced by a design
+ * that could not support its own claim is still a corpus and is still worth
+ * *reading* — `sdlc visibility` shows it, problems and all — but recording it
+ * into a trend would launder a bad run into a data point, and the trend is what
+ * somebody eventually puts in front of a stakeholder.
+ */
+export async function snapshotVisibility(
+  root: string,
+  subject: string,
+  host: string,
+  options: { readonly ranAt?: string | undefined } = {},
+): Promise<SnapshotResult> {
+  const result = await readVisibility(root, subject, host);
+
+  if (!result.found) {
+    return {
+      subject,
+      ranAt: options.ranAt ?? '',
+      recorded: false,
+      problems: [`no corpus at ${result.corpusPath} — nothing to snapshot`],
+    };
+  }
+  if (result.problems.length > 0 || result.analysis === undefined) {
+    return {
+      subject,
+      ranAt: options.ranAt ?? '',
+      recorded: false,
+      problems: result.problems.length > 0 ? result.problems : ['corpus could not be analysed'],
+    };
+  }
+
+  const analysis = result.analysis;
+  const ranAt = options.ranAt ?? new Date().toISOString();
+
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const rows = await db.query<{ id: number }>(
+      `INSERT INTO visibility_snapshots
+         (ran_at, subject, host, answered_hits, answered_attempts,
+          mention_hits, mention_attempts, citation_hits, citation_attempts,
+          failures, corpus_path)
+       VALUES ($1::timestamptz,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (subject, ran_at) DO NOTHING
+       RETURNING id;`,
+      [
+        ranAt,
+        subject,
+        host,
+        analysis.overall.answered.hits,
+        analysis.overall.answered.attempts,
+        analysis.overall.mention.hits,
+        analysis.overall.mention.attempts,
+        analysis.overall.citation.hits,
+        analysis.overall.citation.attempts,
+        analysis.failures,
+        result.corpusPath,
+      ],
+    );
+    return { subject, ranAt, recorded: rows.length > 0, problems: [] };
+  } finally {
+    await db.close();
+  }
+}
+
+export async function visibilityTrendFor(root: string, subject: string): Promise<VisibilityTrend> {
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const rows = await db.query<{
+      ran_at: string;
+      subject: string;
+      host: string;
+      answered_hits: number;
+      answered_attempts: number;
+      mention_hits: number;
+      mention_attempts: number;
+      citation_hits: number;
+      citation_attempts: number;
+      failures: number;
+    }>(
+      `SELECT ran_at, subject, host, answered_hits, answered_attempts,
+              mention_hits, mention_attempts, citation_hits, citation_attempts, failures
+         FROM visibility_snapshots WHERE subject = $1 ORDER BY ran_at ASC;`,
+      [subject],
+    );
+
+    // Intervals are recomputed from the stored counts on every read rather than
+    // stored alongside them. A stored interval and a stored count can disagree;
+    // recomputing makes that impossible.
+    return visibilityTrend(
+      rows.map((row) => ({
+        at: new Date(String(row.ran_at)).toISOString(),
+        subject: row.subject,
+        host: row.host,
+        answered: wilson(row.answered_hits, row.answered_attempts),
+        mention: wilson(row.mention_hits, row.mention_attempts),
+        citation: wilson(row.citation_hits, row.citation_attempts),
+        failures: row.failures,
+      })),
+    );
+  } finally {
+    await db.close();
+  }
+}
+
+export { formatVisibilityTrend };
+
+export function formatSnapshot(result: SnapshotResult): string {
+  if (result.recorded) {
+    return `recorded a visibility snapshot for ${result.subject} at ${result.ranAt}`;
+  }
+  return [
+    `no snapshot recorded for ${result.subject}`,
+    ...result.problems.map((problem) => `  ✗ ${problem}`),
+    '',
+    'A corpus with matrix problems is still worth reading — `sdlc visibility`',
+    'shows it — but recording it into a trend would launder a bad run into a',
+    'data point.',
+  ].join('\n');
+}

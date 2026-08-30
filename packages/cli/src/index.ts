@@ -8,7 +8,14 @@ import { exitCodeFor, renderSyncReport, resolveToken, runTrackerSyncCommand } fr
 import { formatExport, runExport } from './export.js';
 import { archiveChange, checkSpecs, formatSpecCheck, newChange, newSpec } from './spec.js';
 import { formatMap, runMap } from './map.js';
-import { formatVisibility, readVisibility } from './visibility.js';
+import {
+  formatSnapshot,
+  formatVisibility,
+  formatVisibilityTrend,
+  readVisibility,
+  snapshotVisibility,
+  visibilityTrendFor,
+} from './visibility.js';
 import { docVisibility, formatDocVisibility, formatLlmsTxt, llmsTxt } from './docs-check.js';
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
@@ -1633,6 +1640,28 @@ export function buildProgram(): Command {
       // A corpus whose design cannot support its own claim fails the command.
       // Reporting the numbers under a warning would let somebody quote them.
       if (result.problems.length > 0) process.exitCode = 1;
+    });
+
+  program
+    .command('visibility:snapshot')
+    .description('record the current corpus as a point in the visibility trend')
+    .requiredOption('--subject <name>', 'the project name to look for in answers')
+    .requiredOption('--host <domain>', 'the domain that counts as your own')
+    .option('--json', 'emit JSON')
+    .action(async (options: { subject: string; host: string; json?: boolean }): Promise<void> => {
+      const result = await snapshotVisibility(root(), options.subject, options.host);
+      emit(result, options.json === true, formatSnapshot);
+      if (!result.recorded) process.exitCode = 1;
+    });
+
+  program
+    .command('visibility:trend')
+    .description('visibility over time — Wilson intervals throughout, including the comparison')
+    .requiredOption('--subject <name>', 'the project the snapshots are about')
+    .option('--json', 'emit JSON')
+    .action(async (options: { subject: string; json?: boolean }): Promise<void> => {
+      const trend = await visibilityTrendFor(root(), options.subject);
+      emit(trend, options.json === true, formatVisibilityTrend);
     });
 
   program

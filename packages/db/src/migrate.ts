@@ -398,6 +398,31 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
    );`,
   `CREATE INDEX IF NOT EXISTS run_compactions_run_idx
      ON run_compactions (run_id, fired_at);`,
+
+  // ── Visibility snapshots (P7-VISIBILITY-01, contract 01 §3.6) ─────────────
+  //
+  // Hits and attempts, never a stored rate. A rate is derivable from these and
+  // they are not derivable from it — and the Wilson interval needs the counts,
+  // so a schema storing 0.42 would make every interval unrecomputable.
+  //
+  // `corpus_path` is NOT NULL by design (ADR-0074): a rate with no corpus behind
+  // it has no provenance and is therefore not evidence.
+  `CREATE TABLE IF NOT EXISTS visibility_snapshots (
+     id                BIGSERIAL PRIMARY KEY,
+     ran_at            TIMESTAMPTZ NOT NULL,
+     subject           TEXT NOT NULL,
+     host              TEXT NOT NULL,
+     answered_hits     INT NOT NULL,
+     answered_attempts INT NOT NULL,
+     mention_hits      INT NOT NULL,
+     mention_attempts  INT NOT NULL,
+     citation_hits     INT NOT NULL,
+     citation_attempts INT NOT NULL,
+     failures          INT NOT NULL,
+     corpus_path       TEXT NOT NULL
+   );`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS visibility_snapshots_uniq
+     ON visibility_snapshots (subject, ran_at);`,
   // An agent cannot author one, structurally. The application layer refuses it
   // too, and both stay for the same reason the approvals pair does: no single
   // bug should be enough to defeat an invariant.
