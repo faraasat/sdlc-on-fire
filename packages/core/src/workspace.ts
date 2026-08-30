@@ -297,6 +297,16 @@ export interface WorkspaceLayout {
    * `.sdlcof/`.
    */
   readonly viewsDir: string;
+  /**
+   * Local prompt overlays (P6-SURFACE-08, FEAT-AGT-009).
+   *
+   * Beside `gatesDir` and `viewsDir`, for the reason those two are there: an
+   * overlay is authored by a person, shared with a team, diffed when it
+   * changes, and must survive `db:rebuild`. That is content, so it cannot live
+   * under the gitignored state dir, and the root whitelist rules out a new
+   * top-level folder.
+   */
+  readonly promptsDir: string;
   readonly stateDir: string;
   readonly dataDir: string;
   readonly lockDir: string;
@@ -324,6 +334,7 @@ export function resolveWorkspaceLayout(
     docsDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR),
     gatesDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR, 'gates'),
     viewsDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR, 'views'),
+    promptsDir: path.join(absoluteRoot, paths?.docs ?? DEFAULT_DOCS_DIR, 'prompts'),
     stateDir,
     dataDir: path.join(stateDir, 'db'),
     lockDir: path.join(stateDir, 'locks'),

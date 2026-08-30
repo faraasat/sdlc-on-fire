@@ -160,6 +160,30 @@ export const SkillArgumentSchema = z.object({
   description: z.string().min(1).optional(),
 });
 
+/**
+ * A worked tool call (P6-SURFACE-08, FEAT-AGT-018, contract 04 §2.4).
+ *
+ * `PROMPT_SECTION_ORDER` has had an `examples` section since ADR-0018 and the
+ * renderer has had a slot for it — with **no field feeding either**. Every
+ * compiled prompt has therefore shipped with the section silently absent, and
+ * the agent has had a bare parameter schema and nothing else.
+ *
+ * Structured rather than a prose blob, because the value is in being concrete:
+ * `when` says what situation this is, `arguments` is a real argument object,
+ * and the two together are what a model generalises from. A paragraph
+ * describing a call is the thing the parameter schema already was.
+ */
+export const ToolUseExampleSchema = z.object({
+  /** The situation, in one line. */
+  when: z.string().min(1),
+  tool: z.string().min(1),
+  /** A real argument object for that tool, not a description of one. */
+  arguments: z.record(z.string(), z.unknown()),
+  /** Why these arguments and not the obvious alternative. */
+  why: z.string().min(1).optional(),
+});
+export type ToolUseExample = z.infer<typeof ToolUseExampleSchema>;
+
 /** Tiered deprecation metadata (ADR-0034), read by `agents doctor`. */
 export const SkillDeprecationSchema = z.object({
   deprecated_since: z.string().regex(SEMVER),
@@ -207,6 +231,17 @@ export const CanonicalSkillSchema = z
     paths: z.string().min(1).optional(),
     allowed_tools: z.array(z.string().min(1)).optional(),
     disallowed_tools: z.array(z.string().min(1)).optional(),
+    /** Worked tool calls, compiled into the `examples` prompt section. */
+    tool_use_examples: z.array(ToolUseExampleSchema).optional(),
+    /**
+     * Local text appended after every section (P6-SURFACE-08, FEAT-AGT-009).
+     *
+     * Never authored in a canonical skill — it is written *onto* one by
+     * `overrideSkill`, from a workspace's `docs/prompts/<skill>.md`. It is a
+     * field on the IR rather than a parallel channel so that every adapter
+     * compiles it without needing to know overlays exist.
+     */
+    prompt_append: z.string().min(1).optional(),
     context_mode: ContextModeSchema.default('inline'),
     deprecation: SkillDeprecationSchema.optional(),
     hooks: z.record(z.string(), z.unknown()).optional(),
@@ -249,6 +284,29 @@ export const CanonicalSkillSchema = z
         path: ['disallowed_tools'],
         message: `tools appear in both allowed_tools and disallowed_tools: ${conflicts.join(', ')}`,
       });
+    }
+
+    // An example that calls a tool this skill is denied is a contradiction the
+    // compiler can settle: the prompt would demonstrate a call the runtime
+    // refuses, which teaches the model to attempt it and fail. Checked against
+    // `disallowed_tools` and, when it is declared, against `allowed_tools` —
+    // an absent allowlist means "no restriction", not "nothing is allowed".
+    const denied = new Set(skill.disallowed_tools ?? []);
+    const allowlist = skill.allowed_tools === undefined ? null : new Set(skill.allowed_tools);
+    for (const [index, example] of (skill.tool_use_examples ?? []).entries()) {
+      if (denied.has(example.tool)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tool_use_examples', index, 'tool'],
+          message: `example demonstrates "${example.tool}", which this skill disallows`,
+        });
+      } else if (allowlist !== null && !allowlist.has(example.tool)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tool_use_examples', index, 'tool'],
+          message: `example demonstrates "${example.tool}", which is not in allowed_tools`,
+        });
+      }
     }
 
     // Duplicate argument names make positional binding ambiguous.
@@ -295,5 +353,13 @@ export const PROMPT_SECTION_ORDER = [
   'output-contract',
   'self-verification',
   'stop-condition',
+  /**
+   * A workspace's own text, always last (FEAT-AGT-009).
+   *
+   * Last is not a style choice: the order **is** the prompt-cache boundary
+   * (ADR-0018), so an append anywhere earlier would invalidate the cached
+   * prefix of every skill that carries one.
+   */
+  'local-append',
 ] as const;
 export type PromptSection = (typeof PROMPT_SECTION_ORDER)[number];

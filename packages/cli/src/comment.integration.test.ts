@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dispatchTable } from '@sdlc-on-fire/core';
+import { dispatchTable, roleEffectFor } from '@sdlc-on-fire/core';
 import { applySchema } from '@sdlc-on-fire/db';
 import { grantRole, whoami } from './access.js';
 import { commentsFor, directivesFor, dispatchedEffect, postComment } from './comment.js';
@@ -190,18 +190,49 @@ describe('the role has to be held, not claimed (P3-RBAC-02)', () => {
     await whoami(root);
     await grantRole(root, 't@e.com', 'pm');
     const posted = await postComment(root, 'FEAT-001', {
-      type: 'decision',
+      type: 'rescope',
       body: 'cut the export',
       role: 'pm',
     });
-    // `pm` was spelled `product-manager` in the dispatch until the vocabularies
-    // were unified — under the old spelling this row resolved to the unroled
-    // default and a PM's decision silently stopped being a rescope.
     expect(posted.roleEffect).toBe('RESCOPE');
     expect(posted.authorRole).toBe('pm');
 
     const [read] = await commentsFor(root, 'FEAT-001');
     expect(read?.authorRole).toBe('pm');
+  }, 60_000);
+
+  it('resolves the held role against the dispatch table, not the unroled default', async () => {
+    // The spelling guard, on a row that still discriminates. Two of the eight
+    // roles were spelled differently in the dispatch than in `roles` until the
+    // vocabularies were unified, and the symptom was silent: the row missed and
+    // the comment fell through to the unroled default, which for `blocker`
+    // means it gates. A stakeholder must not be able to gate a card.
+    await whoami(root);
+    await grantRole(root, 't@e.com', 'stakeholder');
+    const posted = await postComment(root, 'FEAT-001', {
+      type: 'blocker',
+      body: 'I would prefer otherwise',
+      role: 'stakeholder',
+    });
+    expect(posted.roleEffect).toBe('NONE');
+    expect(roleEffectFor('blocker', null)).toBe('GATE_BLOCK');
+  }, 60_000);
+
+  it('records the two explicit types a role no longer has to imply', async () => {
+    // Before P6-SURFACE-08 these effects were only reachable by a designer
+    // writing an ordinary comment or a PM recording any decision.
+    await whoami(root);
+    const ux = await postComment(root, 'FEAT-001', {
+      type: 'ux-acceptance',
+      body: 'contrast fails WCAG AA on the primary button',
+    });
+    expect(ux.roleEffect).toBe('UX_ACCEPTANCE_UPDATE');
+
+    const rescope = await postComment(root, 'FEAT-001', {
+      type: 'rescope',
+      body: 'dropping CSV export from this release',
+    });
+    expect(rescope.roleEffect).toBe('RESCOPE');
   }, 60_000);
 
   it('refuses a membership that has lapsed', async () => {

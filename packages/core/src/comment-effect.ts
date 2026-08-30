@@ -32,6 +32,27 @@ export const COMMENT_TYPES = [
   'bug-report',
   'review',
   'context-reference',
+  /**
+   * Design feedback that changes what "done" means (P6-SURFACE-08,
+   * FEAT-CMT-008).
+   *
+   * An explicit type, because the alternative was worse in both directions:
+   * `designer` + `normal` used to resolve to `UX_ACCEPTANCE_UPDATE`, which
+   * meant a designer writing "looks great" mutated the acceptance criteria,
+   * while a designer with no role could not raise a UX concern with any effect
+   * at all. Intent belongs in the type the author picks, not in an inference
+   * from who they are.
+   */
+  'ux-acceptance',
+  /**
+   * A scope change, said as one (P6-SURFACE-08, FEAT-CMT-009).
+   *
+   * Same correction as above, applied to `pm` + `decision`. Recording a
+   * decision and changing the scope are different acts, and a PM does the
+   * first far more often than the second — so reading every PM decision as a
+   * rescope made the loud case out of the common one.
+   */
+  'rescope',
 ] as const;
 export const CommentTypeSchema = z.enum(COMMENT_TYPES);
 export type CommentType = z.infer<typeof CommentTypeSchema>;
@@ -85,6 +106,8 @@ const UNROLED: Readonly<Record<CommentType, RoleEffect>> = {
   'bug-report': 'BUG_CREATION',
   review: 'REQUIRED_CHANGE',
   'context-reference': 'CONTEXT_INJECTION',
+  'ux-acceptance': 'UX_ACCEPTANCE_UPDATE',
+  rescope: 'RESCOPE',
 };
 
 /**
@@ -104,12 +127,30 @@ const BY_ROLE: Readonly<Partial<Record<AuthorRole, Partial<Record<CommentType, R
     'bug-report': 'BUG_CREATION',
     review: 'NONE',
     'context-reference': 'NONE',
+    'ux-acceptance': 'NONE',
+    rescope: 'NONE',
   },
-  designer: { normal: 'UX_ACCEPTANCE_UPDATE' },
-  pm: { decision: 'RESCOPE' },
   security: { blocker: 'GATE_BLOCK' },
   'eng-lead': { review: 'REQUIRED_CHANGE' },
 };
+
+/**
+ * Two rows that used to be here, and why they are not (P6-SURFACE-08).
+ *
+ * `designer: { normal: 'UX_ACCEPTANCE_UPDATE' }` and `pm: { decision:
+ * 'RESCOPE' }` inferred a *strong* effect from an *ordinary* type on the
+ * strength of who was speaking. Both were wrong in the same two ways: they
+ * fired on the common case (a designer's plain remark; a PM recording a
+ * decision) and they gave the deliberate case no way to be said at all by
+ * anyone without the role. The explicit `ux-acceptance` and `rescope` types
+ * replace them — intent stated by the author, not inferred from their badge.
+ *
+ * **Which roles may rescope is deliberately not encoded here.** That is
+ * approval policy, and it belongs in the gate policies where it can be scoped
+ * by work type, risk and path — not hard-coded into a lookup table that every
+ * workspace shares. What this table still enforces is the one rule that is not
+ * policy: a `stakeholder` can be heard and cannot gate.
+ */
 
 /**
  * Resolves a comment's effect.

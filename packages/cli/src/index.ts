@@ -1470,7 +1470,7 @@ export function buildProgram(): Command {
     .description('post a typed comment; its effect is computed from type × role, never from text')
     .option(
       '--type <type>',
-      'normal | agent-instruction | decision | blocker | bug-report | review | context-reference',
+      'normal | agent-instruction | decision | blocker | bug-report | review | context-reference | ux-acceptance | rescope',
       'normal',
     )
     .option('--role <role>', "the author's role — must be one you actually hold (ADR-0012)")

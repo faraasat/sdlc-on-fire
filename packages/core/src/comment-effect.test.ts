@@ -48,9 +48,26 @@ describe('the rows that carry the design', () => {
     expect(roleEffectFor('blocker', null)).toBe('GATE_BLOCK');
   });
 
-  it('routes a designer note to acceptance criteria and a PM decision to rescope', () => {
-    expect(roleEffectFor('normal', 'designer')).toBe('UX_ACCEPTANCE_UPDATE');
-    expect(roleEffectFor('decision', 'pm')).toBe('RESCOPE');
+  it('reads a designer note as a note and a PM decision as a decision', () => {
+    // Both used to be reinterpreted by role: a designer writing "looks great"
+    // mutated the acceptance criteria, and every PM decision was a rescope.
+    // Intent is stated by the type now (P6-SURFACE-08).
+    expect(roleEffectFor('normal', 'designer')).toBe('NONE');
+    expect(roleEffectFor('decision', 'pm')).toBe('DECISION_TO_MEMORY');
+  });
+
+  it('gives the explicit types their effect, for anyone who is not a stakeholder', () => {
+    expect(roleEffectFor('ux-acceptance', 'designer')).toBe('UX_ACCEPTANCE_UPDATE');
+    expect(roleEffectFor('rescope', 'pm')).toBe('RESCOPE');
+    // v0.1's only real case: no roles are populated, so the unroled row is the
+    // one that runs. Same argument as `blocker` — a solo operator has no badge.
+    expect(roleEffectFor('ux-acceptance', null)).toBe('UX_ACCEPTANCE_UPDATE');
+    expect(roleEffectFor('rescope', null)).toBe('RESCOPE');
+  });
+
+  it('still refuses a stakeholder every gating effect, including the new ones', () => {
+    expect(roleEffectFor('ux-acceptance', 'stakeholder')).toBe('NONE');
+    expect(roleEffectFor('rescope', 'stakeholder')).toBe('NONE');
   });
 
   it('falls back to the unroled row where a role changes nothing', () => {

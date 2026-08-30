@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { CanonicalSkill } from '@sdlc-on-fire/core';
+import { overriddenSkills } from './prompts.js';
 import {
   CANONICAL_SKILLS,
   ClaudeCodeAdapter,
@@ -46,6 +47,8 @@ export interface CompileSkillsResult {
   readonly files: readonly CompiledSkillFile[];
   readonly warnings: readonly string[];
   readonly doctor: DoctorReport;
+  /** Local overlays that changed something, and what they changed. */
+  readonly overrides: readonly { readonly skill: string; readonly applied: readonly string[] }[];
 }
 
 /**
@@ -133,7 +136,11 @@ export async function compileSkills(
   const adapters = allAdapters(options);
   const adapter = adapters[0];
   if (!isAdapter(adapter)) throw new Error('no agent surface configured to compile to');
-  const skills = allSkills(options);
+  // Overlaid once, here, before anything compiles — so no adapter has to know
+  // local overrides exist and none of them can forget to apply one
+  // (P6-SURFACE-08, FEAT-AGT-009).
+  const reports = await overriddenSkills(root, allSkills(options));
+  const skills = reports.map((report) => report.skill);
   const doctor = runDoctor({ skills, adapters });
 
   if (!doctor.ok) {
@@ -143,7 +150,15 @@ export async function compileSkills(
   }
 
   const files: CompiledSkillFile[] = [];
-  const warnings: string[] = [];
+  // A refused override is a warning, not a failure. One stale override file
+  // must not stop every skill from compiling — that is the shape of check
+  // people delete.
+  const warnings: string[] = reports.flatMap((report) =>
+    report.refusals.map((refusal) => `${report.name}: ${refusal}`),
+  );
+  const overrides = reports
+    .filter((report) => report.applied.length > 0)
+    .map((report) => ({ skill: report.name, applied: report.applied }));
 
   // A target whose artifact is per-workspace compiles the set at once
   // (contract §3.1). Looping `compileSkill` for MCP would emit one tool file
@@ -171,7 +186,14 @@ export async function compileSkills(
     }
   }
 
-  return { target: adapter.id, skills: skills.map((s) => s.name), files, warnings, doctor };
+  return {
+    target: adapter.id,
+    skills: skills.map((s) => s.name),
+    files,
+    warnings,
+    doctor,
+    overrides,
+  };
 }
 
 export function formatCompile(result: CompileSkillsResult, dryRun: boolean): string {

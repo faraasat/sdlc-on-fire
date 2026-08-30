@@ -208,7 +208,8 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      author_actor_id  UUID REFERENCES actors(id),
      author_role_id   INT REFERENCES roles(id),
      type             TEXT NOT NULL CHECK (type IN
-                        ('normal','agent-instruction','decision','blocker','bug-report','review','context-reference')),
+                        ('normal','agent-instruction','decision','blocker','bug-report','review',
+                         'context-reference','ux-acceptance','rescope')),
      body             TEXT NOT NULL,
      -- Computed server-side at insert from (type × role) and never re-derived
      -- downstream (ADR-0012). This column, not the body, is what consumers read.
@@ -224,6 +225,15 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
    );`,
   // For databases created before the watermark existed.
   `ALTER TABLE comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();`,
+  // And for databases created before `ux-acceptance`/`rescope` existed
+  // (P6-SURFACE-08). Dropped and re-added rather than widened in place: a CHECK
+  // has no ALTER form, and `CREATE TABLE IF NOT EXISTS` above is a no-op on an
+  // existing table, so without this the two new types would insert fine on a
+  // fresh workspace and fail on every upgraded one.
+  `ALTER TABLE comments DROP CONSTRAINT IF EXISTS comments_type_check;`,
+  `ALTER TABLE comments ADD CONSTRAINT comments_type_check CHECK (type IN
+     ('normal','agent-instruction','decision','blocker','bug-report','review',
+      'context-reference','ux-acceptance','rescope'));`,
   `CREATE INDEX IF NOT EXISTS comments_updated_at_idx ON comments (updated_at);`,
   'CREATE INDEX IF NOT EXISTS comments_work_item_idx ON comments (work_item_id, created_at);',
   // Immutable once written. A settable effect would let an edit convert an

@@ -1,4 +1,9 @@
-import { PROMPT_SECTION_ORDER, type CanonicalSkill, type PromptSection } from '@sdlc-on-fire/core';
+import {
+  PROMPT_SECTION_ORDER,
+  type CanonicalSkill,
+  type PromptSection,
+  type ToolUseExample,
+} from '@sdlc-on-fire/core';
 import { outputJsonSchema } from './skills/output-schemas.js';
 
 /**
@@ -79,6 +84,32 @@ export function fillSlots(template: string, variables: Record<string, string> = 
   return filled;
 }
 
+/**
+ * Worked tool calls, as text a model can pattern-match against.
+ *
+ * The arguments are rendered as real JSON rather than described, because the
+ * describing was already done by the parameter schema — and a schema plus a
+ * paragraph about it is what the agent already had when accuracy was the
+ * problem.
+ */
+export function renderToolUseExamples(
+  examples: readonly ToolUseExample[] | undefined,
+): string | null {
+  if (examples === undefined || examples.length === 0) return null;
+  return examples
+    .map((example) =>
+      [
+        `**${example.when}**`,
+        '',
+        '```json',
+        JSON.stringify({ tool: example.tool, arguments: example.arguments }, null, 2),
+        '```',
+        ...(example.why === undefined ? [] : ['', example.why]),
+      ].join('\n'),
+    )
+    .join('\n\n');
+}
+
 function sectionContent(
   kind: PromptSection,
   skill: CanonicalSkill,
@@ -94,7 +125,11 @@ function sectionContent(
     case 'task':
       return fillSlots(skill.task, slots.variables);
     case 'examples':
-      return slots.examples ?? null;
+      // The slot wins when a caller supplies one, and the skill's own worked
+      // calls are the default. Before `tool_use_examples` existed nothing wrote
+      // the slot either, so this section was absent from every compiled prompt
+      // that has ever shipped (P6-SURFACE-08, FEAT-AGT-018).
+      return slots.examples ?? renderToolUseExamples(skill.tool_use_examples);
     case 'output-contract': {
       // Names the tool and inlines the schema — never prose describing a shape.
       //
@@ -117,6 +152,8 @@ function sectionContent(
       return skill.self_verification ?? null;
     case 'stop-condition':
       return skill.stop_condition;
+    case 'local-append':
+      return skill.prompt_append ?? null;
   }
 }
 
@@ -129,6 +166,7 @@ const SECTION_HEADING: Record<PromptSection, string> = {
   'output-contract': 'Output contract',
   'self-verification': 'Before you emit',
   'stop-condition': 'Stop condition',
+  'local-append': 'This workspace',
 };
 
 /**
