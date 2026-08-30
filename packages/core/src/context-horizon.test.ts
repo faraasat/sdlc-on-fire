@@ -43,6 +43,23 @@ describe('accumulation', () => {
     expect(account.cachedFraction).toBeCloseTo(0.998, 3);
   });
 
+  it('tells the last turn from the peak turn', () => {
+    // A run whose peak was turn 2 has settled down; one whose peak is the last
+    // turn is still growing. Only the second is a degradation signal.
+    const account = accountRun('run-1', [turn(1, 1000, 0), turn(2, 9000, 0), turn(3, 2000, 0)]);
+    expect(account.peakTurn).toBe(9000);
+    expect(account.lastTurn).toBe(2000);
+  });
+
+  it('has no last turn to report from an empty run', () => {
+    expect(accountRun('run-1', []).lastTurn).toBe(0);
+  });
+
+  it('takes the last turn by number, not by arrival', () => {
+    const account = accountRun('run-1', [turn(3, 3000, 0), turn(1, 1000, 0)]);
+    expect(account.lastTurn).toBe(3000);
+  });
+
   it('reports the peak window — what a per-window metric would have shown', () => {
     const account = accountRun('run-1', [turn(1, 1000), turn(2, 5000), turn(3, 2000)]);
     expect(account.peakTurn).toBe(5100);

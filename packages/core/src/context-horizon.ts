@@ -47,6 +47,14 @@ export interface RunContextAccount {
   readonly accumulated: number;
   /** The largest single turn. What a per-window metric would have shown. */
   readonly peakTurn: number;
+  /**
+   * The most recent turn's size.
+   *
+   * Distinct from `peakTurn`, and the distinction is the point: a run whose
+   * peak was turn 3 has settled down, and one whose peak *is* the last turn is
+   * still growing. Only the second is a degradation signal.
+   */
+  readonly lastTurn: number;
   /** Mean tokens taken in per turn. */
   readonly perTurn: number | null;
   /**
@@ -109,6 +117,7 @@ export function accountRun(runId: string, turns: readonly TurnAccounting[]): Run
     accumulatedOutput,
     accumulated,
     peakTurn,
+    lastTurn: last === undefined ? 0 : turnTotal(last),
     perTurn: ordered.length === 0 ? null : Math.round(accumulated / ordered.length),
     growthPerTurn,
     cachedFraction: accumulatedInput === 0 ? null : round(cacheRead / accumulatedInput),

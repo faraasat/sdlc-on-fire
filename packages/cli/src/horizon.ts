@@ -1,11 +1,14 @@
 import {
   accountRun,
+  assessDegradation,
+  formatDegradation,
   formatCompactionPlan,
   formatRunAccount,
   planCompaction,
   windowBlindnessRatio,
   WorkspaceConfigSchema,
   type CompactionPlan,
+  type DegradationVerdict,
   type RunContextAccount,
   type TurnAccounting,
 } from '@sdlc-on-fire/core';
@@ -308,4 +311,85 @@ export function formatCompact(result: CompactResult): string {
   return result.recorded
     ? text
     : `${text}\n\n  dry run — nothing was recorded. Re-run with --apply.`;
+}
+
+export interface DegradationReport {
+  readonly verdicts: readonly DegradationVerdict[];
+  /** Runs with at least one tripwire fired. */
+  readonly degraded: readonly string[];
+  /** Runs with no accounting — unmeasured is a state, and it is not "healthy". */
+  readonly unmeasured: readonly string[];
+}
+
+/**
+ * `sdlc metrics degradation` — which runs have gone past the point their
+ * context is useful (P7-HORIZON-03).
+ *
+ * Surfaced rather than left to be inferred from bad output, which is the worst
+ * possible detector for it: a long run stays fluent as it degrades, and what
+ * changes is that it stops being about the task.
+ */
+export async function degradationReport(
+  root: string,
+  options: { readonly runId?: string | undefined } = {},
+): Promise<DegradationReport> {
+  const config = await contextConfig(root);
+
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const turns = await turnsFor(db, options.runId);
+
+    const compactionCounts = new Map<string, number>();
+    const counts = await db.query<{ run_id: string; count: number }>(
+      `SELECT run_id, COUNT(*)::int AS count FROM run_compactions
+        ${options.runId === undefined ? '' : 'WHERE run_id = $1'}
+        GROUP BY run_id;`,
+      options.runId === undefined ? [] : [options.runId],
+    );
+    for (const row of counts) compactionCounts.set(row.run_id, row.count);
+
+    const byRun = new Map<string, typeof turns>();
+    for (const turn of turns) {
+      const bucket = byRun.get(turn.runId) ?? [];
+      bucket.push(turn);
+      byRun.set(turn.runId, bucket);
+    }
+
+    // Runs that were compacted but have no turn rows still get a verdict, and
+    // it is `unmeasured`. Dropping them would hide the runs where accounting
+    // itself failed — the ones most worth looking at.
+    for (const runId of compactionCounts.keys()) {
+      if (!byRun.has(runId)) byRun.set(runId, []);
+    }
+
+    const verdicts = [...byRun.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([runId, runTurns]) =>
+        assessDegradation({
+          account: accountRun(runId, runTurns),
+          budgetTokens: config.budget,
+          compactions: compactionCounts.get(runId) ?? 0,
+        }),
+      );
+
+    return {
+      verdicts,
+      degraded: verdicts.filter((v) => v.degraded).map((v) => v.runId),
+      unmeasured: verdicts.filter((v) => !v.measured).map((v) => v.runId),
+    };
+  } finally {
+    await db.close();
+  }
+}
+
+export function formatDegradationReport(report: DegradationReport): string {
+  if (report.verdicts.length === 0) {
+    return 'no runs with per-turn accounting — nothing to assess';
+  }
+  const lines = report.verdicts.map((verdict) => formatDegradation(verdict));
+  if (report.degraded.length > 0) {
+    lines.push('', `${String(report.degraded.length)} degraded: ${report.degraded.join(', ')}`);
+  }
+  return lines.join('\n\n');
 }

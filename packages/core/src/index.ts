@@ -36,6 +36,7 @@ export * from './held-out-trend.js';
 export * from './repair-score.js';
 export * from './context-horizon.js';
 export * from './compaction.js';
+export * from './degradation.js';
 export * from './test-knowledge.js';
 export * from './pilot.js';
 export * from './posix-path.js';

@@ -111,7 +111,14 @@ import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
 import { formatRollback, rollbackWorkItem, type RollbackResult } from './rollback.js';
 import { formatMonitorReport, repairMonitorReport } from './repair-monitor.js';
-import { compactRun, formatCompact, formatHorizon, horizonReport } from './horizon.js';
+import {
+  compactRun,
+  degradationReport,
+  formatCompact,
+  formatDegradationReport,
+  formatHorizon,
+  horizonReport,
+} from './horizon.js';
 import { ciEvidence, formatCiEvidence, type CiEvidenceResult } from './ci-evidence.js';
 import { backupWorkspace, formatBackup, type BackupResult } from './backup.js';
 import { formatRuns, runHistory, type RunHistory } from './runs.js';
@@ -2824,6 +2831,17 @@ export function buildProgram(): Command {
   const metrics = program
     .command('metrics')
     .description('flow and delivery-performance metrics, read from what actually happened');
+
+  metrics
+    .command('degradation')
+    .description('runs that have gone past the point their context is useful')
+    .option('--run <id>', 'one run')
+    .option('--json', 'emit JSON')
+    .action(async (options: { run?: string; json?: boolean }) => {
+      const report = await degradationReport(root(), { runId: options.run });
+      emit(report, options.json === true, formatDegradationReport);
+      if (report.degraded.length > 0) process.exitCode = 1;
+    });
 
   metrics
     .command('horizon')
