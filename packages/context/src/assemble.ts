@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { DroppedLayer } from './metrics.js';
 import {
+  estimateTokens,
   ContextPackSchema,
   partitionHeldOut,
   type ContextLayer,
@@ -61,15 +62,11 @@ export interface AssembleInput {
 }
 
 /**
- * Token estimate.
- *
- * Deliberately crude — ~4 characters per token — and named so nobody mistakes it
- * for a tokenizer. The budget it enforces is a safety rail, not an exact
- * accounting; a real tokenizer arrives with the embedder in v0.2.
+ * Token estimate — re-exported from `core`, which owns the one implementation
+ * (P8-EVID-03). Kept exported here because callers already import it from this
+ * package.
  */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+export { estimateTokens };
 
 /** Layer order, stable-prefix-first (contracts/05 §3.2). */
 const LAYER_ORDER: readonly ContextLayerKind[] = [

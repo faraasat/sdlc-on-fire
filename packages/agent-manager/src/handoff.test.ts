@@ -129,3 +129,35 @@ describe('readHandoffChain', () => {
     expect(await readHandoffChain(root, 'no-such-run')).toEqual([]);
   });
 });
+
+describe('the size cap at the boundary (P8-EVID-03)', () => {
+  it('rejects an over-cap handoff rather than writing a truncated one', () => {
+    const result = acceptHandoff(handoff({ notes: 'n'.repeat(12_000) }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.reason).toBe('over-cap');
+  });
+
+  it('hands back the reprompt as the detail, so nothing has to compose one', () => {
+    const result = acceptHandoff(handoff({ notes: 'n'.repeat(12_000) }));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.rejection.detail).toContain('Shorten in this order');
+    expect(result.rejection.detail).toContain('Never drop openQuestions');
+  });
+
+  it('refuses to write one to disk — the file is what the next stage reads', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'handoff-cap-'));
+    try {
+      await expect(writeHandoff(dir, handoff({ notes: 'n'.repeat(12_000) }))).rejects.toThrow(
+        /refusing to write/,
+      );
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('still accepts an ordinary handoff', () => {
+    expect(acceptHandoff(handoff({ notes: 'a short note' })).ok).toBe(true);
+  });
+});

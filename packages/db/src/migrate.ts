@@ -407,6 +407,24 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
   //
   // `corpus_path` is NOT NULL by design (ADR-0074): a rate with no corpus behind
   // it has no provenance and is therefore not evidence.
+  `CREATE TABLE IF NOT EXISTS config_events (
+     id           BIGSERIAL PRIMARY KEY,
+     observed_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+     direction    TEXT NOT NULL CHECK (direction IN ('weakened','strengthened','mixed')),
+     changes      JSONB NOT NULL,
+     snapshot     JSONB NOT NULL
+   );`,
+  'CREATE INDEX IF NOT EXISTS config_events_observed_at_idx ON config_events (observed_at);',
+  `CREATE TABLE IF NOT EXISTS gate_outcome_tags (
+     id        BIGSERIAL PRIMARY KEY,
+     gate_id   BIGINT NOT NULL REFERENCES gates(id),
+     actor_id  UUID NOT NULL REFERENCES actors(id),
+     outcome   TEXT NOT NULL CHECK (outcome IN ('valuable','nuisance')),
+     reason    TEXT,
+     tagged_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   );`,
+  'CREATE INDEX IF NOT EXISTS gate_outcome_tags_gate_idx ON gate_outcome_tags (gate_id);',
+  'CREATE INDEX IF NOT EXISTS gate_outcome_tags_tagged_at_idx ON gate_outcome_tags (tagged_at);',
   `CREATE TABLE IF NOT EXISTS visibility_snapshots (
      id                BIGSERIAL PRIMARY KEY,
      ran_at            TIMESTAMPTZ NOT NULL,
@@ -524,6 +542,53 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
   `CREATE TRIGGER approvals_agent_never_approves_trg
      BEFORE INSERT ON approvals FOR EACH ROW
      EXECUTE FUNCTION approvals_agent_never_approves();`,
+
+  // ── Only a human judges whether a block was worth it (P8-BAR-01) ─────────
+  //
+  // The adoption bar (ADR-0063) rests on one datum nothing else can supply:
+  // when a person was blocked, were they glad about it. `admitBlockOutcome`
+  // refuses an agent in `core`, and that refusal lives in the layer that would
+  // most like to route around it — the same argument that put the approvals
+  // trigger here rather than in the daemon.
+  //
+  // Note it fires on `actors.kind` rather than on a role, unlike
+  // `approvals_agent_never_approves`: there is no role-gating to hang it off,
+  // because tagging is not an approval. It is a judgement, and an agent rating
+  // its own block valuable is exactly the self-report this product refuses.
+  `CREATE OR REPLACE FUNCTION gate_outcome_tags_human_only() RETURNS trigger AS $$
+     DECLARE actor_kind TEXT;
+     BEGIN
+       SELECT kind INTO actor_kind FROM actors WHERE id = NEW.actor_id;
+       IF actor_kind = 'agent' THEN
+         RAISE EXCEPTION 'actors.kind = agent cannot judge whether a block was valuable (ADR-0063: the adoption bar is the human''s judgement)';
+       END IF;
+       RETURN NEW;
+     END;
+   $$ LANGUAGE plpgsql;`,
+  'DROP TRIGGER IF EXISTS gate_outcome_tags_human_only_trg ON gate_outcome_tags;',
+  `CREATE TRIGGER gate_outcome_tags_human_only_trg
+     BEFORE INSERT ON gate_outcome_tags FOR EACH ROW
+     EXECUTE FUNCTION gate_outcome_tags_human_only();`,
+
+  // ── Only a *failed* gate can be tagged (P8-BAR-01) ────────────────────────
+  //
+  // A gate that passed stopped nobody, so there is no friction to judge. This
+  // one is a trigger rather than a CHECK for the ordinary reason: the fact it
+  // needs lives one table away, and CHECK cannot subquery.
+  `CREATE OR REPLACE FUNCTION gate_outcome_tags_blocks_only() RETURNS trigger AS $$
+     DECLARE gate_result TEXT;
+     BEGIN
+       SELECT result INTO gate_result FROM gates WHERE id = NEW.gate_id;
+       IF gate_result IS DISTINCT FROM 'fail' THEN
+         RAISE EXCEPTION 'gate % did not block (result = %) — only a block can be judged valuable or a nuisance', NEW.gate_id, COALESCE(gate_result, 'pending');
+       END IF;
+       RETURN NEW;
+     END;
+   $$ LANGUAGE plpgsql;`,
+  'DROP TRIGGER IF EXISTS gate_outcome_tags_blocks_only_trg ON gate_outcome_tags;',
+  `CREATE TRIGGER gate_outcome_tags_blocks_only_trg
+     BEFORE INSERT ON gate_outcome_tags FOR EACH ROW
+     EXECUTE FUNCTION gate_outcome_tags_blocks_only();`,
 
   // ── No agent holds a role (P3-RBAC-04, ADR-0010, contract 01 §3.3) ────────
   //

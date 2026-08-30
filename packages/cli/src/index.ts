@@ -73,6 +73,8 @@ import {
   agentRunReport,
   blockedReport,
   formatAgentRuns,
+  adoptionBarReport,
+  formatAdoptionBar,
   formatBlocked,
   formatGovernance,
   governanceReport,
@@ -148,7 +150,14 @@ import {
   THREAT_MODEL_DIR,
 } from './threat.js';
 import { formatImport, runImport, type ConflictPolicy } from './import.js';
-import { compileSkills, doctorSkills, formatCompile, formatDoctor } from './skills.js';
+import {
+  compileSkills,
+  detectTargets,
+  doctorSkills,
+  formatCompile,
+  formatDoctor,
+  formatTargets,
+} from './skills.js';
 import { formatNewResearch, formatResearchScan, newResearch, scanResearch } from './research.js';
 import { checkE2e, formatE2eCheck, formatE2eSeal, sealE2eEvidence } from './e2e.js';
 import {
@@ -170,6 +179,8 @@ import {
   revokeApproval,
   simulatePolicyChange,
 } from './gates.js';
+import { formatTagResult, tagBlockOutcome } from './adoption-bar.js';
+import { formatConfigEvent, recordConfigSnapshot } from './config-events.js';
 import { formatSimulation } from '@sdlc-on-fire/evidence';
 import { addHeldOut, criteriaStatus, formatCriteria } from './criteria.js';
 import { deriveRoles, formatRoles } from './roles.js';
@@ -1029,6 +1040,17 @@ export function buildProgram(): Command {
     .option('--json', 'emit JSON')
     .action(async (id: string, options: { as?: string; json?: boolean }): Promise<void> => {
       const result = await verifyWorkItem(root(), id, { actor: options.as });
+
+      // Sample the gate strength here, because `verify` is what runs before a
+      // gate — so the config in force around each block is what gets recorded,
+      // which is the timeline the adoption bar actually needs (P8-BAR-03).
+      //
+      // Swallowed on purpose, and this is the one place that is right: a
+      // metrics sampler must never be able to fail somebody's verify run. The
+      // cost of the catch is a missed sample; the cost of not having it is a
+      // gate that stops working because an instrument broke.
+      await recordConfigSnapshot(root()).catch(() => undefined);
+
       emit(result, options.json === true, (r: Awaited<ReturnType<typeof verifyWorkItem>>) =>
         [
           `${r.workItemId}: ${r.summary}`,
@@ -1643,6 +1665,19 @@ export function buildProgram(): Command {
     });
 
   program
+    .command('config:snapshot')
+    .description('record how strong the gates are now, and any drift since last time (P8-BAR-03)')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const result = await recordConfigSnapshot(root());
+      emit(result, options.json === true, formatConfigEvent);
+      // A downgrade is not an error — it is the user's call. But it is the one
+      // event `metrics.md` calls a leading indicator of abandonment, so it
+      // leaves a non-zero code that a CI job or a hook can notice.
+      if (result.downgrade) process.exitCode = 2;
+    });
+
+  program
     .command('visibility:snapshot')
     .description('record the current corpus as a point in the visibility trend')
     .requiredOption('--subject <name>', 'the project name to look for in answers')
@@ -2078,6 +2113,15 @@ export function buildProgram(): Command {
     });
 
   skills
+    .command('targets')
+    .description('which agent surfaces this project has — reporting only, never selection')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }): Promise<void> => {
+      const reports = await detectTargets(root());
+      emit(reports, options.json === true, formatTargets);
+    });
+
+  skills
     .command('compile')
     .description('compile the canonical skills to a configured agent surface')
     // Named, never sniffed (ADR-0007): `detect()` reports, it does not choose.
@@ -2233,6 +2277,31 @@ export function buildProgram(): Command {
             '  the policy will change and what was decided today should not change with it.',
           ].join('\n'),
         );
+      },
+    );
+
+  gates
+    .command('tag')
+    .argument('<gate-id>', 'the gate that blocked you — `sdlc gates list` shows ids')
+    .argument('<outcome>', 'valuable | nuisance')
+    .description('say whether a block was worth it — the adoption bar (ADR-0063)')
+    .option('--why <text>', 'optional; the count is the signal, the prose is the colour')
+    .option('--as <who>', 'attribute to somebody other than your git identity')
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        gateId: string,
+        outcome: string,
+        options: { why?: string; as?: string; json?: boolean },
+      ): Promise<void> => {
+        const result = await tagBlockOutcome(root(), Number(gateId), outcome, {
+          reason: options.why,
+          as: options.as,
+        });
+        emit(result, options.json === true, formatTagResult);
+        // A refused tag is a datum that was not captured, and this metric is
+        // made entirely of data that only exists if somebody records it.
+        if (!result.recorded) process.exitCode = 1;
       },
     );
 
@@ -2860,6 +2929,19 @@ export function buildProgram(): Command {
   const metrics = program
     .command('metrics')
     .description('flow and delivery-performance metrics, read from what actually happened');
+
+  metrics
+    .command('adoption')
+    .description('the adoption bar — was the block worth it (ADR-0063, metrics.md §3a)')
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }) => {
+      const report = await adoptionBarReport(root());
+      emit(report, options.json === true, formatAdoptionBar);
+      // `false` is a measured failure and exits non-zero; `null` is unmeasured
+      // and does not, because "nobody has used it yet" is not a bad result and
+      // failing on it would train people to ignore this check.
+      if (report.met === false) process.exitCode = 1;
+    });
 
   metrics
     .command('degradation')

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   StageHandoffSchema,
+  handoffOverflowReprompt,
   handoffProblems,
   type LifecycleStage,
   type StageHandoff,
@@ -37,7 +38,7 @@ function handoffFile(handoff: Pick<StageHandoff, 'from' | 'to'>): string {
  * a thrown error at a stage boundary would take the whole run with it.
  */
 export interface HandoffRejection {
-  readonly reason: 'invalid-shape' | 'structural';
+  readonly reason: 'invalid-shape' | 'structural' | 'over-cap';
   readonly detail: string;
 }
 
@@ -65,6 +66,16 @@ export function acceptHandoff(candidate: unknown, previous?: StageHandoff): Hand
           .join('; '),
       },
     };
+  }
+
+  // The size cap (P8-EVID-03, Q-07). Rejected here rather than truncated:
+  // a handoff that arrives shortened with no marker is indistinguishable from
+  // one that was always that short, and the next stage consumes the gap as
+  // fact. The detail *is* the reprompt, so an orchestrator can hand it straight
+  // back to the author instead of composing its own.
+  const reprompt = handoffOverflowReprompt(parsed.data);
+  if (reprompt !== null) {
+    return { ok: false, rejection: { reason: 'over-cap', detail: reprompt } };
   }
 
   const problems = handoffProblems(parsed.data, previous);

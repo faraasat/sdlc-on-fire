@@ -37,3 +37,4 @@ export * from './skills/write-tests.js';
 export * from './skills/security-review.js';
 export * from './skills/delivery.js';
 export * from './skills/research.js';
+export * from './adapters/codex.js';

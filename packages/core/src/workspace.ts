@@ -40,6 +40,54 @@ import { TierPolicyConfigSchema, tierPolicyViolations } from './tier-policy.js';
  */
 export const ESSENTIAL_ROOT_FILES = ['AGENTS.md', 'CLAUDE.md', 'SDLCOF.md'] as const;
 
+/**
+ * The note the two always-loaded instruction files are seeded with
+ * (P8-CLOSE-04, closing [Q-06]'s unbuilt consequence).
+ *
+ * `CLAUDE.md` and `AGENTS.md` are read by the agent surface **every turn**,
+ * outside our context pack and outside our control. Q-06 measured what we
+ * scaffold — empty headings, 61 bytes for the pair — and concluded the product
+ * itself pays none of the ~20% cost an always-loaded descriptive layer was
+ * measured to carry. But it creates the slots, and a user who fills them with
+ * repository prose recreates that null result inside our own scaffold, using
+ * files we put there.
+ *
+ * So the seed says what belongs in them. Two constraints shaped it:
+ *
+ * **It is an HTML comment.** Visible to anybody editing the file and to the
+ * agent reading it raw; invisible in rendered markdown, so it does not become
+ * something the user has to delete before the file looks like theirs.
+ *
+ * **It is deliberately tiny.** A long note explaining why always-loaded context
+ * is expensive would itself be always-loaded context. Anything longer than this
+ * would be the essay arguing against itself.
+ */
+export const INSTRUCTION_FILE_NOTE = [
+  '<!-- Loaded on every agent turn. Keep this instructional: commands, rules,',
+  '     conventions, things to always or never do.',
+  '',
+  '     Descriptive prose — architecture, overviews, history — belongs in docs/,',
+  '     where it is retrieved when relevant instead of paid for every turn. -->',
+].join('\n');
+
+/** The files that note belongs in: the ones an agent surface reads unprompted. */
+export const ALWAYS_LOADED_FILES = ['CLAUDE.md', 'AGENTS.md'] as const;
+
+/**
+ * Seed content for one scaffolded root file.
+ *
+ * Every file gets its heading; the two always-loaded ones also get
+ * {@link INSTRUCTION_FILE_NOTE}. Kept here rather than in the scaffolder so the
+ * rule travels with the file list it applies to — the two drifting apart is how
+ * a new root file quietly misses the note.
+ */
+export function rootFileSeed(file: string): string {
+  const heading = `# ${file.replace(/\.md$/, '')}\n`;
+  return (ALWAYS_LOADED_FILES as readonly string[]).includes(file)
+    ? `${heading}\n${INSTRUCTION_FILE_NOTE}\n`
+    : heading;
+}
+
 export const ROOT_FILES = [
   'AGENTS.md',
   'CLAUDE.md',

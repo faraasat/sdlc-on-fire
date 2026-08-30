@@ -151,3 +151,6 @@ export * from './github-issues.js';
 export * from './sync-engine.js';
 export * from './github-sync-port.js';
 export * from './run-record.js';
+export * from './block-outcome.js';
+export * from './config-drift.js';
+export * from './adoption-bar.js';

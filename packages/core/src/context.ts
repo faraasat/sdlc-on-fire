@@ -130,3 +130,22 @@ export function isWithinBudget(pack: ContextPack, spec: ContextPackSpec): boolea
   const budget = pack.effortTier === 'low' ? (spec.budget.low ?? spec.budget.max) : spec.budget.max;
   return pack.totalTokens <= budget;
 }
+
+/**
+ * Token estimate — one implementation, shared.
+ *
+ * Deliberately crude (~4 characters per token) and named so nobody mistakes it
+ * for a tokenizer. The budgets it enforces are safety rails, not exact
+ * accounting; a real tokenizer arrives with the embedder.
+ *
+ * **It lives in `core` since P8-EVID-03 because three modules needed it.**
+ * `context/assemble.ts` had one and `agent-manager/adapters/tool-budget.ts` had
+ * a second, deliberately copied with a comment explaining that agent-manager
+ * must not depend on the context engine "for one line of arithmetic" — a sound
+ * constraint that pointed at the wrong fix, since both already depend on `core`.
+ * A guard test kept the two honest, which is the tell: a rule that needs a test
+ * to stop two copies drifting is a rule that wanted one copy.
+ */
+export function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 4);
+}

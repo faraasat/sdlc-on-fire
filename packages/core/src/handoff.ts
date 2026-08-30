@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { estimateTokens } from './context.js';
 import { LifecycleStageSchema } from './lifecycle.js';
 
 /**
@@ -175,6 +176,137 @@ export function handoffProblems(
   }
 
   return problems;
+}
+
+/**
+ * The hard ceiling on a serialized handoff, in estimated tokens.
+ *
+ * [contracts/05 §4] states a "~1–2K-token cap" and [Q-07] left the enforcement
+ * undecided — *"decide during P1-CTX-07"*. P1-CTX-07 shipped and nothing
+ * enforced anything, so the schema accepted a handoff of any size and the cap
+ * was a sentence in a document (P8-EVID-03).
+ *
+ * 2000, the top of the stated range, because taking the bottom would make a
+ * document that says "~1–2K" describe something that refuses at 1K.
+ */
+export const HANDOFF_TOKEN_CAP = 2000;
+
+/**
+ * Fields in the order they may be trimmed, and the two that may never be.
+ *
+ * **Q-07 is decided here: reject-and-reprompt, never silent truncation.** The
+ * three candidate answers were truncate-a-field, reject-and-reprompt, and
+ * escalate. Truncation loses on the same argument as everything else in this
+ * module: a handoff that arrives shortened with no marker is indistinguishable
+ * from one that was always that short, and the next stage consumes the gap as
+ * fact. Escalation loses because it needs a human in a loop that runs
+ * unattended.
+ *
+ * The priority order exists anyway, because a *reprompt* has to say what to
+ * shorten. `notes` first — it is explicitly the free-text field, and structure
+ * replaces prose rather than banning it. `artifacts` and `requiredInputs` next:
+ * both are re-derivable from the run. `decisions` last of the trimmable ones,
+ * because losing a decision loses the record of why.
+ *
+ * **`openQuestions` is never on this list.** It is the field the schema already
+ * forces to be stated even when empty, for exactly this reason: a question that
+ * disappears under a size limit is a question answered by a byte count.
+ */
+export const HANDOFF_TRIM_PRIORITY = ['notes', 'artifacts', 'requiredInputs', 'decisions'] as const;
+
+/** Fields a size limit may never remove, whatever it costs. */
+export const HANDOFF_PROTECTED_FIELDS = ['openQuestions'] as const;
+
+/** Serialised form of one handoff field, for per-field accounting. */
+function serialise(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+/** Whether a field carries nothing a reprompt could ask an author to shorten. */
+function isEmptyField(value: unknown): boolean {
+  if (value === undefined || value === null) return true;
+  if (typeof value === 'string') return value.trim() === '';
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
+}
+
+export interface HandoffSize {
+  readonly tokens: number;
+  readonly cap: number;
+  readonly withinCap: boolean;
+  /** Per-field estimates, largest first — what a reprompt tells the author to shorten. */
+  readonly byField: readonly { readonly field: string; readonly tokens: number }[];
+  readonly because: string;
+}
+
+/**
+ * Measures a handoff against the cap without changing it.
+ *
+ * Serializer-side and deterministic, as contracts/05 §4 requires: *"a
+ * deterministic serializer-side check, not a model self-report of length"*.
+ * Measuring is separate from refusing so a caller can report the size of a
+ * handoff it is going to accept anyway.
+ */
+export function handoffSize(handoff: AuthoredHandoff, cap = HANDOFF_TOKEN_CAP): HandoffSize {
+  // An empty field costs 0, not the two characters of `[]`. Charging for the
+  // punctuation makes every empty array look like something worth trimming,
+  // and a reprompt telling somebody to shorten an empty list wastes a turn on
+  // advice that cannot be followed. Caught by the split-the-work test.
+  const fields = Object.entries(handoff).map(([field, value]) => ({
+    field,
+    tokens: isEmptyField(value) ? 0 : estimateTokens(serialise(value)),
+  }));
+  // The whole serialized object, not the sum of the fields — JSON punctuation
+  // and key names are real bytes the next stage pays for, and a per-field sum
+  // that ignored them would under-report by exactly the amount that makes a
+  // borderline handoff pass.
+  const tokens = estimateTokens(JSON.stringify(handoff));
+
+  const byField = fields
+    .filter((entry) => entry.tokens > 0)
+    .sort((a, b) => b.tokens - a.tokens || a.field.localeCompare(b.field));
+
+  return {
+    tokens,
+    cap,
+    withinCap: tokens <= cap,
+    byField,
+    because:
+      tokens <= cap
+        ? `${String(tokens)} of ${String(cap)} tokens`
+        : `${String(tokens)} tokens against a ${String(cap)}-token cap — over by ${String(tokens - cap)}`,
+  };
+}
+
+/**
+ * The reprompt an over-cap handoff earns, or `null` when it fits.
+ *
+ * Names the fields to shorten in priority order and states plainly that
+ * `openQuestions` is not one of them — because the obvious way for an author to
+ * get under a limit is to drop the list of things it does not know, and that is
+ * the single worst edit available.
+ */
+export function handoffOverflowReprompt(
+  handoff: AuthoredHandoff,
+  cap = HANDOFF_TOKEN_CAP,
+): string | null {
+  const size = handoffSize(handoff, cap);
+  if (size.withinCap) return null;
+
+  const trimmable = size.byField.filter((entry) =>
+    (HANDOFF_TRIM_PRIORITY as readonly string[]).includes(entry.field),
+  );
+  const ordered = HANDOFF_TRIM_PRIORITY.filter((field) =>
+    trimmable.some((entry) => entry.field === field),
+  );
+
+  return [
+    `This handoff is ${size.because}. Rewrite it shorter and hand it over again.`,
+    ordered.length === 0
+      ? 'Nothing trimmable is carrying the weight — the protected fields alone exceed the cap, which is a signal to split the work, not the handoff.'
+      : `Shorten in this order: ${ordered.join(', ')}.`,
+    `Never drop ${HANDOFF_PROTECTED_FIELDS.join(', ')} to fit. A question removed to satisfy a byte count is a question answered by a byte count.`,
+  ].join(' ');
 }
 
 /** Whether a handoff is safe for the next stage to consume. */

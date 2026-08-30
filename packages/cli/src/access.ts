@@ -171,8 +171,15 @@ export interface ActorRow {
   readonly roles: readonly { readonly key: string; readonly expiresAt: string | null }[];
 }
 
-/** Resolves an actor by id, email, or display name. */
-async function findActor(db: Db, reference: string): Promise<ActorRow | null> {
+/**
+ * Resolves an actor by id, email, or display name.
+ *
+ * Exported since P8-BAR-01: tagging a block valuable or a nuisance needs the
+ * actor and deliberately needs **no role**, so it cannot go through
+ * {@link resolveAuthor}, which exists to prove a role is held. Any human may
+ * say whether being stopped was worth it; that is the point of the measure.
+ */
+export async function findActor(db: Db, reference: string): Promise<ActorRow | null> {
   const rows = await db.query<{
     id: string;
     kind: string;

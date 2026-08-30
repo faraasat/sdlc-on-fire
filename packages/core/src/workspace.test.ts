@@ -1,6 +1,9 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  ALWAYS_LOADED_FILES,
+  INSTRUCTION_FILE_NOTE,
+  rootFileSeed,
   DEFAULT_STATE_DIR,
   docsToGenerate,
   DOCS_ROOT_FILES,
@@ -139,5 +142,55 @@ describe('managed content paths', () => {
   it('follows path overrides', () => {
     expect(isManagedContentPath('board/x.md', { kanban: 'board' })).toBe(true);
     expect(isManagedContentPath('kanban/x.md', { kanban: 'board' })).toBe(false);
+  });
+});
+
+/**
+ * The instruction-file note (P8-CLOSE-04, closing Q-06's consequence).
+ *
+ * `CLAUDE.md` and `AGENTS.md` are read every agent turn, outside our pack and
+ * outside our control. Q-06 measured that we scaffold them as empty headings —
+ * so the product pays none of the always-loaded cost — and that we say nothing
+ * about what belongs in them, which leaves a user free to recreate the null
+ * result inside our own scaffold.
+ */
+describe('rootFileSeed', () => {
+  it('gives an ordinary root file just its heading', () => {
+    expect(rootFileSeed('SOUL.md')).toBe('# SOUL\n');
+  });
+
+  it('gives the always-loaded files the note as well', () => {
+    for (const file of ALWAYS_LOADED_FILES) {
+      const seed = rootFileSeed(file);
+      expect(seed.startsWith(`# ${file.replace(/\.md$/, '')}\n`)).toBe(true);
+      expect(seed).toContain('Loaded on every agent turn');
+      expect(seed).toContain('docs/');
+    }
+  });
+
+  it('writes the note as an HTML comment, so it renders as nothing', () => {
+    // Visible to whoever edits the file and to the agent reading it raw;
+    // invisible in rendered markdown, so it is not something a user has to
+    // delete before the file looks like theirs.
+    expect(INSTRUCTION_FILE_NOTE.trimStart().startsWith('<!--')).toBe(true);
+    expect(INSTRUCTION_FILE_NOTE.trimEnd().endsWith('-->')).toBe(true);
+  });
+
+  it('keeps the note small enough not to be the thing it warns about', () => {
+    // A long explanation of why always-loaded context is expensive would itself
+    // be always-loaded context. Q-06 measured the pair at 61 bytes; the note
+    // roughly quadruples that and stays far under any budget that matters.
+    expect(INSTRUCTION_FILE_NOTE.length).toBeLessThan(400);
+  });
+
+  it('names both always-loaded files, and only those', () => {
+    // A third file added to this list would start paying the per-turn cost, so
+    // the list is asserted rather than trusted to stay short.
+    expect([...ALWAYS_LOADED_FILES]).toEqual(['CLAUDE.md', 'AGENTS.md']);
+    for (const file of ALWAYS_LOADED_FILES) expect(ROOT_FILES).toContain(file);
+  });
+
+  it('never leaves a scaffolded file empty', () => {
+    for (const file of ROOT_FILES) expect(rootFileSeed(file).trim()).not.toBe('');
   });
 });

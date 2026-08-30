@@ -13,6 +13,7 @@ import {
   GITIGNORE_ENTRIES,
   ESSENTIAL_ROOT_FILES,
   ROOT_FILES,
+  rootFileSeed,
   WorkspaceConfigSchema,
   AdvancedConfigSchema,
   describeCapabilities,
@@ -314,8 +315,13 @@ export async function init(root: string, options: InitOptions = {}): Promise<Ini
     (options.scaffold !== 'full' && (await hasOwnConventions(layout)));
   const rootFiles = brownfield ? ESSENTIAL_ROOT_FILES : ROOT_FILES;
 
+  // `rootFileSeed`, not a bare heading: CLAUDE.md and AGENTS.md are read every
+  // turn by the agent surface, so they carry a one-comment note saying to keep
+  // them instructional and put prose in `docs/`. Q-06 measured that we create
+  // those slots and say nothing about them, which is how a user recreates the
+  // always-loaded-description null result inside our own scaffold (P8-CLOSE-04).
   for (const file of rootFiles) {
-    await ensureFile(path.join(layout.root, file), `# ${file.replace(/\.md$/, '')}\n`);
+    await ensureFile(path.join(layout.root, file), rootFileSeed(file));
   }
 
   // Index-first (ADR-0053): a folder without a README is a folder an agent has

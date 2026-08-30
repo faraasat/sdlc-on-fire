@@ -15,6 +15,9 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { parseFrontmatter } from '@sdlc-on-fire/storage';
 import {
+  adoptionBar,
+  type AdoptionBar,
+  type BlockOutcome,
   bottleneck,
   cycleTime,
   DEFAULT_WAIT_STAGES,
@@ -655,5 +658,121 @@ export function formatHeldOut(report: HeldOutReport): string {
       `${String(report.widening.length)} item(s) widening: ${report.widening.join(', ')}`,
     );
   }
+  return lines.join('\n');
+}
+
+/**
+ * `sdlc metrics adoption` (P8-BAR-02, ADR-0063, metrics.md §3a).
+ *
+ * The five signals of the adoption bar, read from `gates`, `gate_outcome_tags`,
+ * `config_events` and `approvals`. Nothing here infers anything — every number
+ * is a count of rows somebody's action created.
+ *
+ * The blocks query is **unscoped on purpose**. Every other report in this file
+ * takes a window; this one must not, because `adoptionBar` computes rates over
+ * judged blocks and a windowed block set would silently drop tags that fall
+ * outside it. (`orphanTags` exists to catch exactly that if a window is ever
+ * added, rather than to permit one.)
+ */
+export async function adoptionBarReport(root: string): Promise<AdoptionBar> {
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+
+    const blocks = await db.query<{
+      id: number;
+      work_item_id: string;
+      gate_name: string;
+      created_at: string;
+    }>(
+      `SELECT id, work_item_id, gate_name, created_at::text AS created_at
+         FROM gates WHERE result = 'fail' ORDER BY created_at ASC;`,
+    );
+
+    const tags = await db.query<{
+      gate_id: number;
+      actor_id: string;
+      outcome: string;
+      reason: string | null;
+      tagged_at: string;
+    }>(
+      `SELECT gate_id, actor_id, outcome, reason, tagged_at::text AS tagged_at
+         FROM gate_outcome_tags ORDER BY id ASC;`,
+    );
+
+    const events = await db.query<{ observed_at: string; direction: string }>(
+      // The baseline row carries an empty change list and is not a change.
+      // Counting it would make every workspace report one config event on the
+      // day it was created.
+      `SELECT observed_at::text AS observed_at, direction FROM config_events
+        WHERE jsonb_array_length(changes) > 0 ORDER BY id ASC;`,
+    );
+
+    const overrides = await db.query<{ n: string }>(
+      `SELECT count(*) AS n FROM approvals WHERE decision = 'override';`,
+    );
+
+    return adoptionBar({
+      blocks: blocks.map((row) => ({
+        gateId: Number(row.id),
+        workItemId: row.work_item_id,
+        gateName: row.gate_name,
+        blockedAt: new Date(row.created_at).toISOString(),
+      })),
+      tags: tags.map((row) => ({
+        gateId: Number(row.gate_id),
+        actorId: row.actor_id,
+        outcome: row.outcome as BlockOutcome,
+        reason: row.reason,
+        taggedAt: new Date(row.tagged_at).toISOString(),
+      })),
+      configEvents: events.map((row) => ({
+        observedAt: new Date(row.observed_at).toISOString(),
+        direction: row.direction,
+      })),
+      overrides: Number(overrides[0]?.n ?? 0),
+    });
+  } finally {
+    await db.close().catch(() => undefined);
+  }
+}
+
+function signal(label: string, value: AdoptionBar['valuableRate'], unit: 'rate' | 'count'): string {
+  if (value.value === null) return `  ${label.padEnd(26)} not available — ${value.because}`;
+  const shown =
+    unit === 'rate'
+      ? `${(value.value * 100).toFixed(0)}%  (${String(value.numerator)}/${String(value.denominator)})`
+      : `${String(value.value)} block(s) of ${String(value.denominator)}`;
+  return `  ${label.padEnd(26)} ${shown}`;
+}
+
+export function formatAdoptionBar(report: AdoptionBar): string {
+  const lines = [
+    'The adoption bar (ADR-0063) — the gate caught something real the user was',
+    'glad about, and never got in the way when it should not have.',
+    '',
+    signal('valuable-block rate', report.valuableRate, 'rate'),
+    signal('nuisance-block rate', report.nuisanceRate, 'rate'),
+    signal('blocks to first valuable', report.blocksToFirstValuable, 'count'),
+    signal('config-downgrade rate', report.downgradeRate, 'rate'),
+    signal('override rate', report.overrideRate, 'rate'),
+    '',
+  ];
+  if (report.untagged > 0) {
+    lines.push(
+      `  ${String(report.untagged)} block(s) nobody judged — the rates above are over the rest.`,
+    );
+  }
+  if (report.orphanTags.length > 0) {
+    lines.push(
+      `  ⚠ ${String(report.orphanTags.length)} tag(s) reference a gate not in this report: ${report.orphanTags.join(', ')}`,
+    );
+  }
+  lines.push(
+    '',
+    report.met === null
+      ? 'UNMEASURED — ' + report.because
+      : (report.met ? 'MET — ' : 'NOT MET — ') + report.because,
+  );
   return lines.join('\n');
 }

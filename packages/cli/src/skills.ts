@@ -7,6 +7,7 @@ import {
   ClaudeCodeAdapter,
   formatDoctorReport,
   CopilotAdapter,
+  CodexAdapter,
   CursorAdapter,
   GeminiAdapter,
   McpAdapter,
@@ -76,6 +77,10 @@ export interface SkillSources {
  */
 export const COMPILE_TARGETS: Readonly<Record<string, () => AgentAdapter>> = {
   'claude-code': () => new ClaudeCodeAdapter(),
+  // P8-CODEX-01. Registered as its own target rather than left to the OpenCode
+  // adapter's `AGENTS.md`, which reached Codex by coincidence: no capability
+  // table said what Codex drops, and `agents doctor` could not report it.
+  codex: () => new CodexAdapter(),
   mcp: () => new McpAdapter(),
   // P5-ADAPT-01. Registered here rather than discovered, for the reason above:
   // a target list assembled by looking around writes to whichever surface
@@ -110,6 +115,56 @@ function allAdapters(sources: SkillSources = {}): readonly AgentAdapter[] {
 /** Runs the pre-compile check without writing anything. */
 export function doctorSkills(sources: SkillSources = {}): DoctorReport {
   return runDoctor({ skills: allSkills(sources), adapters: allAdapters(sources) });
+}
+
+/**
+ * `sdlc skills targets` — which agent surfaces this project actually has
+ * (P8-CODEX-01).
+ *
+ * **This exists because `AgentAdapter.detect()` had no caller.** Every adapter
+ * since P0-AGENT-01 implemented it — Claude Code, MCP, Cursor, Copilot, Gemini,
+ * OpenCode — and a repo-wide search found the only `.detect(` call in the
+ * *importer* port. Seven implementations, tested, documented, and unreachable:
+ * the read-path-with-no-writer shape inverted, and adding Codex as an eighth
+ * without a reader would have been the wrong way to close ADR-0063's
+ * requirement that the doctor can see Codex.
+ *
+ * Reporting only, and the ordering never becomes selection ([ADR-0007]). A
+ * compiler that picked its target by looking at the tree would write to
+ * whichever surface happened to be lying around.
+ */
+export interface TargetPresence {
+  readonly target: string;
+  readonly present: boolean;
+  readonly findings: readonly string[];
+}
+
+export async function detectTargets(root: string): Promise<readonly TargetPresence[]> {
+  const reports = await Promise.all(
+    Object.entries(COMPILE_TARGETS).map(async ([name, build]) => {
+      const report = await build().detect(root);
+      return { target: name, present: report.present, findings: report.findings };
+    }),
+  );
+  return [...reports].sort((a, b) => a.target.localeCompare(b.target));
+}
+
+export function formatTargets(reports: readonly TargetPresence[]): string {
+  const present = reports.filter((report) => report.present);
+  const lines = reports.map(
+    (report) =>
+      `  ${report.present ? '✓' : '·'} ${report.target.padEnd(12)} ${
+        report.findings.length === 0 ? 'no sign of it here' : report.findings.join(', ')
+      }`,
+  );
+  return [
+    `${String(present.length)} of ${String(reports.length)} target(s) look present in this project`,
+    '',
+    ...lines,
+    '',
+    'Reporting only. `skills compile --target <name>` is always an explicit choice —',
+    'a compiler that picked its own target would write to whatever was lying around.',
+  ].join('\n');
 }
 
 export function formatDoctor(report: DoctorReport): string {

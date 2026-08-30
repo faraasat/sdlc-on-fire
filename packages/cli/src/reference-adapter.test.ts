@@ -30,10 +30,14 @@ describe('every registered compile target', () => {
     for (const { id, adapter } of targets) expect(adapter.id, id).toBe(id);
   });
 
-  it('covers all six surfaces', () => {
-    // P5-ADAPT-01's deliverable, asserted rather than described.
+  it('covers all seven surfaces', () => {
+    // P5-ADAPT-01's deliverable, asserted rather than described — plus `codex`,
+    // added by P8-CODEX-01. The list is pinned rather than counted because a
+    // count passes when one target is swapped for another, and this assertion
+    // did its job: adding Codex failed here first.
     expect(targets.map((t) => t.id).sort()).toEqual([
       'claude-code',
+      'codex',
       'copilot',
       'cursor',
       'gemini',

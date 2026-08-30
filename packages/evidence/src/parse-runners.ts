@@ -121,7 +121,114 @@ const goTest: Attempt = (raw) => {
   return evidence('go test', passed + failed, passed, failed);
 };
 
-const ATTEMPTS: readonly Attempt[] = [nodeDefault, tap, pytest, goTest];
+/**
+ * JUnit XML — the format most CI systems and most non-JS runners emit
+ * (P8-EVID-01, [Q-04]).
+ *
+ * The last leg of Q-04, which assigned pytest, `go test` and JUnit-XML to v0.2
+ * behind the common `TestEvidence` interface. The first two shipped; this one
+ * did not, so every runner that speaks XML — Maven and Gradle, .NET, PHPUnit,
+ * Ruby, `cargo nextest`, pytest under `--junitxml`, and every CI system that
+ * ingests test results — fell through to exit-code-only. That is precisely the
+ * degradation this module was written to stop: an honest suite and
+ * `echo FAKE && exit 0` producing identical evidence.
+ *
+ * ## Counted from the elements, never from the attributes
+ *
+ * `<testsuite>` carries `tests`, `failures`, `errors` and `skipped`, and this
+ * parser ignores all four. They are the producer's *claim* about its own run —
+ * the same category of thing as a `success: true` flag, and the module already
+ * refuses those. Counting `<testcase>` elements and classifying each by its
+ * children is the deterministic disposer, and it is also what the format's own
+ * definition says: **"A test passed if there isn't an additional result element
+ * underneath it."**
+ *
+ * It also fixes a real disagreement between producers. `<testsuites>` may
+ * aggregate its children's counts or may not, so a parser that trusts the
+ * attributes either double-counts or under-counts depending on whose XML it was
+ * handed.
+ *
+ * ## Three traps this handles on purpose
+ *
+ * **`errors` are not `failures`.** A suite reporting `failures="0" errors="3"`
+ * has three tests that never ran to a verdict, and a parser reading only
+ * `failures` calls that green. Both are counted as failed here, because a test
+ * that crashed did not pass.
+ *
+ * **`tests` includes skipped.** So `passed` cannot be `tests - failures`;
+ * a suite of 10 with 8 skipped and 2 passing is not 10 passing. Skips are
+ * counted out of both `total` and `passed`, which makes `total` the number of
+ * tests that actually produced a verdict — the number a gate should be reading.
+ *
+ * **CDATA can legally contain `<testcase`.** Failure messages carry stack
+ * traces, and inside `<![CDATA[…]]>` the angle brackets are not escaped. A scan
+ * that did not strip CDATA first would count a stack trace as a test. Comments
+ * are stripped for the same reason.
+ *
+ * Format facts checked 2026-08-31 against the community reference schema
+ * (`testmoapp/junitxml`) — tier B, cited because there is no vendor: JUnit XML
+ * is a de-facto format with no single owner, and saying so is more honest than
+ * implying a specification exists.
+ */
+const junitXml: Attempt = (raw) => {
+  if (!/<testsuites?\b/i.test(raw)) return null;
+
+  // Strip what may legally contain raw `<`. Order matters: a comment can
+  // contain the literal text `<![CDATA[`, so comments go first.
+  const text = raw.replace(/<!--[\s\S]*?-->/g, '').replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+
+  const failures: { file: string; title: string; message: string }[] = [];
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  // Walk `<testcase` occurrences rather than splitting, so a self-closing case
+  // and a case with a body are distinguished by what actually follows the tag.
+  // `[^>]*?` is lazy on purpose: a greedy class swallows the `/` of a
+  // self-closing tag, so every `<testcase … />` reads as an open tag with no
+  // close, and the whole document is declined as truncated. Caught by the
+  // passing-suite test, which is the plainest input this parser has.
+  const open = /<testcase\b([^>]*?)(\/?)>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = open.exec(text)) !== null) {
+    const attributes = match[1] ?? '';
+    const selfClosing = match[2] === '/';
+
+    // A self-closing testcase has no result element under it, so it passed.
+    let body = '';
+    if (!selfClosing) {
+      const close = text.indexOf('</testcase>', open.lastIndex);
+      // No closing tag means the document was truncated. Declining the whole
+      // file is right: a partial count reported as a total is the failure this
+      // parser exists to prevent, dressed as a success.
+      if (close === -1) return null;
+      body = text.slice(open.lastIndex, close);
+    }
+
+    if (/<(failure|error)\b/i.test(body)) {
+      failed += 1;
+      const name = /\bname\s*=\s*"([^"]*)"/i.exec(attributes)?.[1] ?? '';
+      const classname = /\bclassname\s*=\s*"([^"]*)"/i.exec(attributes)?.[1] ?? '';
+      const message = /<(?:failure|error)\b[^>]*\bmessage\s*=\s*"([^"]*)"/i.exec(body)?.[1] ?? '';
+      failures.push({ file: classname, title: name, message });
+    } else if (/<skipped\b/i.test(body)) {
+      skipped += 1;
+    } else {
+      passed += 1;
+    }
+  }
+
+  // A `<testsuites>` wrapper with no cases at all is not this format declining
+  // — it is a report of an empty run, and `evidence()` renders that as `ok:
+  // false` rather than a vacuous pass. But a document with no `<testcase` at
+  // all and no counts is more likely something else that happens to mention
+  // testsuites, so it declines.
+  if (passed + failed + skipped === 0 && !/<testsuite\b/i.test(text)) return null;
+
+  return evidence('junit-xml', passed + failed, passed, failed, failures);
+};
+
+const ATTEMPTS: readonly Attempt[] = [nodeDefault, tap, pytest, goTest, junitXml];
 
 /**
  * Reads a test count out of whatever the runner printed, or returns `null`.

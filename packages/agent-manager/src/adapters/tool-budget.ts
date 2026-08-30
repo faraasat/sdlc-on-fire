@@ -21,6 +21,7 @@
  * still time to do it deliberately.
  */
 
+import { estimateTokens } from '@sdlc-on-fire/core';
 import type { McpTool } from './mcp.js';
 
 /**
@@ -29,12 +30,15 @@ import type { McpTool } from './mcp.js';
  * Duplicated rather than imported, deliberately. This package depends on `yaml`
  * and `zod` and nothing else — it is the compile target for other people's
  * agent formats, and giving it a dependency on the context engine would invert
- * the layering for one line of arithmetic. A guard test pins the two
- * implementations equal, so the copy cannot drift silently.
+ * the layering for one line of arithmetic.
+ *
+ * **That constraint was right and the fix was wrong** (corrected P8-EVID-03).
+ * The copy is gone: `estimateTokens` moved to `core`, which both packages
+ * already depend on, so the layering holds *and* there is one implementation.
+ * The guard test that pinned the two copies equal now pins this import against
+ * the same source — a rule that needs a test to stop two copies drifting was
+ * always a rule that wanted one copy.
  */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
 
 /** Where Anthropic's runtime begins deferring tool definitions (~, 2026-08-22). */
 export const DEFER_LOADING_TOKENS = 10_000;
