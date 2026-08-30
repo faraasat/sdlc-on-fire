@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DroppedLayer } from './metrics.js';
 import {
   ContextPackSchema,
+  partitionHeldOut,
   type ContextLayer,
   type ContextPack,
   type ContextPackSpec,
@@ -47,6 +48,13 @@ export interface AssembleInput {
   /** Live-steering comment directives (P1-CMT-02 feeds this). */
   readonly commentDirectives?: string | undefined;
   readonly retrieve?: Retriever | undefined;
+  /**
+   * The held-out root this workspace uses (P7-HELDOUT-01).
+   *
+   * Threaded rather than read from a module-level constant so a workspace that
+   * moves its held-out suite moves every exclusion with it, including this one.
+   */
+  readonly heldOutRoot?: string | undefined;
   /** Injectable for tests; production passes nothing. */
   readonly packId?: string | undefined;
   readonly now?: Date | undefined;
@@ -99,6 +107,14 @@ export interface AssembledPack {
   readonly budget: number;
   /** Every layer not in the pack, and whether the budget or its absence is why. */
   readonly dropped: readonly DroppedLayer[];
+  /**
+   * Retrieved chunks dropped for being held out (P7-HELDOUT-01).
+   *
+   * Reported rather than silently filtered. A non-zero count is not an error —
+   * the retriever over-fetches by design — but it is the only way to notice
+   * that the corpus has started indexing something it should not.
+   */
+  readonly heldOutFiltered: number;
 }
 
 export class ContextProvenanceError extends Error {
@@ -135,8 +151,17 @@ export async function assembleContextPack(input: AssembleInput): Promise<Assembl
     if (content !== undefined) spent += estimateTokens(content);
   }
 
+  let heldOutFiltered = 0;
   if (input.retrieve !== undefined && spent < budget) {
-    const chunks = await input.retrieve(input.cardCore, 20);
+    const fetched = await input.retrieve(input.cardCore, 20);
+    // Retrieval is the one leak surface where filtering is correct rather than
+    // an error: it over-fetches from a corpus it does not curate, so a held-out
+    // chunk arriving here is the retriever doing its job. The *count* travels
+    // out with the pack (P7-HELDOUT-01) — a silent filter is a leak you fixed
+    // once and can never confirm is still fixed.
+    const partitioned = partitionHeldOut(fetched, (chunk) => chunk.id, input.heldOutRoot);
+    heldOutFiltered = partitioned.heldOut.length;
+    const chunks = partitioned.visible;
     const kept: string[] = [];
     let retrievalTokens = 0;
     for (const chunk of [...chunks].sort((a, b) => b.score - a.score)) {
@@ -223,7 +248,7 @@ export async function assembleContextPack(input: AssembleInput): Promise<Assembl
   const violations = checkLayerProvenance(pack.layers.map((layer) => layer.kind));
   if (violations.length > 0) throw new ContextProvenanceError(violations);
 
-  return { pack: ContextPackSchema.parse(pack), budget, dropped };
+  return { pack: ContextPackSchema.parse(pack), budget, dropped, heldOutFiltered };
 }
 
 /** Concatenates layers in order — the array *is* the prompt content (contracts/05 §3.2). */

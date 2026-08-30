@@ -4,6 +4,8 @@ import path from 'node:path';
 import chokidar, { type FSWatcher } from 'chokidar';
 import {
   contentHash,
+  DEFAULT_HELD_OUT_ROOT,
+  isHeldOutPath,
   isManagedContentPath,
   type MirrorTable,
   type StoragePort,
@@ -64,6 +66,14 @@ export interface SyncEngineOptions {
   /** Stability window for editor atomic-saves and agent write bursts. */
   readonly awaitWriteFinishMs?: number | undefined;
   /**
+   * Where this workspace keeps its held-out suite (P7-HELDOUT-01).
+   *
+   * A mirrored file is a chunked file, and a chunked file is retrievable into a
+   * context pack — so the mirror is one of the four surfaces that must not see
+   * the set.
+   */
+  readonly heldOutRoot?: string | undefined;
+  /**
    * Force chokidar's polling backend instead of native OS events.
    *
    * Native backends (FSEvents on macOS, inotify on Linux) deliver on their own
@@ -121,6 +131,7 @@ function docTypeFor(relativePath: string): string {
 
 export class SyncEngine {
   readonly #root: string;
+  readonly #heldOutRoot: string;
   readonly #store: SyncStore;
   readonly #registry: SelfWriteRegistry;
   readonly #onReEmbed: ReEmbedHook | undefined;
@@ -140,6 +151,7 @@ export class SyncEngine {
     this.#onSynced = options.onSynced;
     this.#awaitWriteFinishMs = options.awaitWriteFinishMs ?? 300;
     this.#usePolling = options.usePolling ?? false;
+    this.#heldOutRoot = options.heldOutRoot ?? DEFAULT_HELD_OUT_ROOT;
   }
 
   /** The registry the daemon's own writer must record into before writing. */
@@ -349,6 +361,15 @@ export class SyncEngine {
     }
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
+      // Never mirror the held-out suite (P7-HELDOUT-01). Today the walk only
+      // covers `kanban/` and `docs/`, so a conventional `tests/held-out/` is
+      // already out of reach — and *already out of reach* is exactly the kind of
+      // safety that stops being true the day somebody points `held_out_root`
+      // somewhere under `docs/`. A mirrored file is a chunked file, and a
+      // chunked file is retrievable into a context pack.
+      if (isHeldOutPath(path.relative(this.#root, full).replace(/\\/g, '/'), this.#heldOutRoot)) {
+        continue;
+      }
       if (entry.isDirectory()) {
         outcomes.push(...(await this.#walk(full)));
       } else if (entry.name.endsWith('.md')) {

@@ -1,4 +1,11 @@
-import type { StoragePort } from '@sdlc-on-fire/core';
+import fs from 'node:fs/promises';
+import { parse as parseYaml } from 'yaml';
+import {
+  heldOutRootOf,
+  resolveWorkspaceLayout,
+  WorkspaceConfigSchema,
+  type StoragePort,
+} from '@sdlc-on-fire/core';
 import { SyncEngine, type SyncOutcome } from './sync-engine.js';
 
 /**
@@ -32,6 +39,24 @@ export interface RebuildResult {
  * malformed card leaves the mirror empty, which is strictly worse than the
  * state it started from. The caller decides what a partial rebuild means.
  */
+/**
+ * Reads the configured held-out root, falling back to the conventional one.
+ *
+ * A missing or unreadable config is not an error here: the workspace may not be
+ * initialised yet, and defaulting is the safe direction — the default root is
+ * held out, so a failure to read the config withholds *more* rather than less.
+ */
+async function heldOutRootFor(workspaceRoot: string): Promise<string> {
+  const layout = resolveWorkspaceLayout(workspaceRoot);
+  try {
+    const raw = await fs.readFile(layout.configPath, 'utf8');
+    const parsed = WorkspaceConfigSchema.safeParse(parseYaml(raw));
+    return heldOutRootOf(parsed.success ? parsed.data : null);
+  } catch {
+    return heldOutRootOf(null);
+  }
+}
+
 export async function rebuildMirror(
   workspaceRoot: string,
   store: StoragePort,
@@ -48,7 +73,15 @@ export async function rebuildMirror(
   // what no longer does, which is the same end state without the collateral
   // damage. Chunks are the one genuinely derived artefact, and `replaceChunks`
   // already rewrites those per source.
-  const engine = new SyncEngine({ workspaceRoot, store });
+  // The held-out root is read here rather than passed in, so no caller of
+  // `rebuildMirror` has to remember it (P7-HELDOUT-01). A caller who forgets is
+  // the failure mode, and the symptom is a held-out file quietly becoming a
+  // chunk that retrieval can return.
+  const engine = new SyncEngine({
+    workspaceRoot,
+    store,
+    heldOutRoot: await heldOutRootFor(workspaceRoot),
+  });
   const outcomes: readonly SyncOutcome[] = await engine.reconcile();
 
   // Count what is *mirrored*, not what changed. Reporting only upserts made a

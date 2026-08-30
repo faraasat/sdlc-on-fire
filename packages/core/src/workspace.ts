@@ -2,6 +2,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { AdvancedConfigSchema } from './capabilities.js';
 import { FocusProfileSchema } from './focus.js';
+import { DEFAULT_HELD_OUT_ROOT } from './held-out-suite.js';
 import { SandboxConfigSchema } from './sandbox.js';
 import { TierPolicyConfigSchema, tierPolicyViolations } from './tier-policy.js';
 
@@ -171,6 +172,20 @@ export const WorkspaceConfigSchema = z
         state_dir: z.string().min(1).default(DEFAULT_STATE_DIR),
       })
       .prefault({}),
+    /**
+     * The held-out test suite (P7-HELDOUT-01).
+     *
+     * Configurable rather than fixed because the product does not own a user's
+     * source layout — but every exclusion derives from *this one value*, so
+     * moving it moves the retriever, the mirror, the agent's file scope and the
+     * runner's globs together. That is what makes the exclusion structural
+     * rather than four conventions that agree until one of them does not.
+     */
+    testing: z
+      .object({
+        held_out_root: z.string().min(1).default(DEFAULT_HELD_OUT_ROOT),
+      })
+      .prefault({}),
     docs: z
       .object({
         /**
@@ -268,6 +283,18 @@ export const WorkspaceConfigSchema = z
 
     // A path knob that escapes the project root would put managed content
     // outside the repo, breaking the content-in-git invariant.
+    // Same reasoning as the path knobs below: a held-out root outside the
+    // project root is a set the mirror cannot see for the wrong reason, and one
+    // that silently starts being visible the day the path resolves elsewhere.
+    const heldOut = config.testing.held_out_root;
+    if (path.isAbsolute(heldOut) || heldOut.split(/[\\/]/).includes('..')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['testing', 'held_out_root'],
+        message: 'testing.held_out_root must be a relative path inside the project root',
+      });
+    }
+
     for (const key of ['kanban', 'docs', 'state_dir'] as const) {
       const value = config.paths[key];
       if (path.isAbsolute(value) || value.split(/[\\/]/).includes('..')) {

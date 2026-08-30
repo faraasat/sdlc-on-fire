@@ -32,6 +32,13 @@
  * nobody uses correctly, and the cases that matter here are blunt: can this
  * agent write to the repository, can it reach the network, can it publish.
  */
+import {
+  DEFAULT_HELD_OUT_ROOT,
+  isHeldOutPath,
+  scopeToVisible,
+  type SuiteScope,
+} from './held-out-suite.js';
+
 export const AGENT_SCOPES = [
   'repo:read',
   'repo:write',
@@ -73,6 +80,8 @@ export interface ScopeRequest {
   readonly requested?: readonly AgentScope[] | undefined;
   /** Set when the daemon is running a verify step that fetches dependencies. */
   readonly needsNetwork?: boolean | undefined;
+  /** Where this workspace keeps its held-out suite. Defaults to the conventional root. */
+  readonly heldOutRoot?: string | undefined;
 }
 
 export interface ScopeGrant {
@@ -80,6 +89,15 @@ export interface ScopeGrant {
   readonly granted: readonly AgentScope[];
   /** Scopes asked for and refused, with why — refusals are never silent. */
   readonly refused: readonly { scope: AgentScope; reason: string }[];
+  /**
+   * The held-out root this grant is blind to (P7-HELDOUT-01).
+   *
+   * Carried on the grant rather than consulted from a constant at each call
+   * site, so `permitsPath` cannot be asked the question without the answer
+   * being in scope — and so a grant printed into a log says what it could not
+   * see.
+   */
+  readonly heldOutRoot: string;
 }
 
 /**
@@ -121,7 +139,33 @@ export function deriveScopes(request: ScopeRequest): ScopeGrant {
     stage: request.stage,
     granted: AGENT_SCOPES.filter((scope) => unique.has(scope)),
     refused,
+    heldOutRoot: request.heldOutRoot ?? DEFAULT_HELD_OUT_ROOT,
   };
+}
+
+/**
+ * Whether a grant permits touching a path (P7-HELDOUT-01).
+ *
+ * A separate question from {@link permits}, and asked separately on purpose:
+ * `repo:read` says an agent may read the repository, and the held-out suite is
+ * the one part of the repository no grant reaches, at any stage, with any
+ * scope. There is no scope that turns it on — the same reasoning as `main:push`
+ * being absent from the vocabulary rather than withheld: absence leaves no
+ * argument an injected instruction can win.
+ */
+export function permitsPath(grant: ScopeGrant, candidate: string): boolean {
+  return !isHeldOutPath(candidate, grant.heldOutRoot);
+}
+
+/**
+ * Every path in `paths` this grant may touch, and everything it withheld.
+ *
+ * The plural form exists so a caller filters *once*, with the withheld set in
+ * hand — a per-path `permitsPath` in a loop discards the count, and the count is
+ * what makes a leak visible rather than merely absent.
+ */
+export function scopePaths(grant: ScopeGrant, paths: readonly string[]): SuiteScope {
+  return scopeToVisible(paths, grant.heldOutRoot);
 }
 
 /**
