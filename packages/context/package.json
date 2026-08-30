@@ -1,6 +1,6 @@
 {
   "name": "@sdlc-on-fire/context",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Context pack assembly, hybrid retrieval (tsvector + pgvector + RRF), token budgets, prompt-cache ordering.",
   "license": "MIT",
   "type": "module",

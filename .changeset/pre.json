@@ -13,5 +13,10 @@
     "@sdlc-on-fire/storage": "0.0.0",
     "@sdlc-on-fire/ui": "0.0.0"
   },
-  "changesets": ["alpha-two", "first-alpha", "phase-three"]
+  "changesets": [
+    "alpha-two",
+    "first-alpha",
+    "phase-three",
+    "phases-six-and-seven"
+  ]
 }
