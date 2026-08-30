@@ -110,6 +110,7 @@ import { checkGuard, formatGuardCheck } from './guard.js';
 import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
 import { formatRollback, rollbackWorkItem, type RollbackResult } from './rollback.js';
+import { formatMonitorReport, repairMonitorReport } from './repair-monitor.js';
 import { ciEvidence, formatCiEvidence, type CiEvidenceResult } from './ci-evidence.js';
 import { backupWorkspace, formatBackup, type BackupResult } from './backup.js';
 import { formatRuns, runHistory, type RunHistory } from './runs.js';
@@ -2795,6 +2796,18 @@ export function buildProgram(): Command {
   const metrics = program
     .command('metrics')
     .description('flow and delivery-performance metrics, read from what actually happened');
+
+  metrics
+    .command('repair-monitor')
+    .description('how well `repairIsLegitimate` does, graded against the held-out suite')
+    .option('--work-item <id>', 'grade only this item')
+    .option('--json', 'emit JSON')
+    .action(async (options: { workItem?: string; json?: boolean }) => {
+      const report = await repairMonitorReport(root(), { workItemId: options.workItem });
+      emit(report, options.json === true, formatMonitorReport);
+      // A miss is the guard failing silently. It gets a non-zero exit.
+      if (report.missed > 0) process.exitCode = 1;
+    });
 
   metrics
     .command('held-out')

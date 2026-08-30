@@ -329,6 +329,28 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
    );`,
   `CREATE INDEX IF NOT EXISTS held_out_samples_item_idx
      ON held_out_samples (work_item_id, measured_at);`,
+
+  // ── Repair-monitor grades (P7-HELDOUT-03, contract 01 §3.4) ───────────────
+  //
+  // `repairIsLegitimate` has been deciding whether a repair fixed the code or
+  // the scoreboard since P3-GATE-10 with nothing checking whether it is any good
+  // at it. The held-out suite is the one signal the repair could not have been
+  // written against, so it is what makes the grade possible.
+  //
+  // One row per (work item, attempt), enforced. A repair attempt is graded once;
+  // re-grading would let a second look overwrite the first, and the value of the
+  // record is that it was written before anybody knew how it would score.
+  `CREATE TABLE IF NOT EXISTS repair_observations (
+     id                 BIGSERIAL PRIMARY KEY,
+     work_item_id       TEXT NOT NULL REFERENCES work_items(id),
+     attempt            INT NOT NULL,
+     observed_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+     monitor_legitimate BOOLEAN NOT NULL,
+     held_out_passed    BOOLEAN NOT NULL,
+     reasons            JSONB
+   );`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS repair_observations_uniq
+     ON repair_observations (work_item_id, attempt);`,
   // An agent cannot author one, structurally. The application layer refuses it
   // too, and both stay for the same reason the approvals pair does: no single
   // bug should be enough to defeat an invariant.
