@@ -5,7 +5,14 @@ import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App.js';
-import { EMPTY_FILTERS, useUiStore } from './state/ui.js';
+import {
+  BOARD_VIEWS,
+  CARD_VIEWS,
+  EMPTY_FILTERS,
+  isCardView,
+  PANEL_VIEWS,
+  useUiStore,
+} from './state/ui.js';
 
 /**
  * P3-UI-01 — the shell, rendered.
@@ -217,5 +224,28 @@ describe('App', () => {
     expect(table.getAttribute('aria-pressed')).toBe('false');
     await userEvent.click(table);
     expect(table.getAttribute('aria-pressed')).toBe('true');
+  });
+});
+
+/**
+ * Every view is either a card view or a panel (P6-SURFACE-04).
+ *
+ * The app guarded the card set with `view !== 'metrics'`, so the two views
+ * added here fell through to the roadmap and rendered underneath their own
+ * panel. A negative guard against a vocabulary that grows is wrong the moment
+ * it grows; this is the check that makes the next addition fail loudly.
+ */
+describe('the view vocabulary', () => {
+  it('accounts for every board view exactly once', () => {
+    const covered = [...CARD_VIEWS, ...PANEL_VIEWS].sort();
+    expect(covered).toEqual([...BOARD_VIEWS].sort());
+  });
+
+  it('does not classify a panel as a card view', () => {
+    for (const view of PANEL_VIEWS) expect(isCardView(view)).toBe(false);
+  });
+
+  it('classifies every card view as one', () => {
+    for (const view of CARD_VIEWS) expect(isCardView(view)).toBe(true);
   });
 });

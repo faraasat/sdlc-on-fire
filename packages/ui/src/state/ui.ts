@@ -30,8 +30,38 @@ import type { Viewer } from '@sdlc-on-fire/core/browser';
 export const THEMES = ['ember', 'slate', 'paper', 'contrast'] as const;
 export type Theme = (typeof THEMES)[number];
 
-export const BOARD_VIEWS = ['board', 'table', 'roadmap', 'metrics'] as const;
+export const BOARD_VIEWS = [
+  'board',
+  'table',
+  'roadmap',
+  'metrics',
+  // The two browsable outputs (P6-SURFACE-04). Top-level rather than folded
+  // into the card drawer, because neither is *about* a card: research and
+  // decisions outlive the item that prompted them, and burying them behind a
+  // selection is how they went unfindable in the first place.
+  'research',
+  'decisions',
+] as const;
 export type BoardView = (typeof BOARD_VIEWS)[number];
+
+/**
+ * The views that render the card set. Everything else is its own panel.
+ *
+ * A positive list, because the negative one was wrong the moment the view
+ * vocabulary grew: the app guarded the card views with `view !== 'metrics'`,
+ * so `research` and `decisions` fell through to the roadmap and rendered
+ * *underneath* their own panel. Naming which views show cards means adding a
+ * view cannot silently join them.
+ */
+export const CARD_VIEWS = ['board', 'table', 'roadmap'] as const;
+export type CardView = (typeof CARD_VIEWS)[number];
+
+export function isCardView(view: BoardView): view is CardView {
+  return (CARD_VIEWS as readonly string[]).includes(view);
+}
+
+/** Views that render their own panel instead of the card set. */
+export const PANEL_VIEWS = ['metrics', 'research', 'decisions'] as const;
 
 export interface BoardFilters {
   readonly text: string;

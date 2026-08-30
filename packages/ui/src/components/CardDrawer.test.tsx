@@ -28,24 +28,40 @@ const detail = {
   binding: { gates: [], unbound: [], problemCount: 0 },
 };
 
+const EMPTY_TIMELINE = {
+  workItemId: 'FEAT-1',
+  entries: [],
+  reworked: [],
+  elapsedMs: null,
+  unplacedInsertions: [],
+  because: 'no transitions recorded',
+  insertionsAvailable: true,
+};
+
 /**
- * URL-aware, because the drawer now fetches two endpoints.
+ * URL-aware, because the drawer fetches four endpoints.
  *
  * A stub that answers every request with the same body is a stub that lies: it
  * handed the work-item detail object to the activity feed, which typechecks as
  * `ActivityEntry[]` and is not an array at runtime. Routing by path keeps the
- * fake honest about which endpoint returned what.
+ * fake honest about which endpoint returned what — and this had to be extended
+ * again for the timeline and run endpoints (P6-SURFACE-04), which is the fake
+ * doing its job rather than the drawer breaking.
  */
 function stub(body: unknown = detail, activity: unknown = []): void {
   vi.stubGlobal(
     'fetch',
-    vi.fn((input: unknown) =>
-      Promise.resolve(
-        new Response(JSON.stringify(String(input).includes('/api/activity') ? activity : body), {
-          status: 200,
-        }),
-      ),
-    ),
+    vi.fn((input: unknown) => {
+      const url = String(input);
+      const payload = url.includes('/api/activity')
+        ? activity
+        : url.includes('/api/timeline')
+          ? EMPTY_TIMELINE
+          : url.includes('/api/runs')
+            ? []
+            : body;
+      return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }));
+    }),
   );
 }
 

@@ -752,3 +752,162 @@ body {
 .feed__row--attention .feed__severity {
   color: var(--warn);
 }
+
+/* ── The four views P6-SURFACE-04 adds ──────────────────────────────────────
+ *
+ * Deliberately plain. Each of these views exists to make a record legible, and
+ * the parts worth styling are the ones that say something is wrong: rework, an
+ * unattributed move, a cost nobody reported, a chain that no longer resolves.
+ */
+
+.timeline__list,
+.runs__list,
+.decisions__chains {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.timeline__item,
+.runs__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 2px solid var(--line);
+}
+
+/* Rework is the thing a timeline is read to find. */
+.timeline__item--rework {
+  border-left-color: var(--warn);
+}
+
+.timeline__stage,
+.runs__skill {
+  font-weight: 600;
+}
+
+.timeline__visit,
+.timeline__open {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--warn);
+}
+
+.timeline__duration,
+.timeline__actor,
+.runs__model,
+.runs__elapsed,
+.runs__turns {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.timeline__insertions {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.75rem;
+}
+
+.timeline__empty,
+.runs__empty,
+.research__empty,
+.decisions__empty,
+.timeline__unavailable,
+.timeline__unplaced {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.runs__item--fail .runs__mark,
+.runs__item--error .runs__mark,
+.runs__reason {
+  color: var(--bad);
+}
+
+.runs__item--pass .runs__mark {
+  color: var(--ok);
+}
+
+/* A cost nobody reported reads differently from a cost of zero, and looks it. */
+.runs__cost,
+.runs__pack--missing {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.runs__pack {
+  font-size: 0.7rem;
+}
+
+.research__topic h3 {
+  margin: 1rem 0 0.25rem;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.research__entry {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.research__path,
+.research__links {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+/* The two counts that say whether the research habit is working. */
+.research__warning,
+.research__unlinked,
+.decisions__issue {
+  color: var(--warn);
+  font-size: 0.8rem;
+}
+
+.decisions__issues {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
+.decisions__note,
+.research__note,
+.decisions__summary,
+.research__summary,
+.timeline__summary {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.decisions__adr {
+  font-weight: 600;
+}
+
+.decisions__adr--superseded {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.decisions__adr--unidentified {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.decisions__title {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.decisions__arrow {
+  color: var(--accent);
+}

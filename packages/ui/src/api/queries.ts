@@ -10,7 +10,15 @@
  */
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
-import { api, type LifecycleStateRow, type WorkItemDetail, type WorkItemRow } from './client.js';
+import {
+  api,
+  type DocsResponse,
+  type LifecycleStateRow,
+  type RunRow,
+  type TimelineResponse,
+  type WorkItemDetail,
+  type WorkItemRow,
+} from './client.js';
 import type { ActivityEntry, ResolvedIdentity, ViewDefinition } from '@sdlc-on-fire/core/browser';
 
 export const queryKeys = {
@@ -20,6 +28,9 @@ export const queryKeys = {
   lifecycleStates: ['lifecycle-states'] as const,
   activity: (workItemId: string | null) => ['activity', workItemId ?? 'all'] as const,
   views: ['views'] as const,
+  timeline: (workItemId: string) => ['timeline', workItemId] as const,
+  runs: (workItemId: string | null) => ['runs', workItemId ?? 'all'] as const,
+  docs: ['docs'] as const,
 };
 
 /** Which query key a change to a given table should invalidate. */
@@ -90,4 +101,31 @@ export function useSavedViews(): UseQueryResult<ViewDefinition[]> {
     // on focus is what makes editing one and alt-tabbing back show the change.
     staleTime: 5_000,
   });
+}
+
+/** A card's stage history (P6-SURFACE-04, FEAT-UI-002). */
+export function useTimeline(workItemId: string | null): UseQueryResult<TimelineResponse> {
+  return useQuery({
+    queryKey: queryKeys.timeline(workItemId ?? ''),
+    queryFn: () => api.timeline(workItemId as string),
+    enabled: workItemId !== null,
+  });
+}
+
+/** Agent runs, newest first (P6-SURFACE-04, FEAT-UI-005). */
+export function useRuns(workItemId: string | null): UseQueryResult<RunRow[]> {
+  return useQuery({
+    queryKey: queryKeys.runs(workItemId),
+    queryFn: () => api.runs(workItemId),
+  });
+}
+
+/**
+ * The doc mirror, projected two ways (FEAT-UI-006/007).
+ *
+ * One query for both panels: they read the same table, and two queries would
+ * mean two caches that can disagree about what is on disk.
+ */
+export function useDocs(): UseQueryResult<DocsResponse> {
+  return useQuery({ queryKey: queryKeys.docs, queryFn: api.docs });
 }

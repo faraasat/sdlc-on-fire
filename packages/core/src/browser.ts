@@ -49,3 +49,8 @@ export * from './github-issues.js';
 export * from './sync-engine.js';
 export * from './github-sync-port.js';
 export * from './run-record.js';
+// Pure projections behind the four views P6-SURFACE-04 adds. Both are
+// arithmetic and grouping over rows the API already sends, which is what makes
+// them safe here — and what makes the views testable without a browser.
+export * from './timeline.js';
+export * from './doc-index.js';

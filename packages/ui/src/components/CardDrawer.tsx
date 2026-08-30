@@ -5,8 +5,10 @@ import {
   type BindingReport,
   type DotState,
 } from '@sdlc-on-fire/core/browser';
-import { useActivity, useWorkItem } from '../api/queries.js';
+import { useActivity, useRuns, useTimeline, useWorkItem } from '../api/queries.js';
 import { ActivityFeed } from './ActivityFeed.js';
+import { LifecycleTimeline } from './LifecycleTimeline.js';
+import { RunViewer } from './RunViewer.js';
 
 /**
  * The card detail drawer (P3-KAN-02).
@@ -64,6 +66,8 @@ export function CardDrawer({
 }): ReactElement {
   const detail = useWorkItem(cardId);
   const activity = useActivity(cardId);
+  const timeline = useTimeline(cardId);
+  const runs = useRuns(cardId);
   const closeRef = useRef<HTMLButtonElement>(null);
 
   // Focus moves into the drawer when it opens and Escape closes it. Without
@@ -184,22 +188,17 @@ export function CardDrawer({
           </section>
 
           <section>
+            <h3>Timeline</h3>
+            <LifecycleTimeline timeline={timeline.data} loading={timeline.isLoading} />
+          </section>
+
+          <section>
             <h3>Runs</h3>
-            {detail.data?.runs.length === 0 ? (
-              <p className="muted">nothing has run yet</p>
-            ) : (
-              <ul className="plain">
-                {detail.data?.runs.map((run, index) => (
-                  <li key={index}>
-                    <span className={`chip chip--${text(run['status'], '')}`}>
-                      {text(run['status'], 'unknown')}
-                    </span>{' '}
-                    <code>{text(run['id'], '')}</code>{' '}
-                    <small>{text(run['model'] ?? run['agent_target'], '')}</small>
-                  </li>
-                ))}
-              </ul>
-            )}
+            {/* One rendering of a run, not two. The drawer used to inline a
+                thinner list of its own from `detail.runs`; keeping both would
+                have been two places that decide what a run looks like, and they
+                would have disagreed the first time either changed. */}
+            <RunViewer runs={runs.data} loading={runs.isLoading} />
           </section>
 
           <section>

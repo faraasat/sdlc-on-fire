@@ -9,6 +9,7 @@
 
 import fs from 'node:fs/promises';
 import { readViews } from './views.js';
+import { insertionMarkersFor } from './reopen.js';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -149,6 +150,7 @@ export async function serve(options: ServeOptions): Promise<ServeResult> {
     gitEmail: email,
     version: 'dev',
     views: () => readViews(options.root),
+    insertions: (workItemId) => insertionMarkersFor(options.root, workItemId),
     transition: async (id, to) => {
       await lifecycle.transition({ workItemId: id, to });
     },

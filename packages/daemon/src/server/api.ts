@@ -10,7 +10,25 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resolveIdentity, type Actor, type ResolvedIdentity } from '@sdlc-on-fire/core';
+import {
+  decisionLog,
+  lifecycleTimeline,
+  researchIndex,
+  resolveIdentity,
+  type InsertionMarker,
+  type Actor,
+  type ResolvedIdentity,
+} from '@sdlc-on-fire/core';
+
+/** The `docs` mirror as it comes back from SQL, before it is renamed. */
+interface DocRowShape {
+  readonly id: string;
+  readonly doc_type: string;
+  readonly file_path: string;
+  readonly title: string | null;
+  readonly metadata: Record<string, unknown> | null;
+  readonly updated_at: string;
+}
 import { isAllowedOrigin, isLoopbackHost } from './guard.js';
 import { moveCard } from './move.js';
 import {
@@ -64,6 +82,17 @@ export interface ApiOptions {
    */
   readonly views?:
     (() => Promise<{ views: readonly ViewDefinition[]; problems: readonly unknown[] }>) | undefined;
+  /**
+   * Reads insertion records from `kanban/_insertions/` (P6-SURFACE-04).
+   *
+   * Injected for the same reason `views` is: insertions are **files**, not a
+   * mirror table, and the reader lives in the CLI package. Optional, and a
+   * server started without it returns a timeline whose `insertionsAvailable` is
+   * false — said out loud rather than served as an empty list, because a
+   * timeline with no markers and a timeline that cannot see markers look
+   * identical and only one of them means anything.
+   */
+  readonly insertions?: ((workItemId: string) => Promise<readonly InsertionMarker[]>) | undefined;
   /** `git config user.email`, resolved once by the caller. */
   readonly gitEmail?: string | undefined;
   readonly version?: string;
@@ -482,6 +511,67 @@ async function route(url: URL, options: ApiOptions): Promise<Handled | null> {
       })),
     );
     return { status: 200, body: limits };
+  }
+
+  if (path === '/api/timeline') {
+    // Built on the server for the same reason the board's projection is: a
+    // timeline is a claim about how a card got here, and a claim assembled in
+    // the browser cannot be tested without one (P6-SURFACE-04, FEAT-UI-002).
+    const workItemId = url.searchParams.get('workItemId');
+    if (workItemId === null) {
+      return { status: 400, body: { error: 'timeline needs a workItemId' } };
+    }
+
+    const [transitions, insertions] = await Promise.all([
+      db.query<TransitionRow & { actor: string | null }>(
+        `SELECT t.work_item_id, t.from_state, t.to_state,
+                a.display_name AS actor, t.created_at::text AS created_at
+           FROM lifecycle_transitions t
+           LEFT JOIN actors a ON a.id = t.actor_id
+          WHERE t.work_item_id = $1 ORDER BY t.created_at ASC;`,
+        [workItemId],
+      ),
+      options.insertions === undefined
+        ? Promise.resolve<readonly InsertionMarker[]>([])
+        : options.insertions(workItemId),
+    ]);
+
+    return {
+      status: 200,
+      body: {
+        ...lifecycleTimeline(workItemId, transitions, insertions),
+        // False means "nobody looked", not "there were none". Collapsing the
+        // two would make a missing reader indistinguishable from a clean card.
+        insertionsAvailable: options.insertions !== undefined,
+      },
+    };
+  }
+
+  if (path === '/api/docs') {
+    // One endpoint, two views. The research panel and the decision log read the
+    // same mirror through different projections, and splitting the *query* would
+    // mean two places that know what a doc row looks like.
+    const docType = url.searchParams.get('docType');
+    const rows = await db.query<DocRowShape>(
+      `SELECT id, doc_type, file_path, title, metadata, updated_at::text AS updated_at
+         FROM docs ${docType === null ? '' : 'WHERE doc_type = $1'}
+        ORDER BY updated_at DESC;`,
+      docType === null ? [] : [docType],
+    );
+
+    const docs = rows.map((row) => ({
+      id: row.id,
+      docType: row.doc_type,
+      filePath: row.file_path,
+      title: row.title,
+      metadata: row.metadata,
+      updatedAt: row.updated_at,
+    }));
+
+    return {
+      status: 200,
+      body: { docs, research: researchIndex(docs), decisions: decisionLog(docs) },
+    };
   }
 
   if (path === '/api/lifecycle-states') {

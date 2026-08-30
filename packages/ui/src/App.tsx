@@ -1,8 +1,8 @@
 import { useState, type ReactElement } from 'react';
-import { useIdentity, useSavedViews, useWorkItems } from './api/queries.js';
+import { useDocs, useIdentity, useSavedViews, useWorkItems } from './api/queries.js';
 import { useMoveCard } from './api/mutations.js';
 import { useRealtime } from './api/realtime.js';
-import { isFiltered, useUiStore } from './state/ui.js';
+import { BOARD_VIEWS, isCardView, isFiltered, useUiStore } from './state/ui.js';
 import { IdentityBadge } from './components/IdentityBadge.js';
 import { ConnectionDot } from './components/ConnectionDot.js';
 import { PresenceBar } from './components/PresenceBar.js';
@@ -12,6 +12,8 @@ import { TableView } from './components/TableView.js';
 import { RoadmapView } from './components/RoadmapView.js';
 import { CardDrawer } from './components/CardDrawer.js';
 import { MetricsView } from './components/MetricsView.js';
+import { ResearchPanel } from './components/ResearchPanel.js';
+import { DecisionLog } from './components/DecisionLog.js';
 import { ThemePicker } from './components/ThemePicker.js';
 import { GROUP_BY, type BoardCard, type GroupBy } from '@sdlc-on-fire/core/browser';
 
@@ -27,6 +29,9 @@ export function App(): ReactElement {
   const identity = useIdentity();
   const items = useWorkItems();
   const savedViews = useSavedViews();
+  // One query for both panels: they read the same mirror, and two caches can
+  // disagree about what is on disk.
+  const docs = useDocs();
   const move = useMoveCard();
   const { view, setView, filters, setFilters, clearFilters, selectedId, select, viewers } =
     useUiStore();
@@ -47,7 +52,7 @@ export function App(): ReactElement {
       <header className="app__bar">
         <strong className="app__brand">SDLC on Fire</strong>
         <nav className="app__views">
-          {(['board', 'table', 'roadmap', 'metrics'] as const).map((candidate) => (
+          {BOARD_VIEWS.map((candidate) => (
             <button
               key={candidate}
               type="button"
@@ -142,7 +147,14 @@ export function App(): ReactElement {
           </p>
         ) : null}
 
-        {items.isSuccess && cards.length > 0 && textFiltered.length === 0 && view !== 'board' ? (
+        {/* Card views only, and not the board — it renders its own empty state. On a
+            panel view the card filter is not what the reader is looking at, and
+            "nothing matches this filter" over a decision log is nonsense. */}
+        {items.isSuccess &&
+        cards.length > 0 &&
+        textFiltered.length === 0 &&
+        isCardView(view) &&
+        view !== 'board' ? (
           <p className="muted">
             nothing matches this filter.{' '}
             <button type="button" onClick={clearFilters}>
@@ -152,8 +164,14 @@ export function App(): ReactElement {
         ) : null}
 
         {view === 'metrics' ? <MetricsView /> : null}
+        {view === 'research' ? (
+          <ResearchPanel index={docs.data?.research} loading={docs.isLoading} />
+        ) : null}
+        {view === 'decisions' ? (
+          <DecisionLog log={docs.data?.decisions} loading={docs.isLoading} />
+        ) : null}
 
-        {view !== 'metrics' && items.isSuccess && cards.length > 0 ? (
+        {isCardView(view) && items.isSuccess && cards.length > 0 ? (
           view === 'board' ? (
             <BoardView
               cards={cards}

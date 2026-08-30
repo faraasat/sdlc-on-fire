@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   formatReopenPlan,
+  type InsertionMarker,
   planReopen,
   reopenAuditEntry,
   resolveWorkspaceLayout,
@@ -99,4 +100,48 @@ export function formatReopen(result: ReopenResult): string {
     '',
     formatReopenPlan(result.plan),
   ].join('\n');
+}
+
+/**
+ * Insertion markers for one work item, for the lifecycle timeline
+ * (P6-SURFACE-04, FEAT-INS-015).
+ *
+ * Reads the records themselves rather than a mirror, because there is no
+ * insertion table — contract 06 §3.5 puts them in `kanban/_insertions/` as
+ * files, and inventing a table to make this convenient would put an audit
+ * record somewhere `db:rebuild` could lose it.
+ *
+ * Scoped by **blast radius**, not by the card that raised it: an insertion
+ * belongs on the timeline of every card it reached, which is the whole reason
+ * the radius is recorded.
+ */
+export async function insertionMarkersFor(
+  root: string,
+  workItemId: string,
+): Promise<readonly InsertionMarker[]> {
+  const dir = path.join(resolveWorkspaceLayout(root).kanbanDir, INSERTIONS_DIR);
+  const names = await fs.readdir(dir).catch(() => [] as string[]);
+
+  const markers: InsertionMarker[] = [];
+  for (const name of names.filter((entry) => entry.endsWith('.md')).sort()) {
+    const raw = await fs.readFile(path.join(dir, name), 'utf8').catch(() => null);
+    if (raw === null) continue;
+
+    const parsed = parseFrontmatter(raw);
+    const radius = radiusFromRecord(parsed.body);
+    if (!radius.includes(workItemId)) continue;
+
+    const at = parsed.data['created_at'];
+    markers.push({
+      insertionId: name.replace(/\.md$/, ''),
+      // The record's own timestamp, never the file's mtime: a checkout rewrites
+      // mtimes and would move every marker to the moment somebody cloned.
+      at: typeof at === 'string' ? at : '',
+      summary:
+        typeof parsed.data['summary'] === 'string'
+          ? parsed.data['summary']
+          : `insertion reaching ${workItemId}`,
+    });
+  }
+  return markers;
 }

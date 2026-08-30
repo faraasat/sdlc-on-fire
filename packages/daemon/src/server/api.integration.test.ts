@@ -375,6 +375,86 @@ describe('the activity feed', () => {
  * must serve an empty list rather than failing, because a board with no view
  * picker still works and a 500 here would take the whole board down with it.
  */
+/**
+ * P6-SURFACE-04 — the timeline and doc endpoints over a real database.
+ *
+ * The projections are pure and tested in core. What only this can show is the
+ * wiring: that the timeline joins to `actors` for a name, and that the insertion
+ * reader's absence is *reported* rather than served as an empty list — a missing
+ * reader and a clean card look identical otherwise.
+ */
+describe('the timeline endpoint', () => {
+  it('refuses without a work item rather than serving every card', async () => {
+    const response = await fetch(`${base}/api/timeline`);
+    expect(response.status).toBe(400);
+  });
+
+  it('says a card has not moved rather than returning nothing', async () => {
+    await seedItem('TASK-900');
+    const body = (await (await fetch(`${base}/api/timeline?workItemId=TASK-900`)).json()) as {
+      entries: unknown[];
+      because: string;
+    };
+    expect(body.entries).toEqual([]);
+    expect(body.because).toContain('has not moved');
+  });
+
+  it('reports that nobody looked for insertions, rather than that there were none', async () => {
+    await seedItem('TASK-901');
+    const body = (await (await fetch(`${base}/api/timeline?workItemId=TASK-901`)).json()) as {
+      insertionsAvailable: boolean;
+    };
+    // This server was started without an insertion reader.
+    expect(body.insertionsAvailable).toBe(false);
+  });
+});
+
+describe('the docs endpoint', () => {
+  it('projects the same rows two ways', async () => {
+    await db.query(
+      `INSERT INTO docs (id, doc_type, file_path, content_hash, title, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb), ($7,$8,$9,$10,$11,$12::jsonb);`,
+      [
+        'ADR-0001',
+        'decision',
+        'docs/ADR-0001.md',
+        'a'.repeat(64),
+        'A decision',
+        JSON.stringify({ adr_id: 'ADR-0001', status: 'accepted' }),
+        'R-1',
+        'research',
+        'docs/R-1.md',
+        'b'.repeat(64),
+        'A note',
+        JSON.stringify({ topic: 'retrieval' }),
+      ],
+    );
+
+    const body = (await (await fetch(`${base}/api/docs`)).json()) as {
+      docs: unknown[];
+      research: { total: number; unlinked: string[] };
+      decisions: { entries: unknown[] };
+    };
+    expect(body.docs).toHaveLength(2);
+    expect(body.research.total).toBe(1);
+    // The note is linked to nothing, which is the number the panel leads with.
+    expect(body.research.unlinked).toEqual(['R-1']);
+    expect(body.decisions.entries).toHaveLength(1);
+  });
+
+  it('filters by doc type', async () => {
+    await db.query(
+      `INSERT INTO docs (id, doc_type, file_path, content_hash, title, metadata)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb);`,
+      ['R-2', 'research', 'docs/R-2.md', 'c'.repeat(64), 'Another', JSON.stringify({})],
+    );
+    const body = (await (await fetch(`${base}/api/docs?docType=decision`)).json()) as {
+      docs: unknown[];
+    };
+    expect(body.docs).toEqual([]);
+  });
+});
+
 describe('the views endpoint', () => {
   it('serves an empty list when the server has no views provider', async () => {
     const response = await fetch(`${base}/api/views`);

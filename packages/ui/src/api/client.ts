@@ -7,7 +7,15 @@
  * served by the daemon itself, same origin, same port.
  */
 
-import type { ActivityEntry, ResolvedIdentity, ViewDefinition } from '@sdlc-on-fire/core/browser';
+import type {
+  ActivityEntry,
+  DecisionLog,
+  DocRow,
+  LifecycleTimeline,
+  ResearchIndex,
+  ResolvedIdentity,
+  ViewDefinition,
+} from '@sdlc-on-fire/core/browser';
 
 export class ApiError extends Error {
   constructor(
@@ -81,6 +89,41 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * The timeline, plus whether anybody could look for insertion markers
+ * (P6-SURFACE-04).
+ *
+ * `insertionsAvailable: false` means the server has no insertion reader — not
+ * that the card has no insertions. Rendering those the same way would make a
+ * missing reader indistinguishable from a clean card.
+ */
+export interface TimelineResponse extends LifecycleTimeline {
+  readonly insertionsAvailable: boolean;
+}
+
+export interface DocsResponse {
+  readonly docs: readonly DocRow[];
+  readonly research: ResearchIndex;
+  readonly decisions: DecisionLog;
+}
+
+/** A `runs` row, as the API returns it — snake_case, straight from the mirror. */
+export interface RunRow {
+  readonly id: string;
+  readonly work_item_id: string;
+  readonly skill_id: string | null;
+  readonly model: string | null;
+  readonly status: string | null;
+  readonly failure_reason: string | null;
+  readonly input_tokens: number | null;
+  readonly output_tokens: number | null;
+  readonly cost_usd: string | null;
+  readonly turns: number | null;
+  readonly context_pack_path: string | null;
+  readonly started_at: string | null;
+  readonly finished_at: string | null;
+}
+
 export const api = {
   move: (id: string, column: string) =>
     post<MoveOutcome>(`/api/work-items/${encodeURIComponent(id)}/move`, { column }),
@@ -96,4 +139,11 @@ export const api = {
         ? '/api/activity'
         : `/api/activity?workItemId=${encodeURIComponent(workItemId)}`,
     ),
+  timeline: (workItemId: string) =>
+    get<TimelineResponse>(`/api/timeline?workItemId=${encodeURIComponent(workItemId)}`),
+  runs: (workItemId: string | null) =>
+    get<RunRow[]>(
+      workItemId === null ? '/api/runs' : `/api/runs?workItemId=${encodeURIComponent(workItemId)}`,
+    ),
+  docs: () => get<DocsResponse>('/api/docs'),
 };
