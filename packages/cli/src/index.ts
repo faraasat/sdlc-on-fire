@@ -111,7 +111,7 @@ import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
 import { formatRollback, rollbackWorkItem, type RollbackResult } from './rollback.js';
 import { formatMonitorReport, repairMonitorReport } from './repair-monitor.js';
-import { formatHorizon, horizonReport } from './horizon.js';
+import { compactRun, formatCompact, formatHorizon, horizonReport } from './horizon.js';
 import { ciEvidence, formatCiEvidence, type CiEvidenceResult } from './ci-evidence.js';
 import { backupWorkspace, formatBackup, type BackupResult } from './backup.js';
 import { formatRuns, runHistory, type RunHistory } from './runs.js';
@@ -1180,6 +1180,33 @@ export function buildProgram(): Command {
         // distinguishable from "evidence was written and it was green" by
         // something a script can read.
         if (!result.admission.admitted) process.exitCode = 1;
+      },
+    );
+
+  program
+    .command('compact')
+    .argument('<run-id>', 'the run to compact')
+    .description(
+      "trim a run's accumulated context against its declared budget, recording what was dropped",
+    )
+    .option('--budget <tokens>', 'override the configured per-run ceiling')
+    .option(
+      '--apply',
+      'record the compaction; without this the plan is printed and nothing is written',
+    )
+    .option('--json', 'emit JSON')
+    .action(
+      async (
+        runId: string,
+        options: { budget?: string; apply?: boolean; json?: boolean },
+      ): Promise<void> => {
+        const parsed =
+          options.budget === undefined ? undefined : Number.parseInt(options.budget, 10);
+        const result = await compactRun(root(), runId, {
+          apply: options.apply,
+          ...(parsed === undefined || Number.isNaN(parsed) ? {} : { budgetTokens: parsed }),
+        });
+        emit(result, options.json === true, formatCompact);
       },
     );
 

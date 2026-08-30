@@ -372,6 +372,32 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      cache_read_tokens INT
    );`,
   `CREATE UNIQUE INDEX IF NOT EXISTS run_turns_uniq ON run_turns (run_id, turn);`,
+
+  // ── Compaction records (P7-HORIZON-02, contract 01 §3.5) ──────────────────
+  //
+  // What was dropped is *recorded*, not silently discarded — that is the whole
+  // difference between compaction and forgetting. An agent whose context was
+  // trimmed with no trace produces output nobody can account for: the reviewer
+  // sees a decision made without the information that would explain it, and no
+  // way to discover the information was ever there.
+  //
+  // `budget_tokens` is stored rather than looked up later, because a budget that
+  // changed after the fact would make every past compaction unexplainable. Both
+  // dropped *and* retained turns are stored: once the run has moved on, "what
+  // was kept" is not derivable from "what was dropped".
+  `CREATE TABLE IF NOT EXISTS run_compactions (
+     id                 BIGSERIAL PRIMARY KEY,
+     run_id             TEXT NOT NULL REFERENCES runs(id),
+     fired_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+     budget_tokens      INT NOT NULL,
+     accumulated_before INT NOT NULL,
+     freed_tokens       INT NOT NULL,
+     dropped_turns      JSONB NOT NULL,
+     retained_turns     JSONB NOT NULL,
+     reason             TEXT NOT NULL
+   );`,
+  `CREATE INDEX IF NOT EXISTS run_compactions_run_idx
+     ON run_compactions (run_id, fired_at);`,
   // An agent cannot author one, structurally. The application layer refuses it
   // too, and both stay for the same reason the approvals pair does: no single
   // bug should be enough to defeat an invariant.

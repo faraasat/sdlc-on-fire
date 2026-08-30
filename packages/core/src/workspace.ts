@@ -2,6 +2,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { AdvancedConfigSchema } from './capabilities.js';
 import { FocusProfileSchema } from './focus.js';
+import { DEFAULT_COMPACT_AT, DEFAULT_RETAIN_RECENT } from './compaction.js';
 import { DEFAULT_HELD_OUT_ROOT } from './held-out-suite.js';
 import { SandboxConfigSchema } from './sandbox.js';
 import { TierPolicyConfigSchema, tierPolicyViolations } from './tier-policy.js';
@@ -184,6 +185,21 @@ export const WorkspaceConfigSchema = z
     testing: z
       .object({
         held_out_root: z.string().min(1).default(DEFAULT_HELD_OUT_ROOT),
+      })
+      .prefault({}),
+    /**
+     * Per-run context ceiling (P7-HORIZON-02).
+     *
+     * Zero means undeclared, and undeclared means compaction never fires —
+     * deliberately. Trimming toward no ceiling is trimming for its own sake,
+     * and a default ceiling picked by us would be a number nobody chose that
+     * silently discards context on somebody else's project.
+     */
+    context: z
+      .object({
+        run_budget_tokens: z.number().int().nonnegative().default(0),
+        compact_at: z.number().gt(0).max(1).default(DEFAULT_COMPACT_AT),
+        retain_recent_turns: z.number().int().nonnegative().default(DEFAULT_RETAIN_RECENT),
       })
       .prefault({}),
     docs: z

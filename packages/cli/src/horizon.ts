@@ -1,12 +1,16 @@
 import {
   accountRun,
+  formatCompactionPlan,
   formatRunAccount,
+  planCompaction,
   windowBlindnessRatio,
+  WorkspaceConfigSchema,
+  type CompactionPlan,
   type RunContextAccount,
   type TurnAccounting,
 } from '@sdlc-on-fire/core';
 import { applySchema } from '@sdlc-on-fire/db';
-import { openWorkspaceDatabase } from './commands.js';
+import { openWorkspaceDatabase, readConfig } from './commands.js';
 
 /**
  * `sdlc metrics horizon` — how much context a run actually took in
@@ -156,4 +160,152 @@ export function formatHorizon(report: HorizonReport): string {
     );
   }
   return lines.join('\n\n');
+}
+
+/**
+ * The declared per-run context budget, from workspace config.
+ *
+ * Zero means undeclared, and undeclared means compaction never fires. A default
+ * ceiling picked by us would be a number nobody chose, silently discarding
+ * context on somebody else's project.
+ */
+async function contextConfig(root: string): Promise<{
+  budget: number;
+  compactAt: number;
+  retainRecent: number;
+}> {
+  // `readConfig` rather than a second reader: it already distinguishes an
+  // absent config (null) from a broken one (a SetupError naming the file, the
+  // parser's complaint and the fix), and a second copy of that handling would
+  // drift into a compaction that silently stopped firing on a workspace that
+  // had asked for it.
+  //
+  // `openWorkspaceDatabase` below validates the same file through the same
+  // function, so a broken config is refused whichever of the two runs first —
+  // which is why swallowing the error here is an *equivalent* mutation rather
+  // than a hole. Stated because a reader checking whether this throw is load
+  // bearing deserves the answer without tracing the second call.
+  const config = (await readConfig(root)) ?? WorkspaceConfigSchema.parse({});
+  return {
+    budget: config.context.run_budget_tokens,
+    compactAt: config.context.compact_at,
+    retainRecent: config.context.retain_recent_turns,
+  };
+}
+
+export interface CompactResult {
+  readonly plan: CompactionPlan;
+  /** Whether the plan was written down. False for a dry run or a no-op. */
+  readonly recorded: boolean;
+}
+
+/**
+ * `sdlc compact <run>` — fire compaction against the declared budget
+ * (P7-HORIZON-02).
+ *
+ * Planning is pure and lives in core; this reads the turns, applies the plan,
+ * and writes the record. The record is the point: a trim that leaves no trace
+ * is forgetting.
+ */
+export async function compactRun(
+  root: string,
+  runId: string,
+  options: {
+    readonly apply?: boolean | undefined;
+    readonly budgetTokens?: number | undefined;
+    readonly firedAt?: string | undefined;
+  } = {},
+): Promise<CompactResult> {
+  const config = await contextConfig(root);
+  const budget = options.budgetTokens ?? config.budget;
+
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const turns = await turnsFor(db, runId);
+    const account = accountRun(runId, turns);
+    const plan = planCompaction(account, turns, budget, {
+      compactAt: config.compactAt,
+      retainRecent: config.retainRecent,
+    });
+
+    if (!plan.fired || options.apply !== true) return { plan, recorded: false };
+
+    await db.query(
+      `INSERT INTO run_compactions
+         (run_id, fired_at, budget_tokens, accumulated_before, freed_tokens,
+          dropped_turns, retained_turns, reason)
+       VALUES ($1, COALESCE($2::timestamptz, now()), $3, $4, $5, $6::jsonb, $7::jsonb, $8);`,
+      [
+        runId,
+        options.firedAt ?? null,
+        plan.budgetTokens,
+        plan.accumulatedBefore,
+        plan.freedTokens,
+        JSON.stringify(plan.droppedTurns),
+        JSON.stringify(plan.retainedTurns),
+        plan.reason,
+      ],
+    );
+    return { plan, recorded: true };
+  } finally {
+    await db.close();
+  }
+}
+
+export interface CompactionRecord {
+  readonly runId: string;
+  readonly firedAt: string;
+  readonly budgetTokens: number;
+  readonly accumulatedBefore: number;
+  readonly freedTokens: number;
+  readonly droppedTurns: readonly number[];
+  readonly retainedTurns: readonly number[];
+  readonly reason: string;
+}
+
+/** Every compaction on a run — what an unexplainable output is checked against. */
+export async function compactionsFor(
+  root: string,
+  runId: string,
+): Promise<readonly CompactionRecord[]> {
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const rows = await db.query<{
+      run_id: string;
+      fired_at: string;
+      budget_tokens: number;
+      accumulated_before: number;
+      freed_tokens: number;
+      dropped_turns: number[];
+      retained_turns: number[];
+      reason: string;
+    }>(
+      `SELECT run_id, fired_at, budget_tokens, accumulated_before, freed_tokens,
+              dropped_turns, retained_turns, reason
+         FROM run_compactions WHERE run_id = $1 ORDER BY fired_at ASC, id ASC;`,
+      [runId],
+    );
+    return rows.map((row) => ({
+      runId: row.run_id,
+      firedAt: new Date(String(row.fired_at)).toISOString(),
+      budgetTokens: row.budget_tokens,
+      accumulatedBefore: row.accumulated_before,
+      freedTokens: row.freed_tokens,
+      droppedTurns: row.dropped_turns,
+      retainedTurns: row.retained_turns,
+      reason: row.reason,
+    }));
+  } finally {
+    await db.close();
+  }
+}
+
+export function formatCompact(result: CompactResult): string {
+  const text = formatCompactionPlan(result.plan);
+  if (!result.plan.fired) return text;
+  return result.recorded
+    ? text
+    : `${text}\n\n  dry run — nothing was recorded. Re-run with --apply.`;
 }
