@@ -210,6 +210,16 @@ export const EvidenceEnvelopeSchema = z.object({
   git_sha: z.string().regex(SHA1_HEX, 'git_sha must be a 40-character lowercase hex SHA'),
   /** Present only when the command ran against an uncommitted worktree. */
   dirty_tree_hash: z.string().regex(SHA256_HEX).optional(),
+  /**
+   * Repo-relative paths whose change could alter this verdict (P8-EVID-02).
+   *
+   * Optional, and its absence means *unknown coverage* rather than *covers
+   * nothing* — see {@link scopedStaleness}, where a missing list is stale. Set
+   * by the daemon from what the command actually read; an agent-set value would
+   * make evidence look fresh by declaring a narrow scope, which is the forgery
+   * this envelope exists to prevent.
+   */
+  covers: z.array(z.string().min(1)).optional(),
   env: EvidenceEnvSchema,
   command: CommandSchema.optional(),
   /** sha256 over the canonical (stable-key-order) JSON serialization of `payload`. */
@@ -356,4 +366,126 @@ export function isStale(
   if (envelope.git_sha !== head.git_sha) return true;
   if (envelope.dirty_tree_hash === undefined) return head.dirty_tree_hash !== undefined;
   return envelope.dirty_tree_hash !== head.dirty_tree_hash;
+}
+
+export const FRESHNESS_VERDICTS = ['current', 'current-by-scope', 'stale'] as const;
+export type FreshnessVerdict = (typeof FRESHNESS_VERDICTS)[number];
+
+export interface ScopedStalenessInput {
+  /** Whether the policy marks this evidence kind exempt. Opt-in, never a default. */
+  readonly scopeExempt: boolean;
+  /** Repo-relative paths whose change could alter this verdict. Daemon-produced. */
+  readonly covers?: readonly string[] | undefined;
+  /** Whether the envelope's commit is still an ancestor of HEAD. */
+  readonly ancestor: boolean;
+  /**
+   * Every path that changed between the envelope's commit and HEAD — **both
+   * sides of a rename**, because a file that moved out of the covered set
+   * changed it.
+   */
+  readonly changedPaths: readonly string[];
+}
+
+export interface FreshnessResult {
+  readonly verdict: FreshnessVerdict;
+  readonly because: string;
+  /** Covered paths the diff touched. Empty unless the verdict is `stale` for that reason. */
+  readonly touched: readonly string[];
+}
+
+/**
+ * Freshness with a scope exemption for expensive signals (P8-EVID-02, [Q-08]).
+ *
+ * `isStale` says any commit invalidates. That is right, and for a signal that
+ * costs half an hour it is unaffordable: a trivial rebase forces a full
+ * mutation re-run over a surface nothing touched, and a check that expensive on
+ * every rebase is a check somebody switches off — which is the same abandonment
+ * shape [R-08] describes for presets.
+ *
+ * This also implements what [contracts/03 §5.3] has described since it was
+ * written. Its pseudocode calls `isAncestorAndUntouched` — *"no intervening
+ * commit touched files the evidence covers"* — and nothing implemented it, so
+ * that branch was unreachable prose for the whole build.
+ *
+ * ## Four conditions, all required, and the default is strict
+ *
+ * The exemption is **opt-in per kind**. For a cheap signal, re-running is
+ * cheaper than reasoning about scope, and a scope rule that is wrong is worse
+ * than a re-run.
+ *
+ * **Ancestry is not a formality.** After a rebase or a force-push the commit
+ * the evidence names is not in this history at all, so there is no range to
+ * diff and no honest way to say what changed since. That case is stale, and
+ * treating it as "sha differs, check the diff" would silently accept evidence
+ * about a tree that no longer exists.
+ *
+ * **`covers` is daemon-produced and never inferred from the diff.** A list that
+ * is too narrow is a way to make stale evidence look fresh, which is the exact
+ * forgery the envelope exists to prevent. Deriving it from the changed files
+ * would make the check circular — it would always pass.
+ *
+ * An empty or absent `covers` means *unknown coverage*, which is stale rather
+ * than universally-fresh: the reassuring reading of a missing field is the one
+ * that silently keeps every expensive result forever.
+ */
+export function scopedStaleness(
+  envelope: Pick<EvidenceEnvelope, 'git_sha' | 'dirty_tree_hash'>,
+  head: { git_sha: string; dirty_tree_hash?: string | undefined },
+  input: ScopedStalenessInput,
+): FreshnessResult {
+  if (!isStale(envelope, head)) {
+    return { verdict: 'current', because: 'evidence names the current tree', touched: [] };
+  }
+
+  if (!input.scopeExempt) {
+    return {
+      verdict: 'stale',
+      because: 'the tree moved and this evidence kind is not scope-exempt',
+      touched: [],
+    };
+  }
+
+  // A dirty tree at HEAD is unmeasured change, whatever the diff says: the
+  // uncommitted edit is not in any commit range.
+  if (head.dirty_tree_hash !== undefined && head.dirty_tree_hash !== envelope.dirty_tree_hash) {
+    return {
+      verdict: 'stale',
+      because: 'the working tree has uncommitted changes, which no commit range can account for',
+      touched: [],
+    };
+  }
+
+  const covers = input.covers ?? [];
+  if (covers.length === 0) {
+    return {
+      verdict: 'stale',
+      because:
+        'the evidence declares no covered paths, so nothing can be said about what the diff missed',
+      touched: [],
+    };
+  }
+
+  if (!input.ancestor) {
+    return {
+      verdict: 'stale',
+      because: `the commit this evidence names (${envelope.git_sha.slice(0, 8)}) is not an ancestor of HEAD — after a rebase or force-push there is no range to diff`,
+      touched: [],
+    };
+  }
+
+  const covered = new Set(covers);
+  const touched = input.changedPaths.filter((changed) => covered.has(changed));
+  if (touched.length > 0) {
+    return {
+      verdict: 'stale',
+      because: `${String(touched.length)} covered path(s) changed since ${envelope.git_sha.slice(0, 8)}`,
+      touched,
+    };
+  }
+
+  return {
+    verdict: 'current-by-scope',
+    because: `${String(input.changedPaths.length)} path(s) changed since ${envelope.git_sha.slice(0, 8)} and none of the ${String(covers.length)} this evidence covers`,
+    touched: [],
+  };
 }

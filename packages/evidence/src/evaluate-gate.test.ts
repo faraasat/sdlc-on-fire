@@ -1,4 +1,4 @@
-import type { EvidenceEnvelope } from '@sdlc-on-fire/core';
+import { EvidenceEnvelopeSchema, type EvidenceEnvelope } from '@sdlc-on-fire/core';
 import { describe, expect, it } from 'vitest';
 import {
   countingApprovals,
@@ -317,5 +317,95 @@ describe('every required role must approve, not any one of them (P3-RBAC-03)', (
     // Empty means no override path at all (contract 03 §4); reading an omitted
     // field as unrestricted would invert the strictest policy in the set.
     expect(GatePolicySchema.parse({ name: 'p' }).overridable_by).toEqual([]);
+  });
+});
+
+/**
+ * The scope exemption at the gate (P8-EVID-02, Q-08, contracts/03 §5.3a).
+ *
+ * `scopedStaleness` is unit-tested in `core`. These assert it is *reached* —
+ * that a policy flag and a precomputed range actually change what the gate
+ * accepts. A rule nothing calls is the shape this build keeps finding.
+ */
+describe('scope-exempt evidence at the gate', () => {
+  const OLD = 'a'.repeat(40);
+  const HEAD = 'b'.repeat(40);
+
+  const expensive = (covers: string[]): EvidenceEnvelope =>
+    EvidenceEnvelopeSchema.parse({
+      kind: 'mutation-score',
+      producer: 'daemon',
+      git_sha: OLD,
+      env: { tool_versions: {}, os: 'darwin' },
+      content_hash: 'c'.repeat(64),
+      confidence: 0.95,
+      produced_at: '2026-09-01T00:00:00.000Z',
+      covers,
+      payload: { ok: true },
+    });
+
+  const policy = (scope_exempt: boolean): GatePolicy =>
+    GatePolicySchema.parse({
+      name: 'quality',
+      evidence: [{ kind: 'mutation-score', required: true, require_fresh: false, scope_exempt }],
+    });
+
+  const ctx = (changedPaths: string[], ancestor = true): GateContext => ({
+    currentHeadSha: HEAD,
+    now: new Date('2026-09-02T00:00:00.000Z'),
+    ranges: { [OLD]: { ancestor, changedPaths } },
+  });
+
+  it('keeps expensive evidence across a commit that missed everything it covers', () => {
+    const verdict = evaluateGate(
+      policy(true),
+      [expensive(['src/core.ts'])],
+      [],
+      ctx(['README.md']),
+    );
+    expect(verdict.missing).toEqual([]);
+    expect(verdict.pass).toBe(true);
+  });
+
+  it('discards it when a covered path changed', () => {
+    const verdict = evaluateGate(
+      policy(true),
+      [expensive(['src/core.ts'])],
+      [],
+      ctx(['src/core.ts']),
+    );
+    expect(verdict.missing).toEqual(['mutation-score']);
+  });
+
+  it('discards it when the policy did not grant the exemption', () => {
+    // The same evidence and the same range. Only the flag differs, which is
+    // what makes this an opt-in rather than a behaviour change for everybody.
+    const verdict = evaluateGate(
+      policy(false),
+      [expensive(['src/core.ts'])],
+      [],
+      ctx(['README.md']),
+    );
+    expect(verdict.missing).toEqual(['mutation-score']);
+  });
+
+  it('discards it when nobody looked the range up', () => {
+    // An absent range means "not checked", and the exemption has to be earned
+    // by evidence somebody actually checked — never granted by a missing field.
+    const verdict = evaluateGate(policy(true), [expensive(['src/core.ts'])], [], {
+      currentHeadSha: HEAD,
+      now: new Date('2026-09-02T00:00:00.000Z'),
+    });
+    expect(verdict.missing).toEqual(['mutation-score']);
+  });
+
+  it('discards it after a rebase, however short the diff looks', () => {
+    const verdict = evaluateGate(policy(true), [expensive(['src/core.ts'])], [], ctx([], false));
+    expect(verdict.missing).toEqual(['mutation-score']);
+  });
+
+  it('discards it when the evidence declares no coverage', () => {
+    const verdict = evaluateGate(policy(true), [expensive([])], [], ctx(['README.md']));
+    expect(verdict.missing).toEqual(['mutation-score']);
   });
 });

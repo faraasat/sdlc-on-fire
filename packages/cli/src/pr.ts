@@ -103,7 +103,9 @@ export async function prFor(root: string, id: string): Promise<PrResult> {
     const verdict = evaluateGate(
       {
         ...defaultV01Policy(),
-        evidence: [{ kind: 'test' as const, required: true, require_fresh: false }],
+        evidence: [
+          { kind: 'test' as const, required: true, require_fresh: false, scope_exempt: false },
+        ],
       },
       evidence,
       [],

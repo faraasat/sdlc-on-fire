@@ -3,7 +3,7 @@ import {
   EVIDENCE_KINDS,
   isExpired,
   isGatingEvidence,
-  isStale,
+  scopedStaleness,
   type EvidenceEnvelope,
   type EvidenceKind,
 } from '@sdlc-on-fire/core';
@@ -25,6 +25,16 @@ export const GateEvidenceRequirementSchema = z.object({
    * low-confidence — "run it again" and "it failed" are different remediations.
    */
   require_fresh: z.boolean().default(false),
+  /**
+   * Whether this kind may survive a commit that touched nothing it covers
+   * (P8-EVID-02, contracts/03 §5.3a, closing Q-08).
+   *
+   * **Off by default and opt-in per kind**, for cost-heavy signals only. For a
+   * cheap check, re-running is cheaper than reasoning about scope, and a scope
+   * rule that is wrong is worse than a re-run. Turning this on for `test` would
+   * be the mistake it is designed to make impossible to reach by accident.
+   */
+  scope_exempt: z.boolean().default(false),
 });
 
 export const GatePolicySchema = z.object({
@@ -63,10 +73,29 @@ export interface Approval {
   readonly revokedAt?: string | null | undefined;
 }
 
+/** What the daemon learned about the range between an evidence commit and HEAD. */
+export interface CommitRange {
+  /** Whether that commit is still an ancestor of HEAD. */
+  readonly ancestor: boolean;
+  /** Every path that changed, both sides of a rename. */
+  readonly changedPaths: readonly string[];
+}
+
 export interface GateContext {
   readonly currentHeadSha: string;
   readonly currentDirtyTreeHash?: string | undefined;
   readonly now: Date;
+  /**
+   * Per-evidence-commit ranges, keyed by the envelope's `git_sha`
+   * (P8-EVID-02).
+   *
+   * Precomputed by the daemon and passed as data so `evaluateGate` stays pure —
+   * a gate that shelled out to git mid-evaluation could not be replayed from
+   * `gate_evidence` alone, which is the property `replayGate` exists to
+   * protect. An absent entry means *not looked up*, and that is stale: the
+   * exemption has to be earned by evidence somebody actually checked.
+   */
+  readonly ranges?: Readonly<Record<string, CommitRange>> | undefined;
 }
 
 export interface GateVerdict {
@@ -93,11 +122,25 @@ export interface GateVerdict {
  * explicitly non-deferrable: evidence from a different commit is not evidence
  * about this one.
  */
-export function isCurrent(envelope: EvidenceEnvelope, ctx: GateContext): boolean {
-  return !isStale(envelope, {
-    git_sha: ctx.currentHeadSha,
-    dirty_tree_hash: ctx.currentDirtyTreeHash,
-  });
+export function isCurrent(
+  envelope: EvidenceEnvelope,
+  ctx: GateContext,
+  scopeExempt = false,
+): boolean {
+  const range = ctx.ranges?.[envelope.git_sha];
+  const verdict = scopedStaleness(
+    envelope,
+    { git_sha: ctx.currentHeadSha, dirty_tree_hash: ctx.currentDirtyTreeHash },
+    {
+      scopeExempt,
+      covers: envelope.covers,
+      // No range looked up means no range: the exemption is earned by evidence
+      // somebody actually checked, never granted by an absent field.
+      ancestor: range?.ancestor ?? false,
+      changedPaths: range?.changedPaths ?? [],
+    },
+  );
+  return verdict.verdict !== 'stale';
 }
 
 function mostRecent(envelopes: readonly EvidenceEnvelope[]): EvidenceEnvelope | undefined {
@@ -166,7 +209,7 @@ export function evaluateGate(
       // Structural exclusion, not a policy toggle: agent-claim evidence carries
       // zero weight regardless of what any policy says (ADR-0030).
       .filter(isGatingEvidence)
-      .filter((envelope) => isCurrent(envelope, ctx))
+      .filter((envelope) => isCurrent(envelope, ctx, requirement.scope_exempt))
       .filter((envelope) => !(requirement.require_fresh && isExpired(envelope, ctx.now)));
 
     if (candidates.length === 0) {

@@ -636,9 +636,19 @@ export async function advanceWorkItem(
       const policy = {
         ...defaultV01Policy(preset),
         evidence: [
-          { kind: 'test' as const, required: true, require_fresh: false },
+          // `scope_exempt: false` on both, stated rather than defaulted: this
+          // is the ladder's own gate, and an exemption reached by omission is
+          // the mistake P8-EVID-02 is designed to make hard.
+          { kind: 'test' as const, required: true, require_fresh: false, scope_exempt: false },
           ...(claimsRequired
-            ? [{ kind: 'knowledge-claim' as const, required: true, require_fresh: false }]
+            ? [
+                {
+                  kind: 'knowledge-claim' as const,
+                  required: true,
+                  require_fresh: false,
+                  scope_exempt: false,
+                },
+              ]
             : []),
         ],
       };

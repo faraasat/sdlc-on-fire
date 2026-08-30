@@ -108,10 +108,40 @@ export async function existingImports(root: string): Promise<readonly ExistingIt
   return out;
 }
 
-/** Where a node lands. Kind decides the tree; nothing is written outside it. */
+/**
+ * Where a node lands. Kind decides the tree; nothing is written outside it.
+ *
+ * **The filename carries a digest of the full identity, not just the readable
+ * part** (P8-MIGRATE-01). A node's identity is the triple
+ * `(source_tool, source_path, source_id_or_hash)`; the name used to be built
+ * from the last third alone, so two nodes with the same identifier set from
+ * *different* source files produced the same path and the second silently
+ * overwrote the first.
+ *
+ * That is not hypothetical and it is not rare. Spec Kit numbers `FR-001`
+ * independently **per feature directory**, so any repository with more than one
+ * feature is a collision waiting to happen. Importing
+ * `radius-project/radius` — a real project from the wild, 3,834 files —
+ * produced **51 spec nodes and 48 files**: three specs lost, no warning, and a
+ * re-run that reported three conflicts on paths the first run had written
+ * itself. The round-trip gate could not see it because our own fixtures were
+ * written with unique identifiers.
+ *
+ * The 48-character truncation compounded it: two long identifier lists sharing
+ * a prefix collided even when the sets differed.
+ *
+ * The readable prefix is kept — `FR-001-FR-002-a1b2c3d4.md` is far better to
+ * scan than a bare hash — but the digest is what makes the name a function of
+ * the whole identity, so two files collide only when they are the same node.
+ */
 export function targetPathFor(root: string, node: IrNode, into?: string): string {
   const layout = resolveWorkspaceLayout(root);
-  const slug = node.externalRef.source_id_or_hash.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 48);
+  const readable = node.externalRef.source_id_or_hash.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 40);
+  // Over the whole ref, not just `source_path`: two nodes could share a source
+  // file and differ only by identifier set, which is the ordinary case for a
+  // spec split into sections.
+  const digest = sha(externalRefKey(node.externalRef)).slice(0, 8);
+  const slug = readable === '' ? digest : `${readable}-${digest}`;
   const base =
     node.kind === 'spec' || node.kind === 'constitution' ? layout.docsDir : layout.kanbanDir;
   const folder = into === undefined ? '_imported' : into;

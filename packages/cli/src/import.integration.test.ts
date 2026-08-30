@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { init } from './commands.js';
-import { existingImports, runImport } from './import.js';
+import { existingImports, runImport, targetPathFor } from './import.js';
 
 /**
  * Teardown retries, because Windows keeps a file locked while anything holds it.
@@ -158,12 +158,17 @@ describe('refusals', () => {
     const target = preview.plan.order[0];
     expect(target).toBeDefined();
 
-    // Put a human-authored file exactly where the import wants to land.
+    // Put a human-authored file exactly where the import wants to land — asked
+    // for with `targetPathFor` rather than re-derived here. This test used to
+    // rebuild the naming rule itself, which is part of why the identifier
+    // collision P8-MIGRATE-01 found stayed invisible: a test that reimplements
+    // production logic agrees with it even when both are wrong.
     const dir = path.join(root, 'docs', '_imported', 'spec');
     await fs.mkdir(dir, { recursive: true });
     for (const entry of preview.plan.order) {
-      const slug = entry.node.externalRef.source_id_or_hash.replace(/[^A-Za-z0-9_-]/g, '-');
-      await fs.writeFile(path.join(dir, `${slug}.md`), '# mine\n', 'utf8');
+      const target = targetPathFor(root, entry.node);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, '# mine\n', 'utf8');
     }
 
     // Silently overwriting someone's work is the worst possible default.
