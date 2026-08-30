@@ -304,6 +304,31 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
      created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
    );`,
   'CREATE INDEX IF NOT EXISTS held_out_work_item_idx ON held_out_criteria (work_item_id);',
+
+  // ── Held-out trend samples (P7-HELDOUT-02, contract 01 §3.4) ──────────────
+  //
+  // Append-only by discipline rather than by trigger: nothing in the product
+  // updates or deletes a row here, and `db:rebuild` leaves it alone. A sample is
+  // a measurement taken at a moment, and a rewritten one makes the trend a claim
+  // about a past nobody can check.
+  //
+  // `delta_pp` is NULLable and must stay so. "The held-out set agrees with the
+  // visible one" and "nothing was held out" are different facts that look
+  // identical the instant an unmeasured delta is stored as zero — and the second
+  // is the state every project starts in.
+  `CREATE TABLE IF NOT EXISTS held_out_samples (
+     id               BIGSERIAL PRIMARY KEY,
+     work_item_id     TEXT NOT NULL REFERENCES work_items(id),
+     measured_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+     visible_passed   INT NOT NULL,
+     visible_total    INT NOT NULL,
+     held_out_passed  INT NOT NULL,
+     held_out_total   INT NOT NULL,
+     delta_pp         NUMERIC(5,1),
+     changed_lines    INT
+   );`,
+  `CREATE INDEX IF NOT EXISTS held_out_samples_item_idx
+     ON held_out_samples (work_item_id, measured_at);`,
   // An agent cannot author one, structurally. The application layer refuses it
   // too, and both stay for the same reason the approvals pair does: no single
   // bug should be enough to defeat an invariant.

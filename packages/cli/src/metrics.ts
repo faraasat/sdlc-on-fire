@@ -21,6 +21,8 @@ import {
   doraReport,
   flowEfficiency,
   formatDora,
+  formatHeldOutTrend,
+  heldOutTrend,
   leadTime,
   blockedTime,
   gatePassRates,
@@ -33,6 +35,8 @@ import {
   type GateEvaluation,
   type GateInterval,
   type GovernanceMetrics,
+  type HeldOutSample,
+  type HeldOutTrend,
   type InsertionRow,
   resolveWorkspaceLayout,
   type RunMetrics,
@@ -44,6 +48,7 @@ import {
   type StageStat,
   type TransitionRow,
 } from '@sdlc-on-fire/core';
+import { applySchema } from '@sdlc-on-fire/db';
 import { openWorkspaceDatabase } from './commands.js';
 
 export interface FlowReport {
@@ -520,5 +525,135 @@ export function formatGovernance(report: GovernanceMetrics): string {
   }
 
   lines.push('', `PR duration: not available — ${report.prDuration.because}`);
+  return lines.join('\n');
+}
+
+/**
+ * `sdlc metrics held-out` — the visible-vs-held-out gap, and where it is going
+ * (P7-HELDOUT-02, `techniques/42`).
+ *
+ * The one honest measure of a repair loop, and until now it existed only
+ * per-item inside `sdlc criteria status`, computed fresh and thrown away. A
+ * number you cannot compare to last week's is a number nobody acts on: 12pp is
+ * fine on a big change and alarming on a small one, and only the *direction*
+ * separates the two readings.
+ *
+ * Items with no held-out criteria are counted and named rather than skipped
+ * silently. On most workspaces that will be nearly all of them, and a report
+ * that quietly omitted them would show a confident gap over the three items
+ * somebody happened to measure.
+ */
+export interface HeldOutItemTrend {
+  readonly workItemId: string;
+  readonly trend: HeldOutTrend;
+  readonly latestDeltaPp: number | null;
+}
+
+export interface HeldOutReport {
+  readonly items: readonly HeldOutItemTrend[];
+  /** Items with a measured delta, and items with none — both stated. */
+  readonly measuredItems: number;
+  readonly unmeasuredItems: number;
+  /** Items whose gap is widening. The only number worth an alert. */
+  readonly widening: readonly string[];
+  readonly overall: HeldOutTrend;
+}
+
+interface SampleRow {
+  readonly work_item_id: string;
+  readonly measured_at: string;
+  readonly visible_passed: number;
+  readonly visible_total: number;
+  readonly held_out_passed: number;
+  readonly held_out_total: number;
+  readonly delta_pp: string | null;
+  readonly changed_lines: number | null;
+}
+
+export async function heldOutReport(root: string): Promise<HeldOutReport> {
+  const { db } = await openWorkspaceDatabase(root);
+  try {
+    await applySchema(db);
+    const rows = await db.query<SampleRow>(
+      `SELECT work_item_id, measured_at, visible_passed, visible_total,
+              held_out_passed, held_out_total, delta_pp, changed_lines
+         FROM held_out_samples ORDER BY measured_at ASC, id ASC;`,
+    );
+
+    const samples: HeldOutSample[] = rows.map((row) => ({
+      workItemId: row.work_item_id,
+      measuredAt: new Date(String(row.measured_at)).toISOString(),
+      visiblePassed: row.visible_passed,
+      visibleTotal: row.visible_total,
+      heldOutPassed: row.held_out_passed,
+      heldOutTotal: row.held_out_total,
+      // `numeric` reads back as a string, and `Number(null)` is 0 — the one
+      // value this column must never invent.
+      deltaPp: row.delta_pp === null ? null : Number(row.delta_pp),
+      ...(row.changed_lines === null ? {} : { changedLines: row.changed_lines }),
+    }));
+
+    const byItem = new Map<string, HeldOutSample[]>();
+    for (const sample of samples) {
+      const bucket = byItem.get(sample.workItemId) ?? [];
+      bucket.push(sample);
+      byItem.set(sample.workItemId, bucket);
+    }
+
+    const items = [...byItem.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([workItemId, itemSamples]) => {
+        const trend = heldOutTrend(itemSamples);
+        return { workItemId, trend, latestDeltaPp: trend.latest?.deltaPp ?? null };
+      });
+
+    return {
+      items,
+      measuredItems: items.filter((item) => item.latestDeltaPp !== null).length,
+      unmeasuredItems: items.filter((item) => item.latestDeltaPp === null).length,
+      widening: items
+        .filter((item) => item.trend.direction === 'widening')
+        .map((item) => item.workItemId),
+      // The workspace-wide view is the same arithmetic over every sample. It
+      // answers a coarser question than the per-item trends and is reported
+      // beside them rather than instead of them.
+      overall: heldOutTrend(samples),
+    };
+  } finally {
+    await db.close();
+  }
+}
+
+export function formatHeldOut(report: HeldOutReport): string {
+  if (report.items.length === 0) {
+    return [
+      'no held-out samples recorded yet',
+      '',
+      'Record one with `sdlc criteria status <id> --record` once an item has',
+      'held-out criteria. Until then the gap is unknown, which is not the same',
+      'as small.',
+    ].join('\n');
+  }
+
+  const lines = [
+    `${String(report.items.length)} item(s) sampled — ${String(report.measuredItems)} measured, ${String(report.unmeasuredItems)} with no held-out criteria`,
+    '',
+    formatHeldOutTrend(report.overall),
+    '',
+  ];
+
+  for (const item of report.items) {
+    const mark = item.trend.direction === 'widening' ? '⚠' : ' ';
+    lines.push(
+      `${mark} ${item.workItemId}: ${item.latestDeltaPp === null ? 'unmeasured' : `Δ ${String(item.latestDeltaPp)}pp`} · ${item.trend.direction}`,
+    );
+  }
+
+  if (report.widening.length > 0) {
+    lines.push(
+      '',
+      `${String(report.widening.length)} item(s) widening: ${report.widening.join(', ')}`,
+    );
+  }
   return lines.join('\n');
 }

@@ -73,6 +73,8 @@ import {
   flowReport,
   formatDora,
   formatFlow,
+  formatHeldOut,
+  heldOutReport,
 } from './metrics.js';
 import { advanceWorkItem } from './advance.js';
 import { reopenWorkItem, verifyWorkItem } from './advance.js';
@@ -2096,12 +2098,20 @@ export function buildProgram(): Command {
     .argument('<work-item-id>', 'the card')
     .description('how many are held out, and the visible-vs-held-out delta')
     .option('--changed-lines <n>', 'size of the change, for the predicted gap', '0')
+    .option(
+      '--record',
+      'append this measurement to the trend — off by default, so looking at the status does not become the trend',
+    )
     .option('--json', 'emit JSON')
     .action(
-      async (id: string, options: { changedLines?: string; json?: boolean }): Promise<void> => {
+      async (
+        id: string,
+        options: { changedLines?: string; record?: boolean; json?: boolean },
+      ): Promise<void> => {
         const changed = Number.parseInt(options.changedLines ?? '0', 10);
         const result = await criteriaStatus(root(), id, {
           changedLines: Number.isNaN(changed) ? 0 : changed,
+          record: options.record,
         });
         emit(result, options.json === true, formatCriteria);
         if (!result.ok) process.exitCode = 1;
@@ -2785,6 +2795,19 @@ export function buildProgram(): Command {
   const metrics = program
     .command('metrics')
     .description('flow and delivery-performance metrics, read from what actually happened');
+
+  metrics
+    .command('held-out')
+    .description(
+      'the visible-vs-held-out gap and where it is going — the one honest measure of the repair loop',
+    )
+    .option('--json', 'emit JSON')
+    .action(async (options: { json?: boolean }) => {
+      const report = await heldOutReport(root());
+      emit(report, options.json === true, formatHeldOut);
+      // A widening gap is the alert this whole feature exists to produce.
+      if (report.widening.length > 0) process.exitCode = 1;
+    });
 
   metrics
     .command('flow')

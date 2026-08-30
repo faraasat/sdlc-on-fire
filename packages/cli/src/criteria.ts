@@ -2,6 +2,7 @@ import {
   admitHeldOut,
   formatHeldOutDelta,
   heldOutDelta,
+  type HeldOutSample,
   summariseHeldOut,
   expectedGapPp,
   type CriterionResult,
@@ -113,6 +114,8 @@ export interface CriteriaStatus {
   readonly expectedGapPp: number;
   readonly changedLines: number;
   readonly ok: boolean;
+  /** Whether this measurement was appended to the trend. */
+  readonly recorded: boolean;
 }
 
 /**
@@ -128,6 +131,15 @@ export async function criteriaStatus(
     readonly visible?: readonly CriterionResult[];
     readonly heldOut?: readonly CriterionResult[];
     readonly changedLines?: number;
+    /**
+     * Persist this measurement for the trend (P7-HELDOUT-02).
+     *
+     * Off by default so `criteria status` stays a read. A status command that
+     * silently wrote a sample every time somebody looked would make the trend a
+     * record of how often the report was run.
+     */
+    readonly record?: boolean | undefined;
+    readonly measuredAt?: string | undefined;
   } = {},
 ): Promise<CriteriaStatus> {
   const visible = await visibleCriteria(root, id);
@@ -162,6 +174,11 @@ export async function criteriaStatus(
     );
     const changedLines = results.changedLines ?? 0;
 
+    const recorded = results.record === true;
+    if (recorded) {
+      await recordHeldOutSample(db, id, delta, changedLines, results.measuredAt);
+    }
+
     return {
       summary: summariseHeldOut(id, criteria),
       delta,
@@ -174,7 +191,69 @@ export async function criteriaStatus(
         delta.deltaPp === null ||
         delta.deltaPp <= 0 ||
         delta.deltaPp <= expectedGapPp(changedLines),
+      recorded,
     };
+  });
+}
+
+/** Appends one measurement. Never updates — see contract 01 §3.4. */
+export async function recordHeldOutSample(
+  db: { query(sql: string, params?: unknown[]): Promise<unknown> },
+  workItemId: string,
+  delta: HeldOutDelta,
+  changedLines: number,
+  measuredAt?: string,
+): Promise<void> {
+  await db.query(
+    `INSERT INTO held_out_samples
+       (work_item_id, measured_at, visible_passed, visible_total,
+        held_out_passed, held_out_total, delta_pp, changed_lines)
+     VALUES ($1, COALESCE($2::timestamptz, now()), $3, $4, $5, $6, $7, $8);`,
+    [
+      workItemId,
+      measuredAt ?? null,
+      delta.visiblePassed,
+      delta.visibleTotal,
+      delta.heldOutPassed,
+      delta.heldOutTotal,
+      // NULL, never 0. The column exists to keep "they agree" and "nothing was
+      // measured" apart, and a coalesce here would erase exactly that.
+      delta.deltaPp,
+      changedLines,
+    ],
+  );
+}
+
+/** Every sample for one work item, oldest first. */
+export async function heldOutSamples(root: string, id: string): Promise<readonly HeldOutSample[]> {
+  return withDb(root, async (db) => {
+    const rows = await db.query<{
+      work_item_id: string;
+      measured_at: string;
+      visible_passed: number;
+      visible_total: number;
+      held_out_passed: number;
+      held_out_total: number;
+      delta_pp: string | null;
+      changed_lines: number | null;
+    }>(
+      `SELECT work_item_id, measured_at, visible_passed, visible_total,
+              held_out_passed, held_out_total, delta_pp, changed_lines
+         FROM held_out_samples WHERE work_item_id = $1 ORDER BY measured_at ASC, id ASC;`,
+      [id],
+    );
+    return rows.map((row) => ({
+      workItemId: row.work_item_id,
+      measuredAt: new Date(String(row.measured_at)).toISOString(),
+      visiblePassed: row.visible_passed,
+      visibleTotal: row.visible_total,
+      heldOutPassed: row.held_out_passed,
+      heldOutTotal: row.held_out_total,
+      // `numeric` reads back as a string, and `Number(null)` is 0 — which is
+      // the one value this column must never invent.
+      deltaPp: row.delta_pp === null ? null : Number(row.delta_pp),
+      ...(row.changed_lines === null ? {} : { changedLines: row.changed_lines }),
+    }));
   });
 }
 
