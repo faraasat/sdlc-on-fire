@@ -34,6 +34,7 @@ export * from './held-out.js';
 export * from './held-out-suite.js';
 export * from './held-out-trend.js';
 export * from './repair-score.js';
+export * from './context-horizon.js';
 export * from './test-knowledge.js';
 export * from './pilot.js';
 export * from './posix-path.js';

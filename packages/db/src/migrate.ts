@@ -351,6 +351,27 @@ export const SUPPLEMENTAL_DDL: readonly string[] = [
    );`,
   `CREATE UNIQUE INDEX IF NOT EXISTS repair_observations_uniq
      ON repair_observations (work_item_id, attempt);`,
+
+  // ── Per-turn context accounting (P7-HORIZON-01, contract 01 §3.5) ─────────
+  //
+  // `runs` already carries totals, and totals answer "what did this run cost".
+  // They cannot answer "was this run too long", because that question is about
+  // accumulation over turns and a total has no shape. A run doing forty turns at
+  // 60% window occupancy looks healthy on every per-window metric while having
+  // taken in well over a million tokens.
+  //
+  // `cache_read_tokens` counts toward accumulated context: the discount is on
+  // the bill, not on the attention.
+  `CREATE TABLE IF NOT EXISTS run_turns (
+     id                BIGSERIAL PRIMARY KEY,
+     run_id            TEXT NOT NULL REFERENCES runs(id),
+     turn              INT NOT NULL,
+     observed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+     input_tokens      INT NOT NULL,
+     output_tokens     INT NOT NULL,
+     cache_read_tokens INT
+   );`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS run_turns_uniq ON run_turns (run_id, turn);`,
   // An agent cannot author one, structurally. The application layer refuses it
   // too, and both stay for the same reason the approvals pair does: no single
   // bug should be enough to defeat an invariant.

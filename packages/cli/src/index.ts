@@ -111,6 +111,7 @@ import { addIntoContainer, formatAdd } from './add.js';
 import { formatReopen, reopenGates } from './reopen.js';
 import { formatRollback, rollbackWorkItem, type RollbackResult } from './rollback.js';
 import { formatMonitorReport, repairMonitorReport } from './repair-monitor.js';
+import { formatHorizon, horizonReport } from './horizon.js';
 import { ciEvidence, formatCiEvidence, type CiEvidenceResult } from './ci-evidence.js';
 import { backupWorkspace, formatBackup, type BackupResult } from './backup.js';
 import { formatRuns, runHistory, type RunHistory } from './runs.js';
@@ -2796,6 +2797,16 @@ export function buildProgram(): Command {
   const metrics = program
     .command('metrics')
     .description('flow and delivery-performance metrics, read from what actually happened');
+
+  metrics
+    .command('horizon')
+    .description('accumulated context within a run — the quantity a long session degrades on')
+    .option('--run <id>', 'one run')
+    .option('--json', 'emit JSON')
+    .action(async (options: { run?: string; json?: boolean }) => {
+      const report = await horizonReport(root(), { runId: options.run });
+      emit(report, options.json === true, formatHorizon);
+    });
 
   metrics
     .command('repair-monitor')
